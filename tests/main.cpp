@@ -828,7 +828,11 @@ public:
         Color fill2(0.0f, 0.0f, 1.0f, 0.5f);
         Color blended1(0.5f, 0.0f, 0.0f, 1.0f);
         Color blended2(0.0f, 0.0f, 0.5f, 1.0f);
-        Color blended(0.25f, 0.0f, 0.5f, 1.0f);
+#if __APPLE__
+        Color blended(0x3f, 0x00, 0x80, 0xff);
+#else
+        Color blended(0x40, 0x00, 0x80, 0xff);
+#endif // __APPLE__
         auto dpi = mBitmap->dpi();
         auto rect1 = Rect::fromPixels(1, 1, 6, 5, dpi);
         auto rect2 = Rect::fromPixels(3, 3, 6, 5, dpi);
@@ -1328,9 +1332,10 @@ public:
             auto pixel = mBitmap->pixelAt(x, y);
             total += pixel.red();
         }
-        // Bolding is subtle: 16pt Arial has 1.784 regular, 1.847 italic, 2.58 bold
+        // Bolding is subtle: 16pt Arial has 1.784 regular, 1.847 italic, 2.58 bold (macOS
         //                    20pt Arial has 2.09 regular, 2.98 bold (Windows)
-        return total >= 2.25f;
+        //                                   2.23 regular, 2.31 italic, 3.22 bold (macOS)
+        return total >= 2.5f;
     }
 
     bool isVertical() const
@@ -1341,7 +1346,6 @@ public:
             float columnTotal = 0.0f;
             for (int y = 0;  y < mHeight;  ++y) {
                 auto pixel = mBitmap->pixelAt(x, y);
-//                columnTotal += pixel.red();
                 if (pixel.red() > 0.8f) {
                     columnTotal += pixel.red();
                 }

@@ -75,7 +75,7 @@ public:
             mPaths[dpi] = path;
             it = mPaths.find(dpi);
         }
-        return it.second;
+        return it->second;
     }
 
 private:
@@ -200,7 +200,7 @@ private:
         PicaPt strokeWidth;
     };
 
-    std::vector<ContextState> stateStack;
+    std::vector<ContextState> mStateStack;
 
 public:
     CoreGraphicsContext(void *cgcontext, int width, int height, float dpi)
@@ -219,8 +219,8 @@ public:
         CGContextTranslateCTM(gc, 0, mHeight);
         CGContextScaleCTM(gc, 1, -1);
 
-        mPrivate->stateStack.clear();
-        mPrivate->stateStack.push_back(ContextState());
+        mStateStack.clear();
+        mStateStack.push_back(ContextState());
      
         // Super *after* creating the state stack, so that the state setting
         // functions will set the state properly.
@@ -233,7 +233,7 @@ public:
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextSaveGState(gc);
-        mPrivate->stateStack.push_back(mPrivate->stateStack.back());
+        mStateStack.push_back(mStateStack.back());
     }
 
 
@@ -263,7 +263,7 @@ public:
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextRestoreGState(gc);
-        mPrivate->stateStack.pop_back();
+        mStateStack.pop_back();
     }
 
     void fill(const Color& color) override
@@ -276,7 +276,7 @@ public:
             // We DON'T want to change the fill color state, but we do want
             // to take advantage of future improvements to Color (such as more
             // colorspaces).
-            Color orig = mPrivate->stateStack.back().fillColor;
+            Color orig = mStateStack.back().fillColor;
             setFillColor(color);
             CGContextFillRect(gc, CGRectMake(0, 0, mWidth, mHeight));
             setFillColor(orig);
@@ -294,7 +294,7 @@ public:
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextSetRGBFillColor(gc, color.red(), color.green(),
                                  color.blue(), color.alpha());
-        mPrivate->stateStack.back().fillColor = color;
+        mStateStack.back().fillColor = color;
     }
 
     void setStrokeColor(const Color& color) override
@@ -302,14 +302,14 @@ public:
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextSetRGBStrokeColor(gc, color.red(), color.green(),
                                    color.blue(), color.alpha());
-        mPrivate->stateStack.back().strokeColor = color;
+        mStateStack.back().strokeColor = color;
     }
 
     void setStrokeWidth(const PicaPt& w) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextSetLineWidth(gc, w.asFloat());
-        mPrivate->stateStack.back().strokeWidth = w;
+        mStateStack.back().strokeWidth = w;
     }
 
     void setStrokeEndCap(EndCapStyle cap) override
@@ -396,7 +396,7 @@ public:
 
         Color fillColor;
         if (mode & kPaintFill) {
-            fillColor = mPrivate->stateStack.back().fillColor;
+            fillColor = mStateStack.back().fillColor;
         } else {
             fillColor = Color::kTransparent;
         }
@@ -411,13 +411,13 @@ public:
         // attr[NSParagraphStyleAttributeName] = paragraphStyle;
 
         if (mode & kPaintStroke) {
-            Color strokeColor = mPrivate->stateStack.back().strokeColor;
+            Color strokeColor = mStateStack.back().strokeColor;
             // Apple's documentation says that NSStrokeWidthAttributeName is a
             // percentage of the font height (NOT the raw stroke width). Since the
             // DPI is being handled by the transform, stroke width is already in the
             // correct units (namely PicaPt), just like nsfont72.pointSize is (since
             // we got the 72 dpi version of the font).
-            float strokeWidth = mPrivate->stateStack.back().strokeWidth.asFloat();
+            float strokeWidth = mStateStack.back().strokeWidth.asFloat();
             strokeWidth = strokeWidth / nsfont72.pointSize * 100.0f;
             NSColor *nsstroke = [NSColor colorWithRed:CGFloat(strokeColor.red())
                                                 green:CGFloat(strokeColor.green())
@@ -485,7 +485,7 @@ public:
                                            rect.width.asFloat(), rect.height.asFloat()));
     }
 
-    void clipToPath(const BezierPath& path) override
+    void clipToPath(std::shared_ptr<BezierPath> path) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextAddPath(gc, (CGPathRef)path->nativePathForDPI(mDPI, false));
@@ -498,7 +498,7 @@ public:
         return nullptr;
     }
 
-    Color pixelAt(int x, int y) const override
+    Color pixelAt(int x, int y) override
     {
         assert(false);  // need a bitmap context
         return Color::kPurple;
@@ -563,11 +563,11 @@ public:
 
     std::shared_ptr<Image> copyToImage() override
     {
-        auto image = CGBitmapContextCreateImage((CGContextRef)bitmap.nativeDC());
-        return CoreGraphicsImage(image, width(), height(), dpi());
+        auto image = CGBitmapContextCreateImage((CGContextRef)mNativeDC);
+        return std::make_shared<CoreGraphicsImage>(image, width(), height(), dpi());
     }
 
-    Color pixelAt(int x, int y) const override
+    Color pixelAt(int x, int y) override
     {
         unsigned char *rgba = mData + mBytesPerPixel * (y * width() + x);
         switch (mType) {
@@ -595,8 +595,6 @@ public:
     }
 };
 
-} // namespace $ND_NAMESPACE
-
 //--------------------------- DrawContext -------------------------------------
 std::shared_ptr<DrawContext> DrawContext::fromCoreGraphics(void* cgcontext, int width, int height, float dpi)
 {
@@ -608,4 +606,7 @@ std::shared_ptr<DrawContext> DrawContext::createBitmap(BitmapType type, int widt
 {
     return std::make_shared<CoreGraphicsBitmap>(type, width, height, dpi);
 }
+
+} // namespace $ND_NAMESPACE
+
 #endif // __APPLE__

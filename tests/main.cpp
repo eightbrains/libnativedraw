@@ -8,25 +8,34 @@
 #include <string>
 
 #include <stdio.h>
-#include <unistd.h>  // for isatty()
+
+// include isatty
+#if defined(_WIN32) || defined(_WIN64)
+#include <io.h>
+#define isatty _isatty
+#define STDOUT_FILENO 0
+#else
+#include <unistd.h>
+#endif // windows
 
 using namespace eb;
 
-void writeTIFF(const std::string& path, const Bitmap& bitmap)
+void writeTIFF(const std::string& path, DrawContext& bitmap)
 {
-    const uint16_t kTagWidth = 256;
-    const uint16_t kTagHeight = 257;
-    const uint16_t kTagBitsPerSample = 258;
-    const uint16_t kTagPhotometricInterpretation = 262;
-    const uint16_t kTagStripOffsets = 273;
-    const uint16_t kTagSamplesPerPixel = 277;
-    const uint16_t kTagRowsPerStrip = 278;
-    const uint16_t kTagStripByteCounts = 279;
+    constexpr uint16_t kTagWidth = 256;
+    constexpr uint16_t kTagHeight = 257;
+    constexpr uint16_t kTagBitsPerSample = 258;
+    constexpr uint16_t kTagPhotometricInterpretation = 262;
+    constexpr uint16_t kTagStripOffsets = 273;
+    constexpr uint16_t kTagSamplesPerPixel = 277;
+    constexpr uint16_t kTagRowsPerStrip = 278;
+    constexpr uint16_t kTagStripByteCounts = 279;
 
-    const uint16_t kTagValueShort = 3;
-    const uint16_t kTagValueLong = 4;
+    constexpr uint16_t kTagValueShort = 3;
+    constexpr uint16_t kTagValueLong = 4;
 
-    auto writeTag = [](uint16_t tag, uint32_t value, FILE* out) {
+    // MSVC bug: should automatically capture const variables
+    auto writeTag = [kTagValueLong](uint16_t tag, uint32_t value, FILE* out) {
         uint16_t tagType = kTagValueLong;
         uint32_t count = 1;
         fwrite(&tag, sizeof(tag), 1, out);
@@ -86,7 +95,7 @@ public:
     virtual void setup(float dpi) {}
     virtual std::string run() = 0;
     virtual std::string debugImage() const = 0;
-    virtual std::shared_ptr<Bitmap> debugBitmap() const = 0;
+    virtual void writeBitmapToFile(const std::string& path) const = 0;
     virtual void teardown() {}
 
 protected:
@@ -110,7 +119,7 @@ public:
             dpistr << dpi;
             mName += " [" + dpistr.str() + " dpi]";
         }
-        mBitmap = std::make_shared<Bitmap>(mWidth, mHeight, mType, dpi);
+        mBitmap = DrawContext::createBitmap(mType, mWidth, mHeight, dpi);
         mBitmap->fill(mBGColor);
     }
 
@@ -127,9 +136,9 @@ public:
         for (int y = 0; y < mHeight; ++y) {
             for (int x = 0; x < mWidth; ++x) {
                 auto pixel = mBitmap->pixelAt(x, y);
-                s += kHex[int(pixel.red() * 15)];
-                s += kHex[int(pixel.green() * 15)];
-                s += kHex[int(pixel.blue() * 15)];
+                s += kHex[int(pixel.red() * 15.999f)];
+                s += kHex[int(pixel.green() * 15.999f)];
+                s += kHex[int(pixel.blue() * 15.999f)];
                 s += " ";
             }
             s += "\n";
@@ -138,7 +147,10 @@ public:
         return s;
     }
 
-    std::shared_ptr<Bitmap> debugBitmap() const override { return mBitmap; }
+    void writeBitmapToFile(const std::string& path) const override
+    {
+        writeTIFF(path, *mBitmap);
+    }
 
     std::string verifyFillRect(int xpx, int ypx, int widthpx, int heightpx,
                                const Color& bg, const Color& fg)
@@ -191,7 +203,7 @@ protected:
     BitmapType mType;
     int mWidth;
     int mHeight;
-    std::shared_ptr<Bitmap> mBitmap;
+    std::shared_ptr<DrawContext> mBitmap;
     Color mBGColor;
 };
 
@@ -205,15 +217,19 @@ public:
         const int size = 3;
         Color fg(0.0f, 0.0f, 0.0f, 1.0f);
         mBitmap->setFillColor(fg);
-        mBitmap->drawRect(Rect::fromPixels(0, 0, size, size, mBitmap->dpi()), kPaintFill);
+        mBitmap->drawRect(Rect::fromPixels(0, 0, 2 * size, size, mBitmap->dpi()), kPaintFill);
 
         for (int y = 0;  y < size;  ++y) {
             for (int x = 0;  x < size;  ++x) {
                 auto pixel = mBitmap->pixelAt(x, y);
                 if (x < size && y < size) {
-                    if (pixel.toRGBA() != fg.toRGBA()) { return "wrong coordinate system"; }
+                    if (pixel.toRGBA() != fg.toRGBA()) {
+                        return createPixelError("wrong filled pixel", x, y, fg, pixel);
+                    }
                 } else {
-                    if (pixel.toRGBA() != mBGColor.toRGBA()) { return "wrong coordinate system"; }
+                    if (pixel.toRGBA() != mBGColor.toRGBA()) {
+                        return createPixelError("wrong background pixel", x, y, mBGColor, pixel);
+                    }
                 }
             }
         }
@@ -528,7 +544,11 @@ public:
             case kEndCapRound: {
                 float r = 0.5 * strokeWidth;
                 capArea = 3.141592f * r * r;
+#if defined(_WIN32) || defined(_WIN64)
+                acceptableErr = 1.0f;
+#else
                 acceptableErr = 0.5f;
+#endif
                 break;
             }
             case kEndCapSquare:
@@ -605,14 +625,22 @@ public:
                 break;
             case kJoinRound: {
                 joinArea = 0.75f * 3.141592f * halfWidth * halfWidth;
+#if defined(_WIN32) || defined(_WIN64)
+                acceptableErr = 1.0f;
+#else
                 acceptableErr = 0.5f;
+#endif
                 break;
             }
             case kJoinBevel:
                 // The bevel is miter chopped off, so in the case of a square,
                 // the chopped off area is a triangle
                 joinArea = 3.0f * (0.5f * halfWidth * halfWidth);
+#if defined(_WIN32) || defined(_WIN64)
+                acceptableErr = 2.0f;
+#else
                 acceptableErr = 0.25f;
+#endif
                 break;
         }
         float expectedArea = lineArea + joinArea;
@@ -788,6 +816,65 @@ private:
     int mStrokeWidth;
 };
 
+class AlphaBlendTest : public BitmapTest
+{
+public:
+    AlphaBlendTest() : BitmapTest("alpha blending", 13, 13) {}
+
+    std::string run() override
+    {
+        Color bg = Color::kBlack;
+        Color fill1(1.0f, 0.0f, 0.0f, 0.5f);
+        Color fill2(0.0f, 0.0f, 1.0f, 0.5f);
+        Color blended1(0.5f, 0.0f, 0.0f, 1.0f);
+        Color blended2(0.0f, 0.0f, 0.5f, 1.0f);
+        Color blended(0.25f, 0.0f, 0.5f, 1.0f);
+        auto dpi = mBitmap->dpi();
+        auto rect1 = Rect::fromPixels(1, 1, 6, 5, dpi);
+        auto rect2 = Rect::fromPixels(3, 3, 6, 5, dpi);
+        auto intersection = Rect::fromPixels(3, 3, 4, 3, dpi);
+
+        mBitmap->fill(bg);
+        mBitmap->setFillColor(fill1);
+        mBitmap->drawRect(rect1, kPaintFill);
+        mBitmap->setFillColor(fill2);
+        mBitmap->drawRect(rect2, kPaintFill);
+
+        auto onePx = PicaPt::fromPixels(1, dpi);
+        rect1.width -= onePx;
+        rect1.height -= onePx;
+        rect2.width -= onePx;
+        rect2.height -= onePx;
+        intersection.width -= onePx;
+        intersection.height -= onePx;
+
+        for (int y = 0;  y < mHeight;  ++y) {
+            for (int x = 0;  x < mWidth;  ++x) {
+                auto pixel = mBitmap->pixelAt(x, y);
+                auto p = Point::fromPixels(x, y, dpi);
+                if (intersection.contains(p)) {
+                    if (pixel.toRGBA() != blended.toRGBA()) {
+                        return createPixelError("bad blended pixel", x, y, blended, pixel);
+                    }
+                } else if (rect1.contains(p)) {
+                    if (pixel.toRGBA() != blended1 .toRGBA()) {
+                        return createPixelError("bad rect1 pixel", x, y, blended1, pixel);
+                    }
+                } else if (rect2.contains(p)) {
+                    if (pixel.toRGBA() != blended2.toRGBA()) {
+                        return createPixelError("bad rect2 pixel", x, y, blended2, pixel);
+                    }
+                } else {
+                    if (pixel.toRGBA() != bg.toRGBA()) {
+                        return createPixelError("bad background pixel", x, y, bg, pixel);
+                    }
+                }
+            }
+        }
+        return "";
+    }
+};
+
 class RoundedRectTest : public BitmapTest
 {
 public:
@@ -874,7 +961,7 @@ public:
             }
         }
 
-        float acceptableErr = 0.25f;
+        float acceptableErr = 0.99f;  // macOS < 0.25;  win32 < 1.0
         float expectedArea = 3.141592f * 0.5 * r.width.toPixels(dpi) * 0.5 * r.height.toPixels(dpi);
         if (std::abs(total - expectedArea) > acceptableErr) {
             return createFloatError("wrong area", expectedArea, total, "px^2");
@@ -916,12 +1003,94 @@ public:
         auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
         auto clip = Rect::fromPixels(margin, margin, mWidth - 3 * margin, mHeight - 3 * margin, dpi);
 
-        BezierPath path;
-        path.addRect(clip);
+        auto path = mBitmap->createBezierPath();
+        path->addRect(clip);
         mBitmap->clipToPath(path);
         mBitmap->setFillColor(fg);
         mBitmap->drawRect(r, kPaintFill);
         return verifyFillRect(margin, margin, mWidth - 3 * margin, mHeight - 3 * margin, mBGColor, fg);
+    }
+};
+
+class SaveRestoreTest : public BitmapTest
+{
+public:
+    SaveRestoreTest() : BitmapTest("save/restore", 13, 15) {}
+
+    std::string run() override
+    {
+        Color fill1(1.0f, 0.0f, 0.0f, 1.0f);
+        Color stroke1(1.0f, 1.0f, 0.0f, 1.0f);
+        Color fill2(0.0f, 0.0f, 1.0f, 1.0f);
+        auto dpi = mBitmap->dpi();
+        auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
+        int inset1 = 1;
+        auto clip1 = r.insetted(PicaPt::fromPixels(inset1, dpi), PicaPt::fromPixels(inset1, dpi));
+        mBitmap->clipToRect(clip1);
+        mBitmap->setStrokeWidth(PicaPt::fromPixels(2, dpi));
+        mBitmap->setStrokeColor(stroke1);
+        mBitmap->setFillColor(fill1);
+        mBitmap->save();
+
+        mBitmap->setStrokeWidth(PicaPt::fromPixels(1, dpi));
+        mBitmap->setStrokeColor(Color::kBlack);
+        mBitmap->setStrokeDashes({ PicaPt::fromPixels(3, dpi), PicaPt::fromPixels(3, dpi) }, PicaPt(0));
+        mBitmap->setFillColor(fill2);
+        int inset2 = 3;
+        auto path = mBitmap->createBezierPath();
+        path->addRoundedRect(r.insetted(PicaPt::fromPixels(inset2, dpi),
+                                        PicaPt::fromPixels(inset2, dpi)),
+                             PicaPt::fromPixels(3, dpi));
+        mBitmap->clipToPath(path);
+        auto innerClip = Rect::fromPixels(0, 6, mWidth, 2, dpi);
+        mBitmap->clipToRect(innerClip);
+        auto innerRect = Rect::fromPixels(inset2, 6, mWidth - 2 * inset2, 2, dpi);  // this is the actual clip rect
+        // Translate a bit to test that the transformations are restored properly
+        mBitmap->translate(PicaPt::fromPixels(inset2, dpi), PicaPt::fromPixels(inset2, dpi));
+        mBitmap->drawRect(r, kPaintFill);  // but paint the entire thing to test clipping
+        mBitmap->restore();
+
+        // Draw a rect so that it is clipped (to test proper clip rect)
+        auto rect1requested = Rect::fromPixels(0, 0, mWidth, inset1 + 1, dpi);
+        mBitmap->drawRect(rect1requested, kPaintFill);
+        auto rect1 = Rect::fromPixels(inset1, inset1, mWidth - 2 * inset1, 1, dpi);
+
+        // Draw a line; should have proper width (2), color, and dashes (solid)
+        mBitmap->drawLines({ Point::fromPixels(0, 10, dpi),
+                             Point::fromPixels(mWidth, 10, dpi) });
+        auto lineRect = Rect::fromPixels(inset1, 9, mWidth - 2 * inset1, 2, dpi);
+
+        // Shrink the rects so that contains() will work will pixel values
+        auto onePx = PicaPt::fromPixels(1, dpi);
+        innerRect.width -= onePx;
+        innerRect.height -= onePx;
+        rect1.width -= onePx;
+        rect1.height -= onePx;
+        lineRect.width -= onePx;
+        lineRect.height -= onePx;
+
+        for (int y = 0;  y < mHeight;  ++y) {
+            for (int x = 0;  x < mWidth;  ++x) {
+                auto pixel = mBitmap->pixelAt(x, y);
+                auto p = Point::fromPixels(x, y, dpi);
+                if (innerRect.contains(p)) {
+                    if (pixel.toRGBA() != fill2.toRGBA()) {
+                        return createPixelError("bad innerRect pixel", x, y, fill2, pixel);
+                    }
+                } else if (rect1.contains(p)) {
+                    if (pixel.toRGBA() != fill1.toRGBA()) {
+                        return createPixelError("bad rect1 pixel", x, y, fill1, pixel);
+                    }
+                } else if (lineRect.contains(p)) {
+                    if (pixel.toRGBA() != stroke1.toRGBA()) {
+                        return createPixelError("bad line pixel", x, y, stroke1, pixel);
+                    }
+                } else if (pixel.toRGBA() != mBGColor.toRGBA()) {
+                    return createPixelError("bad background pixel", x, y, mBGColor, pixel);
+                }
+            }
+        }
+        return "";
     }
 };
 
@@ -941,7 +1110,7 @@ public:
 
     std::string run() override
     {
-        float acceptableErr = 0.5;
+        float acceptableErr = 1.0f;  // macOS: 0.5, Windows: 1.0
         Color bg = Color::kBlack;
         Color fg = Color::kRed;
         Color baselineColor = Color::kBlue;
@@ -949,6 +1118,9 @@ public:
         Font arial(mFontName, PicaPt::fromPixels(mPointSize, dpi));
         auto metrics = arial.metrics(*mBitmap);
 
+        if (metrics.ascent.toPixels(dpi) == 0.0f || metrics.ascent.toPixels(dpi) == 0.0f) {
+            return "Font does exist: metrics are 0";
+        }
 //        if (metrics.lineHeight.toPixels(dpi) != float(mPointSize)) {
 //            return createFloatError("incorrect line height", mPointSize, metrics.lineHeight.toPixels(dpi));
 //        }
@@ -1042,12 +1214,36 @@ protected:
     float mPointSize;
 };
 
+class BadFontTest : public BitmapTest
+{
+    static constexpr int kFontHeight = 20;
+    static constexpr int kMargin = 1;
+public:
+    BadFontTest() : BitmapTest("non-existant font",
+        3 * kFontHeight / 4, kFontHeight + 2 * kMargin)
+    {}
+
+    std::string run() override
+    {
+        auto dpi = mBitmap->dpi();
+        Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
+        auto metrics = font.metrics(*mBitmap);
+        if (metrics.ascent != PicaPt(0) || metrics.descent != PicaPt(0)) {
+            return "Expected non-existent font to have zero metrics";
+        }
+        // TODO: what is the expected behavior if we attempt to draw?
+        //    macOS:   nothing shows up
+        //    Windows: uses a font, but appears to be the wrong size
+        return "";
+    }
+};
+
 class FontStyleTest : public BitmapTest
 {
     // Larger fonts make italics easier to detect since the tilt angle is small
     // and small fonts don't have enough "time" to move far horizontally between
     // the top and bottom of the glyph.
-    static constexpr int kFontHeight = 16;
+    static constexpr int kFontHeight = 20;
     static constexpr int kMargin = 1;
 public:
     FontStyleTest() : BitmapTest("font style", 10, kFontHeight + 2 * kMargin)
@@ -1061,7 +1257,7 @@ public:
         auto dpi = mBitmap->dpi();
         Font font("Arial", PicaPt::fromPixels(kFontHeight, dpi));
         // Assume that the ascents of the different styles don't change much
-        mAscent = font.metrics(*mBitmap).ascent.toPixels(dpi);
+        mCapHeight = font.metrics(*mBitmap).capHeight.toPixels(dpi);
         auto p = Point::fromPixels(kMargin, kMargin, dpi);
         mBitmap->setFillColor(fg);
         mBitmap->drawText("I", p, font, kPaintFill);
@@ -1095,7 +1291,6 @@ public:
         return "";
     }
 
-
     bool isItalic() const
     {
         // Check that we are not non-italic (regular/bold). If we have a column
@@ -1122,7 +1317,7 @@ public:
         int height = maxY - minY;
         int width = maxX - minX;
 
-        return (float(height) / float(width) < 3.0f);
+        return (float(height) / float(width) < 5.0f);
     }
 
     bool isBold() const
@@ -1134,25 +1329,34 @@ public:
             total += pixel.red();
         }
         // Bolding is subtle: 16pt Arial has 1.784 regular, 1.847 italic, 2.58 bold
-        return total >= 2.0f;
+        //                    20pt Arial has 2.09 regular, 2.98 bold (Windows)
+        return total >= 2.25f;
     }
 
     bool isVertical() const
     {
+        float avgColumnTotal = 0.0f;
+        int n = 0;
         for (int x = 0;  x < mWidth;  ++x) {
             float columnTotal = 0.0f;
             for (int y = 0;  y < mHeight;  ++y) {
                 auto pixel = mBitmap->pixelAt(x, y);
-                columnTotal += pixel.red();
+//                columnTotal += pixel.red();
+                if (pixel.red() > 0.8f) {
+                    columnTotal += pixel.red();
+                }
             }
-            if (columnTotal >= mAscent - 2.0f) {  // -2 in case of fractional pixels at top/bottom
-                return false;
+            if (columnTotal > 0.0f) {
+                avgColumnTotal += columnTotal;
+                n += 1;
             }
         }
+        avgColumnTotal /= float(n);
+        return (avgColumnTotal >= mCapHeight - 2.0f);
     }
 
 private:
-    float mAscent = 0.0f;
+    float mCapHeight = 0.0f;
 };
 
 class StrokedTextTest : public BitmapTest
@@ -1231,22 +1435,22 @@ public:
 
     std::string run() override
     {
-        Color bgColor(20, 255, 43, 255);
-        Color rect1Color(255, 240, 30, 255);
-        Color rect2Color(15, 255, 200, 255);
-        Bitmap src(9, 11, kBitmapRGB);
+        Color bgColor(51, 255, 68, 255);      // 0x33ff44ff
+        Color rect1Color(255, 187, 34, 255);  // 0xffbb22ff
+        Color rect2Color(17, 255, 204, 255);  // 0x11ffccff
+        auto src = DrawContext::createBitmap(kBitmapRGB, 9, 11);
         auto destDPI = mBitmap->dpi();
-        auto srcDPI = src.dpi();
+        auto srcDPI = src->dpi();
         auto rect1 = Rect::fromPixels(0, 0, 4, 2, srcDPI);
         auto rect2 = Rect::fromPixels(5, 3, 3, 5, srcDPI);
-        auto destRect = Rect::fromPixels(2, 2, src.width(), src.height(), destDPI);
+        auto destRect = Rect::fromPixels(2, 2, src->width(), src->height(), destDPI);
 
-        src.fill(bgColor);
-        src.setFillColor(rect1Color);
-        src.drawRect(rect1, kPaintFill);
-        src.setFillColor(rect2Color);
-        src.drawRect(rect2, kPaintFill);
-        mBitmap->drawBitmap(src, destRect);
+        src->fill(bgColor);
+        src->setFillColor(rect1Color);
+        src->drawRect(rect1, kPaintFill);
+        src->setFillColor(rect2Color);
+        src->drawRect(rect2, kPaintFill);
+        mBitmap->drawImage(src->copyToImage(), destRect);
 
         // writeTIFF("/tmp/debug-blit.tiff", src); // debugging
 
@@ -1333,17 +1537,23 @@ int main(int argc, char *argv[])
         std::make_shared<DashTest>(),
         std::make_shared<RectStrokeAndFillTest>(1),
         std::make_shared<RectStrokeAndFillTest>(2),
+        std::make_shared<AlphaBlendTest>(),
         std::make_shared<TestTransform>(),
         std::make_shared<EllipseTest>(),
         std::make_shared<RoundedRectTest>(),
         // Don't need to test drawing a BezierPath, since rounded rects use that internally
         std::make_shared<ClipRectTest>(),
         std::make_shared<ClipPathTest>(),
+        std::make_shared<SaveRestoreTest>(),
         std::make_shared<FontTest>("Arial", 20),
         std::make_shared<FontTest>("Georgia", 20),
+        // std::make_shared<FontTest>("Courier New", 20),
+#if !defined(_WIN32) && !defined(_WIN64)
         std::make_shared<FontTest>("Helvetica", 20),
         std::make_shared<FontTest>("Helvetica", 21),
         std::make_shared<FontTest>("Helvetica", 22),
+#endif // !_WIN32 && !_WIN64
+        std::make_shared<BadFontTest>(),
         std::make_shared<FontStyleTest>(),
         std::make_shared<StrokedTextTest>(),
         std::make_shared<ImageTest>(),
@@ -1358,9 +1568,6 @@ int main(int argc, char *argv[])
         int failed = 0;
         t.setup(dpi);
         auto err = t.run();
-        auto image = t.debugImage();
-        auto bitmap = t.debugBitmap();
-        t.teardown();
 
         std::cout << "[";
         if (!err.empty()) {
@@ -1371,13 +1578,13 @@ int main(int argc, char *argv[])
         }
         std::cout << "] " << t.name() << std::endl;
 
-        if (!err.empty()) {
+        if (failed) {
             std::cout << "       " << err << std::endl;
-            std::cout << image;  // has an ending \n
-            if (bitmap) {
-                writeTIFF("/tmp/error.tiff", *bitmap);
-            }
+            std::cout << t.debugImage();  // has an ending \n
+            t.writeBitmapToFile("/tmp/error.tiff");
         }
+
+        t.teardown();
         return failed;
     };
 

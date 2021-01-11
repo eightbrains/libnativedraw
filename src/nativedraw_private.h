@@ -3,6 +3,7 @@
 
 #include "nativedraw.h"
 
+#include <functional>
 #include <unordered_map>
 
 namespace ND_NAMESPACE {
@@ -54,6 +55,41 @@ protected:
     std::unordered_map<HashType, Rsrc> mHash2Rsrc;
     CreateFunc mCreate;
     DestroyFunc mDestroy;
+};
+
+struct BezierPath::Impl
+{
+    struct Command
+    {
+        enum Action { kMoveTo = 0, kLineTo, kQuadraticTo, kCubicTo, kClose };
+
+        Action cmd;
+        Point p1;
+        Point p2;
+        Point p3;
+
+        explicit Command(Action c) : cmd(c) { assert(c == kClose); }
+
+        Command(Action c, const Point& p)
+            : cmd(c), p1(p)
+        {
+            assert(c == kMoveTo || c == kLineTo);
+        }
+
+        Command(Action c, const Point& p1_, const Point& p2_)
+            : cmd(c), p1(p1_), p2(p2_)
+        {
+            assert(c == kQuadraticTo);
+        }
+
+        Command(Action c, const Point& p1_, const Point& p2_, const Point& p3_)
+            : cmd(c), p1(p1_), p2(p2_), p3(p3_)
+        {
+            assert(c == kCubicTo);
+        }
+    };
+
+    std::vector<Command> commands;
 };
 
 } // namespace $ND_NAMESPACE

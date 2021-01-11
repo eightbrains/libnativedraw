@@ -6,7 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(LIB_HEADERS src/nativedraw.h
                 src/nativedraw_private.h)
-set(LIB_SOURCES src/nativedraw.cpp)
+set(LIB_SOURCES src/nativedraw.cpp
+                src/nativedraw_direct2d.cpp)
 if (APPLE)
     list(APPEND LIB_SOURCES src/nativedraw_macos.mm)
 endif()
@@ -17,6 +18,8 @@ if (APPLE)
     find_library(CORE_GRAPHICS CoreGraphics)
     find_library(APPKIT AppKit)
     target_link_libraries(libnativedraw ${APPKIT} ${CORE_GRAPHICS})
+elseif (WIN32)
+    target_link_libraries(libnativedraw d3d11 d2d1 dwrite)
 endif()
 
 # Tests

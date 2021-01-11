@@ -5,6 +5,8 @@
 #define ND_NAMESPACE eb
 #endif // ND_NAMESPACE
 
+#include <assert.h>
+
 #include <cmath>
 #include <memory>
 #include <string>
@@ -245,12 +247,18 @@ public:
     }
     bool operator!=(const Color& rhs) const { return !this->operator==(rhs); }*/
 
+    std::size_t hash() const;
+
 private:
     float _rgba[4];
 };
 
 class DrawContext;
 
+// Design note:
+// Q: Why not use enum classes?
+// A: We want to be able to export to straight C easily. For C++ they are still in the
+//    $ND_NAMESPACE namespace so they aren't actually global.
 enum FontStyle { kStyleNone = 0, kStyleItalic = 1, kStyleBold = 2, kStyleBoldItalic = 3 };
 enum FontWeight { kWeightAuto = 0,
                   kWeightUltraLight = 100,
@@ -322,46 +330,48 @@ enum PaintMode { kPaintStroke = (1 << 0), kPaintFill = (1 << 1), kPaintStrokeAnd
 class BezierPath
 {
 public:
-    // Command is really an implementation detail and it would be nicer if
-    // we could put this in nativedraw_private.h, but we need it here so that
-    // BezierPath can be allocated on the stack.
-    struct Command
-    {
-        enum Action { kMoveTo = 0, kLineTo, kQuadraticTo, kCubicTo, kClose };
+    BezierPath();
+    virtual ~BezierPath();
 
-        Action cmd;
-        Point p1;
-        Point p2;
-        Point p3;
-
-        explicit Command(Action c) : cmd(c) { assert(c == kClose); }
-
-        Command(Action c, const Point& p)
-            : cmd(c), p1(p)
-        { assert(c == kMoveTo || c == kLineTo); }
-
-        Command(Action c, const Point& p1_, const Point& p2_)
-            : cmd(c), p1(p1_), p2(p2_)
-        { assert(c == kQuadraticTo); }
-
-        Command(Action c, const Point& p1_, const Point& p2_, const Point& p3_)
-            : cmd(c), p1(p1_), p2(p2_), p3(p3_)
-        { assert(c == kCubicTo); }
-    };
-
-    void moveTo(const Point& p);
-    void lineTo(const Point& end);
-    void quadraticTo(const Point& cp1, const Point& end);
-    void cubicTo(const Point& cp1, const Point& cp2, const Point& end);
-    void close();
+    virtual void moveTo(const Point& p);
+    virtual void lineTo(const Point& end);
+    virtual void quadraticTo(const Point& cp1, const Point& end);
+    virtual void cubicTo(const Point& cp1, const Point& cp2, const Point& end);
+    virtual void close();
 
     void addRect(const Rect& r);
     void addRoundedRect(const Rect& r, const PicaPt& radius);
 
-    std::vector<Command> commands;
+    virtual void clearNative() = 0;  // called when path changes
+    virtual void* nativePathForDPI(float dpi, bool isFilled) = 0;
+
+protected:
+    struct Impl;
+    std::unique_ptr<Impl> mImpl;
 };
 
-class Bitmap;
+class Image
+{
+public:
+    Image(void* nativeHandle, int width, int height, float dpi)
+        : mNativeHandle(nativeHandle), mWidth(width), mHeight(height), mDPI(dpi)
+    {}
+    virtual ~Image() {}
+        
+    int width() const { return mWidth;  }
+    int height() const { return mHeight;  }
+    float dpi() const { return mDPI;  }
+
+    virtual void* nativeHandle() const { return mNativeHandle; }
+
+protected:
+    void* mNativeHandle;
+    int mWidth;
+    int mHeight;
+    float mDPI;
+};
+
+enum BitmapType { kBitmapRGB = 0, kBitmapRGBA, kBitmapGreyscale, kBitmapAlpha };
 
 // Implements an abstract drawable:
 // - Origin (0, 0) is in the upper left, +x is to the right, +y is down.
@@ -376,40 +386,51 @@ class Bitmap;
 class DrawContext
 {
 public:
-    DrawContext(void *nativeDC_, int width, int height, float dpi);
+#if __APPLE__
+    static std::shared_ptr<DrawContext> fromCoreGraphics(void* cgcontext, int width, int height, float dpi);
+#endif // __APPLE__
+#if defined(_WIN32) || defined(_WIN64)
+    static std::shared_ptr<DrawContext> fromDirect2D(void* deviceContext, int width, int height, float dpi);
+#endif // _WIN32 || _WIN64
+    static std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height, float dpi = 72.0f);
+
+    DrawContext(void *nativeDC, int width, int height, float dpi);
+    virtual ~DrawContext() {}
+
+    virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
 
     int width() const { return mWidth; }
     int height() const { return mHeight; }
     float dpi() const { return mDPI; }
 
-    void save();
-    void restore();
+    virtual void save() = 0;
+    virtual void restore() = 0;
 
-    void translate(const PicaPt& dx, const PicaPt& dy);
-    void rotate(float degrees);
-    void scale(float sx, float sy);
+    virtual void translate(const PicaPt& dx, const PicaPt& dy) = 0;
+    virtual void rotate(float degrees) = 0;
+    virtual void scale(float sx, float sy) = 0;
 
-    void setFillColor(const Color& color);
+    virtual void setFillColor(const Color& color) = 0;
 
-    void setStrokeColor(const Color& color);
-    void setStrokeWidth(const PicaPt& w);
-    void setStrokeEndCap(EndCapStyle cap);
-    void setStrokeJoinStyle(JoinStyle join);
-    void setStrokeDashes(const std::vector<PicaPt> lengths, const PicaPt& offset);
+    virtual void setStrokeColor(const Color& color) = 0;
+    virtual void setStrokeWidth(const PicaPt& w) = 0;
+    virtual void setStrokeEndCap(EndCapStyle cap) = 0;
+    virtual void setStrokeJoinStyle(JoinStyle join) = 0;
+    virtual void setStrokeDashes(const std::vector<PicaPt> lengths, const PicaPt& offset) = 0;
 
     // Sets the entire context to 'color'. For opaque colors this is the
     // same as drawing a filled rectangle the same size as the context
     // (but does not change the fill color like setFillColor() would).
     // Is affected by clipping path.
-    void fill(const Color& color);
+    virtual void fill(const Color& color) = 0;
     // Sets contents of rect to be transparent
-    void clearRect(const Rect& rect);
+    virtual void clearRect(const Rect& rect) = 0;
 
-    void drawLines(const std::vector<Point>& lines);
-    void drawRect(const Rect& rect, PaintMode mode);
-    void drawRoundedRect(const Rect& rect, const PicaPt& radius, PaintMode mode);
-    void drawEllipse(const Rect& rect, PaintMode mode);
-    void drawPath(const BezierPath& path, PaintMode mode);
+    virtual void drawLines(const std::vector<Point>& lines) = 0;
+    virtual void drawRect(const Rect& rect, PaintMode mode) = 0;
+    virtual void drawRoundedRect(const Rect& rect, const PicaPt& radius, PaintMode mode);  // has impl
+    virtual void drawEllipse(const Rect& rect, PaintMode mode) = 0;
+    virtual void drawPath(std::shared_ptr<BezierPath> path, PaintMode mode) = 0;
     // Note that the text sits ON the baseline, which will be aligned with
     // the vertical pixel boundary. As a result, if the baseline is at y=16,
     // The ascent of the glyph will end at pixel 15 (since y=16 is in-between
@@ -417,16 +438,23 @@ public:
     // be made for readability, and platforms may choose to to place the
     // baseline so that in the above example the ascent actually ends at
     // pixel 16.
-    void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode);
-    void drawBitmap(const Bitmap& bitmap, const Rect& r);
+    virtual void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode) = 0;
+    virtual void drawImage(std::shared_ptr<Image> image, const Rect& r) = 0;
 
-    void clipToRect(const Rect& rect);
-    void clipToPath(const BezierPath& path);
+    virtual void clipToRect(const Rect& rect) = 0;
+    // The path will be retained; the caller may let its copy go out of scope.
+    // (However, reusing same path on the next draw will give better performance,
+    // since the OS resources will not need to be recreated.)
+    virtual void clipToPath(std::shared_ptr<BezierPath> path) = 0;
 
     void* nativeDC() const { return mNativeDC; }
+    // This function can be slow.
+    // Design note: this is not const because it's easier in Windows that way.
+    virtual Color pixelAt(int x, int y) = 0;
+    virtual std::shared_ptr<Image> copyToImage() = 0;
 
 protected:
-    void setNativeDC(void *nativeDC);  // in case don't have it at construction time
+    virtual void setNativeDC(void *nativeDC);  // in case don't have it at construction time
 
 protected:
     // This is void* so that we don't pull in platform header files.
@@ -434,27 +462,6 @@ protected:
     float mDPI;
     int mWidth;
     int mHeight;
-
-#if __APPLE__
-private:
-    struct Private;
-    std::unique_ptr<Private> mPrivate;
-#endif //__APPLE__
-};
-
-enum BitmapType { kBitmapRGB = 0, kBitmapRGBA, kBitmapGreyscale, kBitmapAlpha };
-
-class Bitmap : public DrawContext
-{
-public:
-    Bitmap(int width, int height, BitmapType type, float dpi = 72.0f);
-    ~Bitmap();
-
-    Color pixelAt(int x, int y) const;
-
-private:
-    class Impl;
-    std::unique_ptr<Impl> mImpl;
 };
 
 } // namespace $ND_NAMESPACE

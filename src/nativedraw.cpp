@@ -1,9 +1,11 @@
 #include "nativedraw.h"
 #include "nativedraw_private.h"
 
+#include <iostream>
+
 namespace ND_NAMESPACE {
 
-PicaPt operator+(float lhs, const PicaPt& rhs)
+    PicaPt operator+(float lhs, const PicaPt& rhs)
     { return PicaPt(lhs + rhs.pt); }
 PicaPt operator*(float lhs, const PicaPt& rhs)
     { return PicaPt(lhs * rhs.pt); }
@@ -18,6 +20,16 @@ const Color Color::kYellow(1.0f, 1.0f, 0.0f, 1.0f);
 const Color Color::kGreen(0.0f, 1.0f, 0.0f, 1.0f);
 const Color Color::kBlue(0.0f, 0.0f, 1.0f, 1.0f);
 const Color Color::kPurple(1.0f, 0.0f, 1.0f, 1.0f);
+
+std::size_t Color::hash() const
+{
+    std::size_t result = 0;
+    hash_combine(result, _rgba[0]);
+    hash_combine(result, _rgba[1]);
+    hash_combine(result, _rgba[2]);
+    hash_combine(result, _rgba[3]);
+    return result;
+}
 
 //-----------------------------------------------------------------------------
 struct Font::Impl
@@ -68,6 +80,7 @@ Font& Font::setFamily(const std::string& family)
 {
     mImpl->family = family;
     mImpl->computeHash();
+    return *this;
 }
 
 PicaPt Font::pointSize() const { return mImpl->pointSize; }
@@ -76,6 +89,7 @@ Font& Font::setPointSize(const PicaPt& size)
 {
     mImpl->pointSize = size;
     mImpl->computeHash();
+    return *this;
 }
 
 FontStyle Font::style() const { return mImpl->style; }
@@ -84,6 +98,7 @@ Font& Font::setStyle(FontStyle style)
 {
     mImpl->style = style;
     mImpl->computeHash();
+    return *this;
 }
 
 FontWeight Font::weight() const { return mImpl->weight; }
@@ -97,6 +112,7 @@ Font& Font::setWeight(FontWeight w)
 
     mImpl->weight = w;
     mImpl->computeHash();
+    return *this;
 }
 
 // lineHeight(): platform-specific
@@ -109,43 +125,69 @@ Font Font::fontWithPointSize(const PicaPt& pointSize) const
 
 Font Font::fontWithStyle(FontStyle style) const
 {
-    return Font(family(), pointSize(), style, weight());
+    auto w = weight();
+    if ((style & kStyleBold) && w < kWeightBold) {
+        w = kWeightBold;
+    }
+    if (!(style & kStyleBold) && w >= kWeightBold) {
+        w = kWeightRegular;
+    }
+    return Font(family(), pointSize(), style, w);
 }
 
 Font Font::fontWithWeight(FontWeight w) const
 {
-    return Font(family(), pointSize(), style(), w);
+    auto s = style();
+    if (w < kWeightBold) {
+        s = FontStyle(int(s) & (~kStyleBold));
+    }
+    return Font(family(), pointSize(), s, w);
 }
 
 //-----------------------------------------------------------------------------
+BezierPath::BezierPath()
+    : mImpl(new BezierPath::Impl())
+{
+}
+
+BezierPath::~BezierPath()
+{
+}
+
 void BezierPath::moveTo(const Point& p)
 {
-    commands.emplace_back(BezierPath::Command::kMoveTo, p);
+    clearNative();
+    mImpl->commands.emplace_back(BezierPath::Impl::Command::kMoveTo, p);
 }
 
 void BezierPath::lineTo(const Point& end)
 {
-    commands.emplace_back(BezierPath::Command::kLineTo, end);
+    clearNative();
+    mImpl->commands.emplace_back(BezierPath::Impl::Command::kLineTo, end);
 }
 
 void BezierPath::quadraticTo(const Point& cp1, const Point& end)
 {
-    commands.emplace_back(BezierPath::Command::kQuadraticTo, cp1, end);
+    clearNative();
+    mImpl->commands.emplace_back(BezierPath::Impl::Command::kQuadraticTo, cp1, end);
 }
 
 void BezierPath::cubicTo(const Point& cp1, const Point& cp2, const Point& end)
 {
-    commands.emplace_back(BezierPath::Command::kCubicTo, cp1, cp2, end);
+    clearNative();
+    mImpl->commands.emplace_back(BezierPath::Impl::Command::kCubicTo, cp1, cp2, end);
 }
 
 void BezierPath::close()
 {
-    commands.emplace_back(BezierPath::Command::kClose);
+    mImpl->commands.emplace_back(BezierPath::Impl::Command::kClose);
+    clearNative();
 }
 
 void BezierPath::addRect(const Rect& r)
 {
-    commands.reserve(commands.size() + 4);
+    clearNative();
+    mImpl->commands.reserve(mImpl->commands.size() + 4);
     moveTo(r.upperLeft());
     lineTo(r.upperRight());
     lineTo(r.lowerRight());
@@ -155,7 +197,8 @@ void BezierPath::addRect(const Rect& r)
 
 void BezierPath::addRoundedRect(const Rect& r, const PicaPt& radius)
 {
-    commands.reserve(commands.size() + 9);
+    clearNative();
+    mImpl->commands.reserve(mImpl->commands.size() + 9);
 
     // This is the weight for control points for a 4-curve sphere.
     // Normally 4 cubic splines use 0.55228475, but a better number was
@@ -194,10 +237,25 @@ void BezierPath::addRoundedRect(const Rect& r, const PicaPt& radius)
 }
 
 //-----------------------------------------------------------------------------
+DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi)
+    : mNativeDC(nativeDC), mWidth(width), mHeight(height), mDPI(dpi)
+{
+}
+void DrawContext::setNativeDC(void* nativeDC)
+{
+    mNativeDC = nativeDC;
+    setFillColor(Color::kBlack);
+    setStrokeColor(Color::kBlack);
+    setStrokeEndCap(kEndCapButt);
+    setStrokeJoinStyle(kJoinMiter);
+    setStrokeWidth(PicaPt(1));  // 1pt line; this is probably different than platform default
+    setStrokeDashes({}, PicaPt(0));
+}
+
 void DrawContext::drawRoundedRect(const Rect& rect, const PicaPt& radius, PaintMode mode)
 {
-    BezierPath path;
-    path.addRoundedRect(rect, radius);
+    auto path = createBezierPath();
+    path->addRoundedRect(rect, radius);
     drawPath(path, mode);
 }
 

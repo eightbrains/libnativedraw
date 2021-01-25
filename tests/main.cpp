@@ -20,6 +20,22 @@
 
 using namespace eb;
 
+std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+                                          float dpi)
+{
+#if __APPLE__
+    return DrawContext::createCoreGraphicsBitmap(type, width, height, dpi);
+#elif defined(__unix__)
+    return DrawContext::createCairoBitmap(type, width, height, dpi);
+#elif defined(_WIN32) || defined(_WIN64)
+    return DrawContext::createDirect2DBitmap(type, width, height, dpi);
+#else
+    std::cerr << "[ERROR] this platform does not have a bitmap creator"
+    assert(false);
+    return nullptr;
+#endif
+}
+
 void writeTIFF(const std::string& path, DrawContext& bitmap)
 {
     constexpr uint16_t kTagWidth = 256;
@@ -119,7 +135,8 @@ public:
             dpistr << dpi;
             mName += " [" + dpistr.str() + " dpi]";
         }
-        mBitmap = DrawContext::createBitmap(mType, mWidth, mHeight, dpi);
+
+        mBitmap = createBitmap(mType, mWidth, mHeight, dpi);
         mBitmap->fill(mBGColor);
     }
 
@@ -916,7 +933,7 @@ public:
             }
         }
 
-        float acceptableError = 0.1 * float(mRadius);
+        float acceptableError = 0.125f * float(mRadius);  // 0.1 is okay for macOS/win, cairo needs 0.125
         float quarterCircle = 0.25f * 3.141592f * float(mRadius * mRadius);
         float squareMinusQuarterCricle = float(mRadius * mRadius) - quarterCircle;
         float expectedArea = r.width.toPixels(dpi) * r.height.toPixels(dpi) - 4.0f * squareMinusQuarterCricle;
@@ -934,6 +951,7 @@ class EllipseTest : public BitmapTest
 {
 public:
     EllipseTest() : BitmapTest("ellipse", 13, 10) {}
+//    EllipseTest() : BitmapTest("ellipse", 19, 13) {}
 
     std::string run() override
     {
@@ -1442,7 +1460,7 @@ public:
         Color bgColor(51, 255, 68, 255);      // 0x33ff44ff
         Color rect1Color(255, 187, 34, 255);  // 0xffbb22ff
         Color rect2Color(17, 255, 204, 255);  // 0x11ffccff
-        auto src = DrawContext::createBitmap(kBitmapRGB, 9, 11);
+        auto src = createBitmap(kBitmapRGB, 9, 11, 72 /*dpi*/);
         auto destDPI = mBitmap->dpi();
         auto srcDPI = src->dpi();
         auto rect1 = Rect::fromPixels(0, 0, 4, 2, srcDPI);

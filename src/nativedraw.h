@@ -39,7 +39,7 @@ struct PicaPt
     PicaPt operator-(float v) const { return PicaPt(pt - v); }
     PicaPt operator*(const PicaPt& v) const { return PicaPt(pt * v.pt); }
     PicaPt operator*(float v) const { return PicaPt(pt * v); }
-    PicaPt operator/(const PicaPt& v) const { return PicaPt(pt / v.pt); }
+    float operator/(const PicaPt& v) const { return pt / v.pt; } // length/length is unitless
     PicaPt operator/(float v) const { return PicaPt(pt / v); }
     PicaPt& operator+=(const PicaPt& v) { pt += v.pt; return *this; }
     PicaPt& operator+=(float v) { pt += v; return *this; }
@@ -47,7 +47,6 @@ struct PicaPt
     PicaPt& operator-=(float v) { pt -= v; return *this; }
     PicaPt& operator*=(const PicaPt& v) { pt *= v.pt; return *this; }
     PicaPt& operator*=(float v) { pt *= v; return *this; }
-    PicaPt& operator/=(const PicaPt& v) { pt /= v.pt; return *this; }
     PicaPt& operator/=(float v) { pt /= v; return *this; }
 
     bool operator==(const PicaPt& rhs) const { return (pt == rhs.pt); }
@@ -77,9 +76,15 @@ struct Point
     Point& operator+=(const Point& rhs)
         { x += rhs.x; y += rhs.y; return *this; }
 
+    Point operator-(const Point& rhs) { return Point(x - rhs.x, y - rhs.y); }
+    Point& operator-=(const Point& rhs)
+        { x -= rhs.x; y -= rhs.y; return *this; }
+
     PicaPt x;
     PicaPt y;
 };
+
+Point operator*(float lhs, const Point& rhs);
 
 struct Size
 {
@@ -285,6 +290,12 @@ class Font
     //    change the global scale factor in the OS. All these add up to
     //    make it better that Font is just a description, and the context
     //    creates the OS font as necessary (with heavy caching, of course).
+    // Q: Since fonts are dependent on the graphics system, why not make a
+    //    factory method in DrawContext, especially for getting font metrics?
+    // A: Font needs to be allocatable without knowledge of the draw context,
+    //    so that things like widgets can set their fonts in the constructor
+    //    before they know where they will be rendered, otherwise using
+    //    fonts gets really inconvenient.
 public:
     struct Metrics
     {
@@ -341,6 +352,7 @@ public:
 
     void addRect(const Rect& r);
     void addRoundedRect(const Rect& r, const PicaPt& radius);
+    void addEllipse(const Rect& r);
 
     virtual void clearNative() = 0;  // called when path changes
     virtual void* nativePathForDPI(float dpi, bool isFilled) = 0;
@@ -388,11 +400,16 @@ class DrawContext
 public:
 #if __APPLE__
     static std::shared_ptr<DrawContext> fromCoreGraphics(void* cgcontext, int width, int height, float dpi);
-#endif // __APPLE__
-#if defined(_WIN32) || defined(_WIN64)
+    static std::shared_ptr<DrawContext> createCoreGraphicsBitmap(BitmapType type, int width, int height,
+                                                                 float dpi = 72.0f);
+#elif defined(__unix__)
+    static std::shared_ptr<DrawContext> fromCairo(void* cairo_t, int width, int height, float dpi);
+    static std::shared_ptr<DrawContext> createCairoBitmap(void* cairo_t, int width, int height, float dpi);
+#elif defined(_WIN32) || defined(_WIN64)
     static std::shared_ptr<DrawContext> fromDirect2D(void* deviceContext, int width, int height, float dpi);
-#endif // _WIN32 || _WIN64
-    static std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height, float dpi = 72.0f);
+    static std::shared_ptr<DrawContext> createDirect2DBitmap(BitmapType type, int width, int height,
+                                                             float dpi = 72.0f);
+#endif
 
     DrawContext(void *nativeDC, int width, int height, float dpi);
     virtual ~DrawContext() {}
@@ -439,7 +456,7 @@ public:
     // baseline so that in the above example the ascent actually ends at
     // pixel 16.
     virtual void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode) = 0;
-    virtual void drawImage(std::shared_ptr<Image> image, const Rect& r) = 0;
+    virtual void drawImage(std::shared_ptr<Image> image, const Rect& destRect) = 0;
 
     virtual void clipToRect(const Rect& rect) = 0;
     // The path will be retained; the caller may let its copy go out of scope.
@@ -453,8 +470,10 @@ public:
     virtual Color pixelAt(int x, int y) = 0;
     virtual std::shared_ptr<Image> copyToImage() = 0;
 
+    virtual Font::Metrics fontMetrics(const Font& font) const = 0;
+
 protected:
-    virtual void setNativeDC(void *nativeDC);  // in case don't have it at construction time
+    void setInitialState();
 
 protected:
     // This is void* so that we don't pull in platform header files.

@@ -2,7 +2,10 @@
 #include "nativedraw.h"
 #include "nativedraw_private.h"
 
+#include <X11/Xlib.h>
+#include <X11/extensions/Xrender.h>
 #include <cairo/cairo.h>
+#include <cairo/cairo-xlib-xrender.h>
 
 #include <iostream>
 
@@ -411,22 +414,37 @@ public:
         if (!fontInfo->metricsInitialized) {
             auto *gc = cairoContext();
             setFont(font);
-            cairo_font_extents_t extents;
-            cairo_font_extents(gc, &extents);
-            fontInfo->metrics.ascent = PicaPt::fromPixels(extents.ascent, mDPI);
-            fontInfo->metrics.descent = PicaPt::fromPixels(extents.descent, mDPI);
-            auto leadingPx = extents.height - extents.ascent - extents.descent;
-            fontInfo->metrics.leading = PicaPt::fromPixels(leadingPx, mDPI);
 
-            // Cairo doesn't have cap-height or x-height, so we need to figure
-            // those out ourselves.
-            cairo_text_extents_t tExt;
-            // cap-height is for flat letters (H,I not A,O which may extend above)
-            cairo_text_extents(gc, "H", &tExt);
-            fontInfo->metrics.capHeight = PicaPt::fromPixels(tExt.height, mDPI);
-            // x-height is obviously height of "x"
-            cairo_text_extents(gc, "x", &tExt);
-            fontInfo->metrics.xHeight = PicaPt::fromPixels(tExt.height, mDPI);
+            auto *face = cairo_get_font_face(gc);
+            std::string familyName = cairo_toy_font_face_get_family(face);
+            // TODO: the toy font API apparently always succeeds
+            if (familyName == font.family()) {
+                cairo_font_extents_t extents;
+                cairo_font_extents(gc, &extents);
+                fontInfo->metrics.ascent = PicaPt::fromPixels(extents.ascent, mDPI);
+                fontInfo->metrics.descent = PicaPt::fromPixels(extents.descent, mDPI);
+                auto leadingPx = extents.height - extents.ascent - extents.descent;
+                fontInfo->metrics.leading = PicaPt::fromPixels(leadingPx, mDPI);
+
+                // Cairo doesn't have cap-height or x-height, so we need to
+                // figure those out ourselves.
+                cairo_text_extents_t tExt;
+                // cap-height is for flat letters (H,I not A,O which may extend
+                // above)
+                cairo_text_extents(gc, "H", &tExt);
+                fontInfo->metrics.capHeight = PicaPt::fromPixels(tExt.height, mDPI);
+                // x-height is obviously height of "x"
+                cairo_text_extents(gc, "x", &tExt);
+                fontInfo->metrics.xHeight = PicaPt::fromPixels(tExt.height, mDPI);
+            } else {
+                fontInfo->metrics.ascent = PicaPt(0);
+                fontInfo->metrics.descent = PicaPt(0);
+                fontInfo->metrics.leading = PicaPt(0);
+                fontInfo->metrics.capHeight = PicaPt(0);
+                fontInfo->metrics.xHeight = PicaPt(0);
+            }
+
+            fontInfo->metricsInitialized = true;
         }
         return fontInfo->metrics;
     }
@@ -490,6 +508,7 @@ private:
 };
 
 //-----------------------------------------------------------------------------
+// This is a CPU-bound bitmap
 class CairoBitmap : public CairoDrawContext
 {
 private:
@@ -563,16 +582,105 @@ public:
     }
 };
 
+class CairoX11Bitmap : public CairoDrawContext
+{
+private:
+    BitmapType mType;
+    Display *mDisplay;
+    Pixmap mPixmap;
+    cairo_surface_t *mSurface;
+    cairo_t *mDC;
+    CairoBitmap *mReadable = nullptr;
+
+public:
+    CairoX11Bitmap(Display *display, BitmapType type, int width, int height,
+                   float dpi = 72.0f)
+        : CairoDrawContext(nullptr, width, height, dpi)
+    {
+        mType = type;
+        mDisplay = display;
+        mPixmap = -1;
+
+        auto drawable = XRootWindow(display, XDefaultScreen(display));
+        Screen *screen = DefaultScreenOfDisplay(display);
+        XRenderPictFormat* pictFormat;
+        Pixmap pixmap;
+        switch (type) {
+            case kBitmapRGBA:
+                pictFormat = XRenderFindStandardFormat(display,
+                                                       PictStandardARGB32);
+                mPixmap = XCreatePixmap(display, drawable, width, height, 32);
+                mSurface = cairo_xlib_surface_create_with_xrender_format(
+                        display, mPixmap, screen, pictFormat, width, height);
+                break;
+            case kBitmapRGB:
+                pictFormat = XRenderFindStandardFormat(display,
+                                                       PictStandardRGB24);
+                mPixmap = XCreatePixmap(display, drawable, width, height, 24);
+                mSurface = cairo_xlib_surface_create_with_xrender_format(
+                            display, mPixmap, screen, pictFormat, width, height);
+                break;
+            case kBitmapGreyscale:
+                pictFormat = XRenderFindStandardFormat(display, PictStandardA8);
+                mPixmap = XCreatePixmap(display, drawable, width, height, 8);
+                mSurface = cairo_xlib_surface_create_with_xrender_format(
+                        display, mPixmap, screen, pictFormat, width, height);
+                break;
+            case kBitmapAlpha:
+                pictFormat = XRenderFindStandardFormat(display, PictStandardA8);
+                mPixmap = XCreatePixmap(display, drawable, width, height, 8);
+                mSurface = cairo_xlib_surface_create_with_xrender_format(
+                        display, mPixmap, screen, pictFormat, width, height);
+                break;
+        }
+        mDC = cairo_create(mSurface);
+        setNativeDC(mDC);
+    }
+
+    ~CairoX11Bitmap()
+    {
+        cairo_destroy(mDC);
+        cairo_surface_destroy(mSurface);
+        XFreePixmap(mDisplay, mPixmap);
+        delete mReadable;
+    }
+
+    Color pixelAt(int x, int y) override
+    {
+        if (mDrawingState == DrawingState::kDrawing) {
+            mDrawingState = DrawingState::kNotDrawing;
+            delete mReadable;
+            mReadable = new CairoBitmap(mType, width(), height(), dpi());
+            auto *readableGC = (cairo_t *)mReadable->nativeDC();
+            cairo_set_source_surface(readableGC, mSurface, 0.0, 0.0);
+            cairo_paint(readableGC);
+        }
+        if (mReadable) {
+            return mReadable->pixelAt(x, y);
+        } else {
+            return Color::kPurple;
+        }
+    }
+
+    std::shared_ptr<Image> copyToImage() override
+    {
+        return std::make_shared<CairoImage>(cairo_surface_reference(mSurface),
+                                            width(), height(), dpi());
+    }
+};
+
 //----------------------------- DrawContext -----------------------------------
 std::shared_ptr<DrawContext> DrawContext::fromCairo(void* cairo_t_, int width, int height, float dpi)
 {
     return std::make_shared<CairoDrawContext>(cairo_t_, width, height, dpi);
 }
 
-std::shared_ptr<DrawContext> DrawContext::createCairoBitmap(BitmapType type, int width, int height,
-                                                            float dpi /*= 72.0f*/)
+std::shared_ptr<DrawContext> DrawContext::createCairoX11Bitmap(
+            void *display, BitmapType type, int width, int height,
+            float dpi /*= 72.0f*/)
 {
-    return std::make_shared<CairoBitmap>(type, width, height, dpi);
+    return std::make_shared<CairoX11Bitmap>((Display*)display, type,
+                                            width, height, dpi);
 }
 
 } // namespace ND_NAMESPACE

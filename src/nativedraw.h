@@ -404,7 +404,7 @@ public:
                                                                  float dpi = 72.0f);
 #elif defined(__unix__)
     static std::shared_ptr<DrawContext> fromCairo(void* cairo_t, int width, int height, float dpi);
-    static std::shared_ptr<DrawContext> createCairoBitmap(void* cairo_t, int width, int height, float dpi);
+    static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi);
 #elif defined(_WIN32) || defined(_WIN64)
     static std::shared_ptr<DrawContext> fromDirect2D(void* deviceContext, int width, int height, float dpi);
     static std::shared_ptr<DrawContext> createDirect2DBitmap(BitmapType type, int width, int height,

@@ -18,6 +18,11 @@
 #include <unistd.h>
 #endif // windows
 
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
+#include <X11/Xlib.h>
+static Display *gXDisplay = nullptr;
+#endif
+
 using namespace eb;
 
 std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
@@ -26,7 +31,7 @@ std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height
 #if __APPLE__
     return DrawContext::createCoreGraphicsBitmap(type, width, height, dpi);
 #elif defined(__unix__)
-    return DrawContext::createCairoBitmap(type, width, height, dpi);
+    return DrawContext::createCairoX11Bitmap(gXDisplay, type, width, height, dpi);
 #elif defined(_WIN32) || defined(_WIN64)
     return DrawContext::createDirect2DBitmap(type, width, height, dpi);
 #else
@@ -1137,7 +1142,7 @@ public:
         Color fg = Color::kRed;
         Color baselineColor = Color::kBlue;
         auto dpi = mBitmap->dpi();
-        Font arial(mFontName, PicaPt::fromPixels(mPointSize, dpi));
+        eb::Font arial(mFontName, PicaPt::fromPixels(mPointSize, dpi));
         auto metrics = arial.metrics(*mBitmap);
 
         if (metrics.ascent.toPixels(dpi) == 0.0f || metrics.ascent.toPixels(dpi) == 0.0f) {
@@ -1241,14 +1246,13 @@ class BadFontTest : public BitmapTest
     static constexpr int kFontHeight = 20;
     static constexpr int kMargin = 1;
 public:
-    BadFontTest() : BitmapTest("non-existant font",
-        3 * kFontHeight / 4, kFontHeight + 2 * kMargin)
+    BadFontTest() : BitmapTest("non-existant font", 5, 5)
     {}
 
     std::string run() override
     {
         auto dpi = mBitmap->dpi();
-        Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
+        eb::Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
         auto metrics = font.metrics(*mBitmap);
         if (metrics.ascent != PicaPt(0) || metrics.descent != PicaPt(0)) {
             return "Expected non-existent font to have zero metrics";
@@ -1277,7 +1281,7 @@ public:
     {
         Color fg = Color::kRed;
         auto dpi = mBitmap->dpi();
-        Font font("Arial", PicaPt::fromPixels(kFontHeight, dpi));
+        eb::Font font("Arial", PicaPt::fromPixels(kFontHeight, dpi));
         // Assume that the ascents of the different styles don't change much
         mCapHeight = font.metrics(*mBitmap).capHeight.toPixels(dpi);
         auto p = Point::fromPixels(kMargin, kMargin, dpi);
@@ -1398,7 +1402,7 @@ public:
         auto strokeWidth = PicaPt::fromPixels(2, dpi);
         // We want a font that is heavy enough that we can tell if it is filled or not.
         // Georgia is thicker than, say, Arial, and bold will help.
-        Font font("Georgia", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
+        eb::Font font("Georgia", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
         Point topLeft = Point::fromPixels(2, 0, dpi);
         int y = kPointSize / 2;
 
@@ -1516,7 +1520,7 @@ public:
 
 /*void TextDebug()
 {
-    Font font("Arial", PicaPt(20));
+    eb::Font font("Arial", PicaPt(20));
     Bitmap bitmap(100, 50, kBitmapRGB);
     auto metrics = font.metrics(bitmap);
     int baselineY = int(metrics.ascent.toPixels(bitmap.dpi()));
@@ -1531,12 +1535,16 @@ public:
     writeTIFF("/tmp/out.tiff", bitmap);
 } */
 
-static std::string kNormal = "\003[0m";
+static std::string kNormal = "\033[0m";
 static std::string kRed = "\033[31m";
 static std::string kGreen = "\033[32m";
 
 int main(int argc, char *argv[])
 {
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
+    gXDisplay = XOpenDisplay(nullptr);
+#endif
+
     std::vector<std::shared_ptr<Test>> test = {
         std::make_shared<CoordinateTest>(),
         std::make_shared<ColorTest>("color readback (RGBA)", kBitmapRGBA),
@@ -1622,5 +1630,10 @@ int main(int argc, char *argv[])
         std::cout << kRed << nFailed << " test" << (nFailed == 1 ? "" : "s")
                   << " FAILED" << kNormal << std::endl;
     }
+
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
+    XCloseDisplay(gXDisplay);
+#endif
+
     return nFailed;  // 0 = success
 }

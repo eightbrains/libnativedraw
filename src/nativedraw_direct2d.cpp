@@ -351,16 +351,6 @@ static ResourceManager<Font, FontInfo> gFontMgr(createFont, destroyFont);
 
 } // namespace
 
-Font::Metrics Font::metrics(const DrawContext& dc) const
-{
-    // We could get the 72 dpi version of the font, which is exactly in
-    // PicaPt, but we get the actual size font so that we can attempt
-    // get more accurate values due to hinting (or lack thereof at
-    // higher resolutions).
-    auto dpi = dc.dpi();
-    return gFontMgr.get(*this, dpi).metrics;
-}
-
 //---------------------- Custom text renderer ---------------------------------
 // We need our own renderer so that we can draw outlines
 class CustomTextRenderer : public IDWriteTextRenderer
@@ -622,7 +612,7 @@ private:
     }
 
 public:
-    void setNativeDC(void* nativeDC) override
+    void setNativeDC(void* nativeDC)
     {
         cleanup();
         mStateStack.push_back(ContextState());
@@ -641,9 +631,10 @@ public:
             printError("Could not create default black brush", err);
         }
 
-        // Super *after* creating the state stack, so that the state setting
-        // functions will set the state properly.
-        Super::setNativeDC(nativeDC);
+        // Set the initial state *after* creating the state stack,
+        // so that the state setting functions will set the state properly.
+        mNativeDC = nativeDC;
+        setInitialState();
 
         // Don't need to scale for DPI, Direct2D already handles that.
         // (But note that Direct2D coordinates are 1/96 inch, not 1/72 inch)
@@ -934,6 +925,15 @@ public:
         mStateStack.back().clippingPaths.push_back(path);
     }
 
+    Font::Metrics fontMetrics(const Font& font) const override
+    {
+        // We could get the 72 dpi version of the font, which is exactly in
+        // PicaPt, but we get the actual size font so that we can attempt
+        // get more accurate values due to hinting (or lack thereof at
+        // higher resolutions).
+        return gFontMgr.get(font, mDPI).metrics;
+    }
+
     std::shared_ptr<Image> copyToImage() override
     {
         auto* gc = deviceContext();
@@ -1218,7 +1218,8 @@ std::shared_ptr<DrawContext> DrawContext::fromDirect2D(void* renderTarget, int w
     return std::make_shared<Direct2DContext>(renderTarget, width, height, dpi);
 }
 
-std::shared_ptr<DrawContext> DrawContext::createBitmap(BitmapType type, int width, int height, float dpi /*= 72.0f*/)
+std::shared_ptr<DrawContext> DrawContext::createDirect2DBitmap(BitmapType type, int width, int height,
+                                                               float dpi /*= 72.0f*/)
 {
     return std::make_shared<Direct2DBitmap>(type, width, height, dpi);
 }

@@ -18,7 +18,28 @@
 #include <unistd.h>
 #endif // windows
 
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
+#include <X11/Xlib.h>
+static Display *gXDisplay = nullptr;
+#endif
+
 using namespace eb;
+
+std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+                                          float dpi)
+{
+#if __APPLE__
+    return DrawContext::createCoreGraphicsBitmap(type, width, height, dpi);
+#elif defined(__unix__)
+    return DrawContext::createCairoX11Bitmap(gXDisplay, type, width, height, dpi);
+#elif defined(_WIN32) || defined(_WIN64)
+    return DrawContext::createDirect2DBitmap(type, width, height, dpi);
+#else
+    std::cerr << "[ERROR] this platform does not have a bitmap creator"
+    assert(false);
+    return nullptr;
+#endif
+}
 
 void writeTIFF(const std::string& path, DrawContext& bitmap)
 {
@@ -119,7 +140,8 @@ public:
             dpistr << dpi;
             mName += " [" + dpistr.str() + " dpi]";
         }
-        mBitmap = DrawContext::createBitmap(mType, mWidth, mHeight, dpi);
+
+        mBitmap = createBitmap(mType, mWidth, mHeight, dpi);
         mBitmap->fill(mBGColor);
     }
 
@@ -916,7 +938,7 @@ public:
             }
         }
 
-        float acceptableError = 0.1 * float(mRadius);
+        float acceptableError = 0.125f * float(mRadius);  // 0.1 is okay for macOS/win, cairo needs 0.125
         float quarterCircle = 0.25f * 3.141592f * float(mRadius * mRadius);
         float squareMinusQuarterCricle = float(mRadius * mRadius) - quarterCircle;
         float expectedArea = r.width.toPixels(dpi) * r.height.toPixels(dpi) - 4.0f * squareMinusQuarterCricle;
@@ -934,6 +956,7 @@ class EllipseTest : public BitmapTest
 {
 public:
     EllipseTest() : BitmapTest("ellipse", 13, 10) {}
+//    EllipseTest() : BitmapTest("ellipse", 19, 13) {}
 
     std::string run() override
     {
@@ -1119,7 +1142,7 @@ public:
         Color fg = Color::kRed;
         Color baselineColor = Color::kBlue;
         auto dpi = mBitmap->dpi();
-        Font arial(mFontName, PicaPt::fromPixels(mPointSize, dpi));
+        eb::Font arial(mFontName, PicaPt::fromPixels(mPointSize, dpi));
         auto metrics = arial.metrics(*mBitmap);
 
         if (metrics.ascent.toPixels(dpi) == 0.0f || metrics.ascent.toPixels(dpi) == 0.0f) {
@@ -1223,14 +1246,13 @@ class BadFontTest : public BitmapTest
     static constexpr int kFontHeight = 20;
     static constexpr int kMargin = 1;
 public:
-    BadFontTest() : BitmapTest("non-existant font",
-        3 * kFontHeight / 4, kFontHeight + 2 * kMargin)
+    BadFontTest() : BitmapTest("non-existant font", 5, 5)
     {}
 
     std::string run() override
     {
         auto dpi = mBitmap->dpi();
-        Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
+        eb::Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
         auto metrics = font.metrics(*mBitmap);
         if (metrics.ascent != PicaPt(0) || metrics.descent != PicaPt(0)) {
             return "Expected non-existent font to have zero metrics";
@@ -1259,7 +1281,7 @@ public:
     {
         Color fg = Color::kRed;
         auto dpi = mBitmap->dpi();
-        Font font("Arial", PicaPt::fromPixels(kFontHeight, dpi));
+        eb::Font font("Arial", PicaPt::fromPixels(kFontHeight, dpi));
         // Assume that the ascents of the different styles don't change much
         mCapHeight = font.metrics(*mBitmap).capHeight.toPixels(dpi);
         auto p = Point::fromPixels(kMargin, kMargin, dpi);
@@ -1380,7 +1402,7 @@ public:
         auto strokeWidth = PicaPt::fromPixels(2, dpi);
         // We want a font that is heavy enough that we can tell if it is filled or not.
         // Georgia is thicker than, say, Arial, and bold will help.
-        Font font("Georgia", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
+        eb::Font font("Georgia", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
         Point topLeft = Point::fromPixels(2, 0, dpi);
         int y = kPointSize / 2;
 
@@ -1442,7 +1464,7 @@ public:
         Color bgColor(51, 255, 68, 255);      // 0x33ff44ff
         Color rect1Color(255, 187, 34, 255);  // 0xffbb22ff
         Color rect2Color(17, 255, 204, 255);  // 0x11ffccff
-        auto src = DrawContext::createBitmap(kBitmapRGB, 9, 11);
+        auto src = createBitmap(kBitmapRGB, 9, 11, 72 /*dpi*/);
         auto destDPI = mBitmap->dpi();
         auto srcDPI = src->dpi();
         auto rect1 = Rect::fromPixels(0, 0, 4, 2, srcDPI);
@@ -1498,7 +1520,7 @@ public:
 
 /*void TextDebug()
 {
-    Font font("Arial", PicaPt(20));
+    eb::Font font("Arial", PicaPt(20));
     Bitmap bitmap(100, 50, kBitmapRGB);
     auto metrics = font.metrics(bitmap);
     int baselineY = int(metrics.ascent.toPixels(bitmap.dpi()));
@@ -1513,12 +1535,16 @@ public:
     writeTIFF("/tmp/out.tiff", bitmap);
 } */
 
-static std::string kNormal = "\003[0m";
+static std::string kNormal = "\033[0m";
 static std::string kRed = "\033[31m";
 static std::string kGreen = "\033[32m";
 
 int main(int argc, char *argv[])
 {
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
+    gXDisplay = XOpenDisplay(nullptr);
+#endif
+
     std::vector<std::shared_ptr<Test>> test = {
         std::make_shared<CoordinateTest>(),
         std::make_shared<ColorTest>("color readback (RGBA)", kBitmapRGBA),
@@ -1604,5 +1630,10 @@ int main(int argc, char *argv[])
         std::cout << kRed << nFailed << " test" << (nFailed == 1 ? "" : "s")
                   << " FAILED" << kNormal << std::endl;
     }
+
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
+    XCloseDisplay(gXDisplay);
+#endif
+
     return nFailed;  // 0 = success
 }

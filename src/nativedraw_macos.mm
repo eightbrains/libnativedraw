@@ -150,25 +150,6 @@ static ResourceManager<Font, NSFont*> gFontMgr(createFont, destroyFont);
 
 } // namespace
 
-Font::Metrics Font::metrics(const DrawContext& dc) const
-{
-    // We could get the 72 dpi version of the font, which is exactly in
-    // PicaPt, but we get the actual size font so that we can attempt
-    // get more accurate values due to hinting (or lack thereof at
-    // higher resolutions). Although, on macOS I believe it's just
-    // scaled up, so maybe no difference.
-    auto dpi = dc.dpi();
-    NSFont *font = gFontMgr.get(*this, dpi);
-    Font::Metrics m;
-    m.ascent = PicaPt::fromPixels(font.ascender, dpi);
-    m.descent = PicaPt::fromPixels(abs(font.descender), dpi);
-    m.leading = PicaPt::fromPixels(abs(font.leading), dpi);
-    m.xHeight = PicaPt::fromPixels(font.xHeight, dpi);
-    m.capHeight = PicaPt::fromPixels(font.capHeight, dpi);
-    m.lineHeight = m.ascent + m.descent + m.leading;
-    return m;
-}
-
 //------------------------ CoreGraphicsImage ----------------------------------
 class CoreGraphicsImage : public Image
 {
@@ -213,8 +194,10 @@ public:
         return std::make_shared<CoreGraphicsPath>();
     }
 
-    void setNativeDC(void *nativeDC) override
+    void setNativeDC(void *nativeDC)
     {
+        mNativeDC = nativeDC;
+
         CGContextRef gc = (CGContextRef)nativeDC;
         CGContextTranslateCTM(gc, 0, mHeight);
         CGContextScaleCTM(gc, 1, -1);
@@ -222,9 +205,9 @@ public:
         mStateStack.clear();
         mStateStack.push_back(ContextState());
      
-        // Super *after* creating the state stack, so that the state setting
-        // functions will set the state properly.
-        Super::setNativeDC(nativeDC);
+        // Set the initial state *after* creating the state stack,
+        // so that the state setting functions will set the state properly.
+        setInitialState();
        
         scale(mDPI / 72.0f, mDPI / 72.0f);
     }
@@ -463,11 +446,11 @@ public:
         CGContextRestoreGState(gc);
     }
 
-    void drawImage(std::shared_ptr<Image> image, const Rect& rect) override
+    void drawImage(std::shared_ptr<Image> image, const Rect& destRect) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
-        auto cgrect = CGRectMake(rect.x.asFloat(), rect.y.asFloat(),
-                                 rect.width.asFloat(), rect.height.asFloat());
+        auto cgrect = CGRectMake(destRect.x.asFloat(), destRect.y.asFloat(),
+                                 destRect.width.asFloat(), destRect.height.asFloat());
         // We need to flip coordinates, as the blit will just write directly
         // into the bitmap. Note that we've scaled the coordinates so that
         // one unit is one PicaPt, not one pixel.
@@ -492,16 +475,34 @@ public:
         CGContextClip(gc);
     }
 
-    std::shared_ptr<Image> copyToImage() override
+    Font::Metrics fontMetrics(const Font& font) const override
     {
-        assert(false);  // not implemented
-        return nullptr;
+        // We could get the 72 dpi version of the font, which is exactly in
+        // PicaPt, but we get the actual size font so that we can attempt
+        // get more accurate values due to hinting (or lack thereof at
+        // higher resolutions). Although, on macOS I believe it's just
+        // scaled up, so maybe no difference.
+        NSFont *nsfont = gFontMgr.get(font, mDPI);
+        Font::Metrics m;
+        m.ascent = PicaPt::fromPixels(nsfont.ascender, mDPI);
+        m.descent = PicaPt::fromPixels(abs(nsfont.descender), mDPI);
+        m.leading = PicaPt::fromPixels(abs(nsfont.leading), mDPI);
+        m.xHeight = PicaPt::fromPixels(nsfont.xHeight, mDPI);
+        m.capHeight = PicaPt::fromPixels(nsfont.capHeight, mDPI);
+        m.lineHeight = m.ascent + m.descent + m.leading;
+        return m;
     }
 
     Color pixelAt(int x, int y) override
     {
         assert(false);  // need a bitmap context
         return Color::kPurple;
+    }
+
+    std::shared_ptr<Image> copyToImage() override
+    {
+        assert(false);  // not implemented
+        return nullptr;
     }
 };
 //-----------------------------------------------------------------------------
@@ -601,8 +602,8 @@ std::shared_ptr<DrawContext> DrawContext::fromCoreGraphics(void* cgcontext, int 
     return std::make_shared<CoreGraphicsContext>(cgcontext, width, height, dpi);
 }
 
-std::shared_ptr<DrawContext> DrawContext::createBitmap(BitmapType type, int width, int height,
-                                                       float dpi /*= 72.0f*/)
+std::shared_ptr<DrawContext> DrawContext::createCoreGraphicsBitmap(BitmapType type, int width, int height,
+                                                                   float dpi /*= 72.0f*/)
 {
     return std::make_shared<CoreGraphicsBitmap>(type, width, height, dpi);
 }

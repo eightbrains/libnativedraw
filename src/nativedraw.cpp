@@ -5,10 +5,13 @@
 
 namespace ND_NAMESPACE {
 
-    PicaPt operator+(float lhs, const PicaPt& rhs)
+PicaPt operator+(float lhs, const PicaPt& rhs)
     { return PicaPt(lhs + rhs.pt); }
 PicaPt operator*(float lhs, const PicaPt& rhs)
     { return PicaPt(lhs * rhs.pt); }
+
+Point operator*(float lhs, const Point& rhs)
+    { return Point(lhs * rhs.x, lhs * rhs.y); }
 
 //-----------------------------------------------------------------------------
 const Color Color::kTransparent(0.0f, 0.0f, 0.0f, 0.0f);
@@ -115,8 +118,14 @@ Font& Font::setWeight(FontWeight w)
     return *this;
 }
 
-// lineHeight(): platform-specific
-// metrics(): platform-specific
+Font::Metrics Font::metrics(const DrawContext& dc) const
+{
+    // Q: Why call into DrawContext, why can't Font do it?
+    // A: Font should be allocatable without any knowledge of the draw context,
+    //    but it is the draw context that has the necessary information to
+    //    return the font information.
+    return dc.fontMetrics(*this);
+}
 
 Font Font::fontWithPointSize(const PicaPt& pointSize) const
 {
@@ -236,14 +245,48 @@ void BezierPath::addRoundedRect(const Rect& r, const PicaPt& radius)
     close();
 }
 
+void BezierPath::addEllipse(const Rect& r)
+{
+    // This is the weight for control points for a sphere.
+    // Normally 4 cubic splines use 0.55228475, but a better number was
+    // computed by http://www.tinaja.com/glib/ellipse4.pdf.
+    // It has an error of .76 px/in at 1200 DPI (0.0633%).
+    float kCtrlWeight = 0.551784f;
+    PicaPt zero(0.0f);
+
+    clearNative();
+    mImpl->commands.reserve(mImpl->commands.size() + 6);
+
+    Point tanTop(r.midX(), r.y);
+    Point tanRight(r.maxX(), r.midY());
+    Point tanBottom(r.midX(), r.maxY());
+    Point tanLeft(r.x, r.midY());
+    Point horiz(0.5f * r.width, zero);
+    Point vert(zero, 0.5f * r.height);
+
+    moveTo(tanTop);
+    cubicTo(tanTop + kCtrlWeight * horiz,
+            tanRight - kCtrlWeight * vert,
+            tanRight);
+    cubicTo(tanRight + kCtrlWeight * vert,
+            tanBottom + kCtrlWeight * horiz,
+            tanBottom);
+    cubicTo(tanBottom - kCtrlWeight * horiz,
+            tanLeft + kCtrlWeight * vert,
+            tanLeft);
+    cubicTo(tanLeft - kCtrlWeight * vert,
+            tanTop - kCtrlWeight * horiz,
+            tanTop);
+    close();
+}
+
 //-----------------------------------------------------------------------------
 DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi)
     : mNativeDC(nativeDC), mWidth(width), mHeight(height), mDPI(dpi)
 {
 }
-void DrawContext::setNativeDC(void* nativeDC)
+void DrawContext::setInitialState()
 {
-    mNativeDC = nativeDC;
     setFillColor(Color::kBlack);
     setStrokeColor(Color::kBlack);
     setStrokeEndCap(kEndCapButt);

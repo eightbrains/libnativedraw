@@ -187,6 +187,9 @@ public:
     CoreGraphicsContext(void *cgcontext, int width, int height, float dpi)
         : DrawContext(cgcontext, width, height, dpi)
     {
+        if (cgcontext) {
+            setNativeDC(cgcontext);
+        }
     }
    
     std::shared_ptr<BezierPath> createBezierPath() const override
@@ -520,6 +523,13 @@ public:
     {
         mType = type;
         CGImageAlphaInfo alphaInfo;
+        // If we create an image from this bitmap, drawing is really slow in Mojave (10.14)
+        // using the default "Color LCD" profile. Using "sRGB IEC61966-2.1" gives
+        // something like a 5X speedup. (It also increases speed of rects).
+        // Using the colorspace of the monitor does not change anything, regardless
+        // of whether we pass window.colorSpace.CGColorSpace here or use
+        // CGDisplayCopyColorSpace(CGMainDisplayID()). Also, using
+        // CGColorSpaceCreateFromName(kCGColorSpaceSRGB) does not change anything.
         switch (type) {
             case kBitmapRGBA:
                 mColorspace = CGColorSpaceCreateDeviceRGB();

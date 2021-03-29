@@ -43,7 +43,5 @@ elseif (UNIX)  # note that APPLE is UNIX, so need to check that first
                                         ${X11_LIBRARIES})
 endif()
 
-# Tests
-set(TEST_SOURCES tests/main.cpp)
-add_executable(test ${TEST_SOURCES})
-target_link_libraries(test libnativedraw)
+add_subdirectory(tests)
+add_subdirectory(timings)

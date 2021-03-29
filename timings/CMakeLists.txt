@@ -1,0 +1,6 @@
+set(TIMING_HEADERS timings.h)
+set(TIMING_SOURCES timings.cpp)
+if (APPLE)
+    add_executable(timing macos.mm ${TIMING_HEADERS} ${TIMING_SOURCES})
+endif()
+target_link_libraries(timing libnativedraw)

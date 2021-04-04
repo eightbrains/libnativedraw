@@ -212,10 +212,10 @@ public:
     float alpha() const { return _rgba[3]; }
     const float* rgba() const { return _rgba; }
 
-    float setRed(float r) { _rgba[0] = r; }
-    float setGreen(float g) { _rgba[1] = g; }
-    float setBlue(float b) { _rgba[2] = b; }
-    float setAlpha(float a) { _rgba[3] = a; }
+    void setRed(float r) { _rgba[0] = r; }
+    void setGreen(float g) { _rgba[1] = g; }
+    void setBlue(float b) { _rgba[2] = b; }
+    void setAlpha(float a) { _rgba[3] = a; }
 
     Color toGrey() const {
         float grey = 0.2126f * red() + 0.7152f * green() + 0.0722f * blue();

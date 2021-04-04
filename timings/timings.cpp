@@ -312,9 +312,9 @@ std::shared_ptr<BezierPath> createStar10(DrawContext& dc, int radiusPx, const Po
     return createStar(dc, 10, radiusPx, center);
 }
 
-std::shared_ptr<Image> createImage(int w, int h, float dpi)
+std::shared_ptr<Image> createImage(DrawContext& dc, int w, int h, float dpi)
 {
-    auto imgDC = DrawContext::createCoreGraphicsBitmap(BitmapType::kBitmapRGB, w, h);
+    auto imgDC = dc.createBitmap(BitmapType::kBitmapRGB, w, h);
     imgDC->fill(Color(0.5f, 1.0f, 0.75f));
     imgDC->setFillColor(Color(1.0f, 0.9f, 0.0f));
     imgDC->drawEllipse(Rect(PicaPt(0.0f), PicaPt(0.0f),
@@ -337,8 +337,15 @@ Timings::Timings()
 {
     const int NOBJS = 500;
     const int radiusPx = 50;   // note that diameter = 2 * radius
-    auto img100 = createImage(100, 100, 72.0f);
-    mRuns = { Run{kBaseRunName, 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
+    mRuns = { Run{"initialization", 0,
+                  [this](DrawContext& dc, int nObjs) {
+                      // this function is called multiple times; we only want to
+                      // initialize once.
+                      if (!this->mImg100) {
+                          this->mImg100 = createImage(dc, 100, 100, 72.0f);
+                      }
+                  } },
+              Run{kBaseRunName, 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
               Run{"rects (fill)", NOBJS,
                   [](DrawContext& dc, int nObjs) { drawRects(dc, nObjs, 100, 100,
                                                              PaintMode::kPaintFill); } },
@@ -385,16 +392,16 @@ Timings::Timings()
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezierTransformed(dc, nObjs, createStar10, radiusPx,
                                             PaintMode::kPaintStrokeAndFill); } },
-//              Run{"images", NOBJS,
-              Run{"images", 20,
-                  [img100](DrawContext& dc, int nObjs) { drawImages(dc, nObjs, img100); } },
+              Run{"images", NOBJS,
+                  [this](DrawContext& dc, int nObjs) {
+                      drawImages(dc, nObjs, this->mImg100); } },
               Run{"colored rect", NOBJS,
                   [](DrawContext& dc, int nObjs) { drawColoredRects(dc, nObjs, 100, 100); } },
               Run{"clip rect", NOBJS,
                   [](DrawContext& dc, int nObjs) { clipRects(dc, nObjs, 100, 100); } },
               Run{"clip bezier", NOBJS,
                   [](DrawContext& dc, int nObjs) { clipBezier(dc, nObjs, createStar10, radiusPx); } },
-            };
+        };
 }
 
 Timings::State Timings::runNext(eb::DrawContext *dc)

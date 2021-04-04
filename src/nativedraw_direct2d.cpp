@@ -586,6 +586,12 @@ public:
         cleanup();
     }
 
+    std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+                                              float dpi /*= 72.0f*/) override
+    {
+        return DrawContext::createDirect2DBitmap(type, width, height, dpi);
+    }
+
     std::shared_ptr<BezierPath> createBezierPath() const override
     {
         return std::make_shared<Direct2DPath>();

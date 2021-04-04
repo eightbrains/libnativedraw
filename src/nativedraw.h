@@ -403,8 +403,12 @@ public:
     static std::shared_ptr<DrawContext> createCoreGraphicsBitmap(BitmapType type, int width, int height,
                                                                  float dpi = 72.0f);
 #elif defined(__unix__)
-    static std::shared_ptr<DrawContext> fromCairo(void* cairo_t, int width, int height, float dpi);
-    static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi);
+    // Note that an Xlib Window is NOT a pointer, so you will need to call this
+    // as fromX11(display, &window, ...). (Window is actually a typedef of
+    // long int, but we do not want to hard-code it, nor do we want to include
+    // Xlib.h in this header.
+    static std::shared_ptr<DrawContext> fromX11(void* display, const void* window, int width, int height, float dpi);
+    static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi = 72.0f);
 #elif defined(_WIN32) || defined(_WIN64)
     static std::shared_ptr<DrawContext> fromDirect2D(void* deviceContext, int width, int height, float dpi);
     static std::shared_ptr<DrawContext> createDirect2DBitmap(BitmapType type, int width, int height,
@@ -413,6 +417,11 @@ public:
 
     DrawContext(void *nativeDC, int width, int height, float dpi);
     virtual ~DrawContext() {}
+
+    // This is the preferred function to create a bitmap if you already have a
+    // context (for instance, if you are creating a bitmap for a window).
+    virtual std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+                                                      float dpi = 72.0f) = 0;
 
     virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
 

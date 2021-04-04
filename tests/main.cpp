@@ -1518,6 +1518,39 @@ public:
     }
 };
 
+class ImageCopyTest : public BitmapTest
+{
+public:
+    ImageCopyTest() : BitmapTest("copyToImage lifetime", 13, 15) {}
+
+    std::string run() override
+    {
+        // Tests to make sure that the result of copyToImage() is still usable after
+        // the bitmap context that originally created it is gone. (Otherwise it is
+        // not copyToImage, it is asImageRef).
+        Color bgColor(255, 255, 255, 255);
+        Color rectColor(0, 255, 0, 255);
+        auto src = makeImage(rectColor);  // returns copy of the temp context
+        auto destDPI = mBitmap->dpi();
+        auto srcDPI = src->dpi();
+
+        mBitmap->drawImage(src, Rect::fromPixels(0, 0, mBitmap->width(), mBitmap->height(), mBitmap->dpi()));
+
+        return verifyFillRect(0, 0, mBitmap->width(), mBitmap->height(), bgColor, rectColor);
+    }
+
+protected:
+    std::shared_ptr<Image> makeImage(const Color& fill)
+    {
+        auto src = createBitmap(kBitmapRGB, mBitmap->width(), mBitmap->height(),
+                                mBitmap->dpi());
+        src->fill(fill);
+        // 'src' will be destroyed, so if internal resources are destroyed,
+        // the result of copyToImage() won't work.
+        return src->copyToImage();
+    }
+};
+
 /*void TextDebug()
 {
     eb::Font font("Arial", PicaPt(20));
@@ -1587,6 +1620,7 @@ int main(int argc, char *argv[])
         std::make_shared<FontStyleTest>(),
         std::make_shared<StrokedTextTest>(),
         std::make_shared<ImageTest>(),
+        std::make_shared<ImageCopyTest>(),
     };
 
     const char *TERM = std::getenv("TERM");

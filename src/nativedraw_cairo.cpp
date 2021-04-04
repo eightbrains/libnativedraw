@@ -5,6 +5,7 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <cairo/cairo.h>
+#include <cairo/cairo-xlib.h>
 #include <cairo/cairo-xlib-xrender.h>
 
 #include <iostream>
@@ -178,9 +179,10 @@ public:
         : Image(nativeHandle, width, height, dpi)
     {}
 
-    ~CairoImage()
+    virtual ~CairoImage()
     {
         cairo_surface_destroy((cairo_surface_t*)nativeHandle());
+        mNativeHandle = nullptr;
     }
 };
 
@@ -237,9 +239,10 @@ public:
 
     void rotate(float degrees) override
     {
-        // Our coordinate system is y-flipped with respect to CoreGraphics' mathematical
-        // one, which make +angle rotate clockwise. We still want +angle to be counterclockwise
-        // so that the angle works like people expect it, so we need to negate it.
+        // Our coordinate system is y-flipped with respect to Cairo's
+        // mathematical one, which make +angle rotate clockwise. We still
+        // want +angle to be counterclockwise so that the angle works like
+        // people expect it, so we need to negate it.
         cairo_rotate(cairoContext(), -degrees * 3.14159265358979323846f / 180.0f);
     }
 
@@ -506,7 +509,6 @@ private:
     };
     std::vector<State> mStateStack;
 };
-
 //-----------------------------------------------------------------------------
 // This is a CPU-bound bitmap
 class CairoBitmap : public CairoDrawContext
@@ -580,26 +582,119 @@ public:
         return std::make_shared<CairoImage>(cairo_surface_reference(mSurface),
                                             width(), height(), dpi());
     }
+
+    std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+                                              float dpi /*= 72.0f*/) override
+    {
+        return std::make_shared<CairoBitmap>(type, width, height, dpi);
+    }
 };
 
-class CairoX11Bitmap : public CairoDrawContext
+
+//-----------------------------------------------------------------------------
+class ShareableX11Pixmap
+{
+public:
+    Display* mDisplay;
+    Pixmap mPixmap;
+
+    explicit ShareableX11Pixmap(Display *d, Pixmap p) : mDisplay(d), mPixmap(p) {}
+    ShareableX11Pixmap(const ShareableX11Pixmap&) = delete;
+    ~ShareableX11Pixmap()
+    {
+        XFreePixmap(mDisplay, mPixmap);
+    }
+
+    ShareableX11Pixmap& operator=(const ShareableX11Pixmap&) = delete;
+
+    Pixmap pixmap() const { return mPixmap; }
+};
+
+class CairoX11DrawContext : public CairoDrawContext
+{
+protected:
+    // These are X11's pointers, we do not own them
+    Display *mDisplay;
+    Drawable mDrawable;  // NOT a pointer: Drawable typedef'd to long unsigned int
+
+    // We own everything below here
+    cairo_surface_t *mSurface = nullptr;
+    cairo_t *mDC = nullptr;
+    
+public:
+    // For derived classes. The object is incomplete until the derived class
+    // calls finishConstructing().
+    CairoX11DrawContext(Display* display, int width, int height, float dpi)
+        : CairoDrawContext(nullptr, width, height, dpi)
+        , mDisplay((Display*)display)
+        , mDrawable(0)
+    {
+    }
+
+    CairoX11DrawContext(void* display, const void* window,
+                        int width, int height, float dpi)
+        : CairoDrawContext(nullptr, width, height, dpi)
+        , mDisplay((Display*)display)
+        , mDrawable(*(Drawable*)window)  // Window is a Drawable
+    {
+        XWindowAttributes attrs;
+        XGetWindowAttributes(mDisplay, (Window)mDrawable, &attrs);
+        mSurface = cairo_xlib_surface_create(mDisplay, mDrawable, attrs.visual,
+                                             width, height);
+        finishConstructing(mDrawable, mSurface);
+    }
+
+    ~CairoX11DrawContext()
+    {
+        cairo_destroy(mDC);
+        cairo_surface_destroy(mSurface);
+    }
+
+    std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+                                              float dpi /*= 72.0f*/) override
+    {
+        return DrawContext::createCairoX11Bitmap(mDisplay, type, width, height, dpi);
+    }
+
+protected:
+    void finishConstructing(Drawable drawable, 
+                            cairo_surface_t* surface /* takes ownership */)
+    {
+        mDrawable = drawable;
+        mSurface = surface;
+        mDC = cairo_create(mSurface);
+        setNativeDC(mDC);
+    }
+};
+
+class CairoX11Image : public CairoImage
+{
+private:
+    std::shared_ptr<ShareableX11Pixmap> mPixmap;
+
+public:
+    CairoX11Image(std::shared_ptr<ShareableX11Pixmap> pixmap, cairo_surface_t* surface,
+                  int width, int height, float dpi)
+        : CairoImage(cairo_surface_reference(surface),  // increment this ref
+                     width, height, dpi)
+        , mPixmap(pixmap)
+    {}
+};
+
+class CairoX11Bitmap : public CairoX11DrawContext
 {
 private:
     BitmapType mType;
-    Display *mDisplay;
-    Pixmap mPixmap;
-    cairo_surface_t *mSurface;
-    cairo_t *mDC;
+    std::shared_ptr<ShareableX11Pixmap> mPixmap;
     CairoBitmap *mReadable = nullptr;
 
 public:
     CairoX11Bitmap(Display *display, BitmapType type, int width, int height,
                    float dpi = 72.0f)
-        : CairoDrawContext(nullptr, width, height, dpi)
+        : CairoX11DrawContext(nullptr, width, height, dpi)
     {
         mType = type;
         mDisplay = display;
-        mPixmap = -1;
 
         auto drawable = XRootWindow(display, XDefaultScreen(display));
         Screen *screen = DefaultScreenOfDisplay(display);
@@ -609,39 +704,37 @@ public:
             case kBitmapRGBA:
                 pictFormat = XRenderFindStandardFormat(display,
                                                        PictStandardARGB32);
-                mPixmap = XCreatePixmap(display, drawable, width, height, 32);
+                pixmap = XCreatePixmap(display, drawable, width, height, 32);
                 mSurface = cairo_xlib_surface_create_with_xrender_format(
-                        display, mPixmap, screen, pictFormat, width, height);
+                            display, pixmap, screen, pictFormat, width, height);
                 break;
             case kBitmapRGB:
                 pictFormat = XRenderFindStandardFormat(display,
                                                        PictStandardRGB24);
-                mPixmap = XCreatePixmap(display, drawable, width, height, 24);
+                pixmap = XCreatePixmap(display, drawable, width, height, 24);
                 mSurface = cairo_xlib_surface_create_with_xrender_format(
-                            display, mPixmap, screen, pictFormat, width, height);
+                            display, pixmap, screen, pictFormat, width, height);
                 break;
             case kBitmapGreyscale:
                 pictFormat = XRenderFindStandardFormat(display, PictStandardA8);
-                mPixmap = XCreatePixmap(display, drawable, width, height, 8);
+                pixmap = XCreatePixmap(display, drawable, width, height, 8);
                 mSurface = cairo_xlib_surface_create_with_xrender_format(
-                        display, mPixmap, screen, pictFormat, width, height);
+                            display, pixmap, screen, pictFormat, width, height);
                 break;
             case kBitmapAlpha:
                 pictFormat = XRenderFindStandardFormat(display, PictStandardA8);
-                mPixmap = XCreatePixmap(display, drawable, width, height, 8);
+                pixmap = XCreatePixmap(display, drawable, width, height, 8);
                 mSurface = cairo_xlib_surface_create_with_xrender_format(
-                        display, mPixmap, screen, pictFormat, width, height);
+                            display, pixmap, screen, pictFormat, width, height);
                 break;
         }
-        mDC = cairo_create(mSurface);
-        setNativeDC(mDC);
+        mPixmap = std::make_shared<ShareableX11Pixmap>(mDisplay, pixmap);
+        finishConstructing(mPixmap->pixmap(), mSurface);
     }
 
     ~CairoX11Bitmap()
     {
-        cairo_destroy(mDC);
-        cairo_surface_destroy(mSurface);
-        XFreePixmap(mDisplay, mPixmap);
+        mPixmap.reset();  // happens automatically, is here for clarity
         delete mReadable;
     }
 
@@ -664,15 +757,19 @@ public:
 
     std::shared_ptr<Image> copyToImage() override
     {
-        return std::make_shared<CairoImage>(cairo_surface_reference(mSurface),
-                                            width(), height(), dpi());
+        return std::make_shared<CairoX11Image>(mPixmap, mSurface, width(), height(), dpi());
     }
 };
 
 //----------------------------- DrawContext -----------------------------------
-std::shared_ptr<DrawContext> DrawContext::fromCairo(void* cairo_t_, int width, int height, float dpi)
+//std::shared_ptr<DrawContext> DrawContext::fromCairo(void* cairo_t_, int width, int height, float dpi)
+//{
+//    return std::make_shared<CairoDrawContext>(cairo_t_, width, height, dpi);
+//}
+
+std::shared_ptr<DrawContext> DrawContext::fromX11(void* display, const void* window, int width, int height, float dpi)
 {
-    return std::make_shared<CairoDrawContext>(cairo_t_, width, height, dpi);
+    return std::make_shared<CairoX11DrawContext>(display, window, width, height, dpi);
 }
 
 std::shared_ptr<DrawContext> DrawContext::createCairoX11Bitmap(

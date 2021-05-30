@@ -8,6 +8,16 @@ using namespace eb;
 
 namespace {
 static const int kNTimesPerRun = 50;
+// kNObjs should ideally be set to a large number, since platforms may sync
+// drawing to VBlank, which means that the minimum unit is 1/60 sec, which
+// does offer much precision (especially when we subtract off drawing nothing,
+// which also takes 1/60 sec).
+#ifdef __APPLE__
+// macOS' image blitting is so slow that 50000 would take a long time
+static const int kNObjs = 500;
+#else
+static const int kNObjs = 10000;
+#endif
 static const Color kBGColor(1.0f, 1.0f, 1.0f);
 
 static const std::string kBaseRunName = "nothing";
@@ -28,7 +38,9 @@ struct LayoutInfo
 
 void drawNothing(DrawContext& dc)
 {
+    dc.beginDraw();
     dc.fill(kBGColor);
+    dc.endDraw();
 }
 
 void drawRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx, PaintMode mode)
@@ -42,6 +54,7 @@ void drawRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx, PaintMod
     auto y = PicaPt::fromPixels(1, dc.dpi());
     int col = 0;
 
+    dc.beginDraw();
     dc.fill(kBGColor);
     dc.setStrokeColor(Color(0.0f, 0.0f, 0.0f, 1.0f));
     dc.setStrokeWidth(PicaPt::fromPixels(1, dc.dpi()));
@@ -56,6 +69,7 @@ void drawRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx, PaintMod
             y += layout.dy;
         }
     }
+    dc.endDraw();
 }
 
 void drawColoredRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx)
@@ -76,6 +90,7 @@ void drawColoredRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx)
                                   Color(0.0f, 0.0f, 1.0f), Color(0.5f, 0.0f, 1.0f),
                                   Color(1.0f, 0.0f, 1.0f), Color(1.0f, 0.0f, 0.5f) };
     size_t colorIdx = 0;
+    dc.beginDraw();
     dc.fill(kBGColor);
     for (int i = 0;  i < n;  ++i) {
         dc.setFillColor(colors[colorIdx]);
@@ -92,6 +107,7 @@ void drawColoredRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx)
             y += layout.dy;
         }
     }
+    dc.endDraw();
 }
 
 void drawRoundedRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx, int radiusPx, PaintMode mode)
@@ -106,6 +122,7 @@ void drawRoundedRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx, i
     auto y = PicaPt::fromPixels(1, dc.dpi());
     int col = 0;
 
+    dc.beginDraw();
     dc.fill(kBGColor);
     dc.setStrokeColor(Color(0.0f, 0.0f, 0.0f, 1.0f));
     dc.setStrokeWidth(PicaPt::fromPixels(1, dc.dpi()));
@@ -120,6 +137,7 @@ void drawRoundedRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx, i
             y += layout.dy;
         }
     }
+    dc.endDraw();
 }
 
 void drawBezier(DrawContext& dc, int n,
@@ -134,6 +152,7 @@ void drawBezier(DrawContext& dc, int n,
     auto y = r;
     int col = 0;
 
+    dc.beginDraw();
     dc.fill(kBGColor);
     dc.setStrokeColor(Color(0.0f, 0.0f, 0.0f, 1.0f));
     dc.setStrokeWidth(PicaPt::fromPixels(1, dc.dpi()));
@@ -148,6 +167,7 @@ void drawBezier(DrawContext& dc, int n,
             y += layout.dy;
         }
     }
+    dc.endDraw();
 }
 
 void drawBezierTransformed(DrawContext& dc, int n,
@@ -164,6 +184,7 @@ void drawBezierTransformed(DrawContext& dc, int n,
 
     auto bezier = createPath(dc, radiusPx, Point(PicaPt(0.0f), PicaPt(0.0f)));
 
+    dc.beginDraw();
     dc.fill(kBGColor);
     dc.setStrokeColor(Color(0.0f, 0.0f, 0.0f, 1.0f));
     dc.setStrokeWidth(PicaPt::fromPixels(1, dc.dpi()));
@@ -180,6 +201,7 @@ void drawBezierTransformed(DrawContext& dc, int n,
             y += layout.dy;
         }
     }
+    dc.endDraw();
 }
 
 void drawImages(DrawContext& dc, int n, std::shared_ptr<Image> img)
@@ -193,6 +215,7 @@ void drawImages(DrawContext& dc, int n, std::shared_ptr<Image> img)
     auto y = PicaPt::fromPixels(1, dc.dpi());
     int col = 0;
 
+    dc.beginDraw();
     dc.fill(kBGColor);
     for (int i = 0;  i < n;  ++i) {
         dc.drawImage(img, Rect(x, y, w, h));
@@ -204,6 +227,7 @@ void drawImages(DrawContext& dc, int n, std::shared_ptr<Image> img)
             y += layout.dy;
         }
     }
+    dc.endDraw();
 }
 
 void clipRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx)
@@ -217,6 +241,7 @@ void clipRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx)
     auto y = PicaPt::fromPixels(1, dc.dpi());
     int col = 0;
 
+    dc.beginDraw();
     dc.fill(kBGColor);
     dc.setFillColor(Color(0.5f, 0.5f, 0.5f, 1.0f));
     for (int i = 0;  i < n;  ++i) {
@@ -232,6 +257,7 @@ void clipRects(DrawContext& dc, int n, int objWidthPx, int objHeightPx)
             y += layout.dy;
         }
     }
+    dc.endDraw();
 }
 
 void clipBezier(DrawContext& dc, int n,
@@ -246,6 +272,7 @@ void clipBezier(DrawContext& dc, int n,
     auto y = r;
     int col = 0;
 
+    dc.beginDraw();
     dc.fill(kBGColor);
     for (int i = 0;  i < n;  ++i) {
         dc.save();
@@ -260,6 +287,7 @@ void clipBezier(DrawContext& dc, int n,
             y += layout.dy;
         }
     }
+    dc.endDraw();
 }
 
 std::shared_ptr<BezierPath> createSquare100(DrawContext& dc, int nPts, const Point& center)
@@ -315,6 +343,7 @@ std::shared_ptr<BezierPath> createStar10(DrawContext& dc, int radiusPx, const Po
 std::shared_ptr<Image> createImage(DrawContext& dc, int w, int h, float dpi)
 {
     auto imgDC = dc.createBitmap(BitmapType::kBitmapRGB, w, h);
+    imgDC->beginDraw();
     imgDC->fill(Color(0.5f, 1.0f, 0.75f));
     imgDC->setFillColor(Color(1.0f, 0.9f, 0.0f));
     imgDC->drawEllipse(Rect(PicaPt(0.0f), PicaPt(0.0f),
@@ -328,6 +357,7 @@ std::shared_ptr<Image> createImage(DrawContext& dc, int w, int h, float dpi)
                          PicaPt::fromPixels(0.707f * float(w), dpi),
                          PicaPt::fromPixels(0.707f * float(h), dpi)),
                     PaintMode::kPaintFill);
+    imgDC->endDraw();
     return imgDC->copyToImage();
 }
 
@@ -335,7 +365,6 @@ std::shared_ptr<Image> createImage(DrawContext& dc, int w, int h, float dpi)
 
 Timings::Timings()
 {
-    const int NOBJS = 500;
     const int radiusPx = 50;   // note that diameter = 2 * radius
     mRuns = { Run{"initialization", 0,
                   [this](DrawContext& dc, int nObjs) {
@@ -346,61 +375,63 @@ Timings::Timings()
                       }
                   } },
               Run{kBaseRunName, 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
-              Run{"rects (fill)", NOBJS,
+              Run{kBaseRunName, 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
+              Run{"rects (fill)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRects(dc, nObjs, 100, 100,
                                                              PaintMode::kPaintFill); } },
-              Run{"rects (stroke)", NOBJS,
+              Run{"rects (stroke)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRects(dc, nObjs, 100, 100,
                                                              PaintMode::kPaintStroke); } },
-              Run{"rects (stroke+fill)", NOBJS,
+              Run{"rects (stroke+fill)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRects(dc, nObjs, 100, 100,
                                                              PaintMode::kPaintStrokeAndFill); } },
-              Run{"rounded rects (fill)", NOBJS,
+              Run{"rounded rects (fill)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRoundedRects(dc, nObjs, 100, 100, 10,
                                                              PaintMode::kPaintFill); } },
-              Run{"rounded rects (stroke)", NOBJS,
+              Run{"rounded rects (stroke)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRoundedRects(dc, nObjs, 100, 100, 10,
                                                              PaintMode::kPaintStroke); } },
-              Run{"rounded rects (stroke+fill)", NOBJS,
+              Run{"rounded rects (stroke+fill)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRoundedRects(dc, nObjs, 100, 100, 10,
                                                              PaintMode::kPaintStrokeAndFill); } },
-              Run{"bezier rects (fill)", NOBJS,
+              Run{"bezier rects (fill)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezier(dc, nObjs, createSquare100, radiusPx, PaintMode::kPaintFill); } },
-              Run{"bezier rects (stroke)", NOBJS,
+              Run{"bezier rects (stroke)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezier(dc, nObjs, createSquare100, radiusPx, PaintMode::kPaintStroke); } },
-              Run{"bezier rects (stroke+fill)", NOBJS,
+              Run{"bezier rects (stroke+fill)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezier(dc, nObjs, createSquare100, radiusPx, PaintMode::kPaintStrokeAndFill); } },
-              Run{"star (fill)", NOBJS,
+              Run{"star (fill)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezier(dc, nObjs, createStar10, radiusPx, PaintMode::kPaintFill); } },
-              Run{"star (stroke)", NOBJS,
+              Run{"star (stroke)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezier(dc, nObjs, createStar10, radiusPx, PaintMode::kPaintStroke); } },
-              Run{"star (stroke+fill)", NOBJS,
+              Run{"star (stroke+fill)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezier(dc, nObjs, createStar10, radiusPx, PaintMode::kPaintStrokeAndFill); } },
-              Run{"star transformed (fill)", NOBJS,
+              Run{"star transformed (fill)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezierTransformed(dc, nObjs, createStar10, radiusPx, PaintMode::kPaintFill); } },
-              Run{"star transformed (stroke)", NOBJS,
+              Run{"star transformed (stroke)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezierTransformed(dc, nObjs, createStar10, radiusPx, PaintMode::kPaintStroke); } },
-              Run{"star transformed (stroke+fill)", NOBJS,
+              Run{"star transformed (stroke+fill)", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) {
                       drawBezierTransformed(dc, nObjs, createStar10, radiusPx,
                                             PaintMode::kPaintStrokeAndFill); } },
-              Run{"images", NOBJS,
+              Run{"images", kNObjs,
                   [this](DrawContext& dc, int nObjs) {
                       drawImages(dc, nObjs, this->mImg100); } },
-              Run{"colored rect", NOBJS,
+              Run{"colored rect", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawColoredRects(dc, nObjs, 100, 100); } },
-              Run{"clip rect", NOBJS,
+              Run{"clip rect", kNObjs,
                   [](DrawContext& dc, int nObjs) { clipRects(dc, nObjs, 100, 100); } },
-              Run{"clip bezier", NOBJS,
-                  [](DrawContext& dc, int nObjs) { clipBezier(dc, nObjs, createStar10, radiusPx); } },
+              Run{"clip bezier", kNObjs,
+                  [radiusPx](DrawContext& dc, int nObjs) { clipBezier(dc, nObjs, createStar10,
+                                                           radiusPx); } },
         };
 }
 

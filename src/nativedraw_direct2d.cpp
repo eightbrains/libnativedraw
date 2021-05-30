@@ -11,7 +11,9 @@
 #include <comdef.h>
 #include <d2d1.h>
 #include <d2d1_1.h>
+#include <d2d1_1helper.h>
 #include <d3d11.h>
+#include <dxgi1_2.h>
 #include <dwrite.h>
 #include <stringapiset.h>
 
@@ -20,6 +22,12 @@ namespace {
 void printError(const std::string& msg, HRESULT err)
 {
     std::cerr << "[ERROR] " << msg << ": " << _com_error(err).ErrorMessage() << std::endl;
+    assert(false);
+}
+
+void printError(const std::string& msg)
+{
+    std::cerr << "[ERROR] " << msg << std::endl;
     assert(false);
 }
 
@@ -42,6 +50,7 @@ public:
 
     ID2D1Factory1* factory() { return mD2DFactory; }
     IDWriteFactory* writeFactory() { return mWriteFactory; }
+    IDXGIDevice* dxgiDevice() { return mDXGIDevice; }
 
     ID2D1DeviceContext* createDeviceContext()
     {
@@ -264,12 +273,15 @@ struct FontInfo
     // Can't delete here, this object needs to be trivially copyable
 };
 
-WCHAR* getSystemFontName()
+std::wstring getSystemFontName()
 {
     NONCLIENTMETRICSW ncm;
     ncm.cbSize = sizeof(ncm);
     SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0);
-    return ncm.lfMessageFont.lfFaceName;  // this is an array, do not delete[]
+    // ncm.lfMessageFont.lfFaceName is an array, not a pointer, so we
+    // need to copy the contents because ncm will go away. Conveniently,
+    // wstring() does this for us.
+    return ncm.lfMessageFont.lfFaceName;
 }
 
 FontInfo createFont(const Font& desc, float dpi)
@@ -583,6 +595,9 @@ public:
 
     ~Direct2DContext()
     {
+        if (mDrawingState == DrawingState::kDrawing) {
+            printError("DrawContext::endDraw() not called before destruction");
+        }
         cleanup();
     }
 
@@ -600,7 +615,6 @@ public:
 private:
     void cleanup()
     {
-        flush();  // in case render target is much longer lived that we are
         mStateStack.clear();
         if (mSolidBrush) {
             mSolidBrush->Release();
@@ -644,6 +658,41 @@ public:
 
         // Don't need to scale for DPI, Direct2D already handles that.
         // (But note that Direct2D coordinates are 1/96 inch, not 1/72 inch)
+    }
+
+    void beginDraw() override
+    {
+        if (mDrawingState == DrawingState::kNotDrawing) {
+            auto* gc = deviceContext();
+            gc->BeginDraw();
+            mDrawingState = DrawingState::kDrawing;
+        } else {
+            printError("DrawContext::beginDraw() called within a beginDraw/endDraw pair");
+        }
+    }
+
+    void endDraw() override
+    {
+        if (mDrawingState == DrawingState::kDrawing) {
+            auto gc = (ID2D1RenderTarget*)mNativeDC;
+            if (gc) {
+                size_t nUnpoppedLayers = 0;
+                for (auto& state : mStateStack) {
+                    nUnpoppedLayers += state.clippingPaths.size();
+                }
+                for (size_t i = 0; i < nUnpoppedLayers; ++i) {
+                    popClipLayer();
+                }
+
+                HRESULT err = gc->EndDraw();
+                if (err != S_OK) {
+                    printError("Error ocurred while drawing", err);
+                }
+            }
+            mDrawingState = DrawingState::kNotDrawing;
+        } else {
+            printError("DrawContext::endDraw() called without calling beginDraw()");
+        }
     }
 
     void save() override
@@ -904,8 +953,8 @@ public:
         // RectF constructor is RectF(xMin, yMin, xMax, yMax), but if
         // we start at (0, 0) then it is the same as (x, y, w, h).
         auto srcRect = D2D1::RectF(0.0f, 0.0f,
-                                   toD2D(PicaPt::fromPixels(image->width(), image->dpi())),
-                                   toD2D(PicaPt::fromPixels(image->height(), image->dpi())));
+                                   toD2D(PicaPt::fromPixels(float(image->width()), image->dpi())),
+                                   toD2D(PicaPt::fromPixels(float(image->height()), image->dpi())));
         gc->DrawBitmap((Direct2DImage::NativeType)image->nativeHandle(), destRect,
                        1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, srcRect);
     }
@@ -960,10 +1009,8 @@ public:
             return nullptr;
         }
 
-        flush();
-
         D2D1_POINT_2U destUpperLeft = { 0, 0 };
-        D2D1_RECT_U srcRect = { 0, 0, width(), height() };
+        D2D1_RECT_U srcRect = { 0, 0, UINT32(width()), UINT32(height()) };
         err = image->CopyFromRenderTarget(&destUpperLeft, gc, &srcRect);
         if (err != S_OK) {
             printError("Could not copy to image", err);
@@ -980,42 +1027,9 @@ public:
     }
 
 protected:
-    void flush()
-    {
-        if (mDrawingState == DrawingState::kDrawing) {
-            auto gc = (ID2D1RenderTarget*)mNativeDC;
-            if (gc) {
-                size_t nUnpoppedLayers = 0;
-                for (auto& state : mStateStack) {
-                    nUnpoppedLayers += state.clippingPaths.size();
-                }
-                for (size_t i = 0;  i < nUnpoppedLayers;  ++i) {
-                    popClipLayer();
-                }
-
-                HRESULT err = gc->EndDraw();
-                if (err != S_OK) {
-                    printError("Error ocurred while drawing", err);
-                }
-            }
-            mDrawingState = DrawingState::kNotDrawing;
-        }
-    }
-
     ID2D1DeviceContext* deviceContext()
     {
-        auto gc = (ID2D1DeviceContext*)mNativeDC;
-        if (mDrawingState == DrawingState::kNotDrawing) {
-            // Need to (re-)push any clipping layers
-            for (auto& state : mStateStack) {
-                for (auto clip : state.clippingPaths) {
-                    pushClipLayer(clip);
-                }
-            }
-            gc->BeginDraw();
-            mDrawingState = DrawingState::kDrawing;
-        }
-        return gc;
+        return (ID2D1DeviceContext*)mNativeDC;
     }
 
     ID2D1SolidColorBrush* getBrush(const Color& c)
@@ -1041,7 +1055,7 @@ protected:
                     dashes.push_back(d.toPixels(mDPI));
                 }
                 err = d2d->CreateStrokeStyle(curr.strokeProperties,
-                                             dashes.data(), dashes.size(),
+                                             dashes.data(), UINT32(dashes.size()),
                                              &mStrokeStyle);
             }
             if (err != S_OK) {
@@ -1079,8 +1093,175 @@ protected:
 };
 
 //-----------------------------------------------------------------------------
+class Direct2DWindow : public Direct2DContext
+{
+    using Super = Direct2DContext;
+protected:
+    ID2D1DeviceContext* mDC;
+    IDXGISwapChain1* mSwapChain = nullptr;
+    ID2D1Bitmap1* mBackingStore = nullptr;
+
+public:
+    explicit Direct2DWindow(HWND hwnd)
+        : Direct2DContext(nullptr, 0, 0, 96)
+    {
+        RECT r;
+        GetClientRect(hwnd, &r);
+        mWidth = r.right - r.left;
+        mHeight = r.bottom - r.top;
+        mDPI = float(GetDpiForWindow(hwnd));
+        if (mDPI == 0.0) {  // only happens if invalid window
+            mDPI = 96.0;
+        }
+
+        // The code below has convinced me to never program for
+        // Windows without an abstraction layer. And if I'm going to use
+        // an abstraction layer, it's going to be cross platform, because
+        // the following is a gross abomination. It could be better, we
+        // could do:
+        //   auto size = D2D1::SizeU(r.right - r.left, r.bottom - r.top);
+        //   HRESULT result = Direct2D::instance().factory()->CreateHwndRenderTarget(
+        //       D2D1::RenderTargetProperties(),
+        //       // Default third param indicates render target throws away its
+        //       // contents after presenting.
+        //       D2D1::HwndRenderTargetProperties(hwnd, size),
+        //       &mRenderTarget);
+        //   setNativeDC(mRenderTarget);
+        // except, wait, you want alpha blending? Oh, sorry, ID2D1HwndRenderTarget
+        // doesn't support SetPrimitiveBlend(), ha ha, it's to the gross for you!
+
+        mDC = Direct2D::instance().createDeviceContext();
+
+        // Mostly copy-pasted from the Microsoft docs, because how else are you
+        // going to get this right?!
+        // https://docs.microsoft.com/en-us/windows/win32/direct2d/devices-and-device-contexts
+
+        // EB: So in order to render 2D to a window, we need to go through the 3D process
+        //     and create a swap chain.
+        DXGI_SWAP_CHAIN_DESC1 swapChainDesc = { 0 };
+        swapChainDesc.Width = 0;                           // automatic sizing
+        swapChainDesc.Height = 0;
+        swapChainDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // the most common format
+        swapChainDesc.Stereo = false;
+        swapChainDesc.SampleDesc.Count = 1;                // don't use multi-sampling
+        swapChainDesc.SampleDesc.Quality = 0;
+        swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        swapChainDesc.BufferCount = 2;                     // use double buffering to enable flip
+        swapChainDesc.Scaling = DXGI_SCALING_NONE;
+        swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL; // all apps must use this SwapEffect
+        swapChainDesc.Flags = 0;
+
+        HRESULT err;
+
+        // EB: the abstraction is so low that we have to get the specific video
+        //     card that this window is using! Which brings up the question of what
+        //     happens if the user moves the window to a monitor using another card?
+        IDXGIDevice* device = Direct2D::instance().dxgiDevice();
+        IDXGIAdapter* adapter;
+        err = device->GetAdapter(&adapter);
+        if (err != S_OK) {
+            printError("fatal: Cannot get adapter from IDXGIDevice", err);
+        }
+
+        // MS: Get the factory object that created the DXGI device.
+        // EB: Because we can't create a swap chain for a window from somewhere
+        //     like, maybe, the window? The device? The adapter?
+        IDXGIFactory2 *dxgiFactory;
+        err = adapter->GetParent(IID_PPV_ARGS(&dxgiFactory));
+        if (err != S_OK) {
+            printError("fatal: Cannot get DXGIFactory2 from adapter", err);
+            return;
+        }
+
+        err = dxgiFactory->CreateSwapChainForHwnd(
+                device,          // this is a D3DDevice, which IDXGIDevice is
+                hwnd,
+                &swapChainDesc,
+                nullptr,         // no fullscreen
+                nullptr,         // allow on all displays
+                &mSwapChain);
+        if (err != S_OK) {
+            printError("fatal: Cannot create swap chain for window", err);
+            return;
+        }
+
+        // MS: Ensure that DXGI doesn't queue more than one frame at a time.
+        // EB: I guess if we have multiple windows, they are are going to have
+        //     this set.
+        //device->SetMaximumFrameLatency(1);
+
+        // EB: Get the backbuffer so we can create the bitmap to be our backing store.
+        IDXGISurface *backBuffer;
+        err = mSwapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
+        if (err != S_OK) {
+            printError("fatal: Cannot get swap chain's back buffer", err);
+            return;
+        }
+
+        // EB: Create the bitmap now and set the context to render to it.
+        D2D1_BITMAP_PROPERTIES1 bitmapProperties =
+            D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+                mDPI,
+                mDPI);
+
+        err = mDC->CreateBitmapFromDxgiSurface(
+            backBuffer, &bitmapProperties, &mBackingStore);
+        if (err != S_OK) {
+            printError("fatal: Cannot get create bitmap for backing store", err);
+            return;
+        }
+
+        mDC->SetTarget(mBackingStore);
+
+        // So now that we've had to MAKE OUR OWN @#$! backing store--if everyone
+        // is just going to copy-paste your example, Microsoft, for every window
+        // someone writes, maybe this is something that could be, I don't, made
+        // into a function somewhere?--we can finally hand off our device context
+        // to the superclass.
+        setNativeDC(mDC);
+
+        adapter->Release();
+        dxgiFactory->Release();
+        backBuffer->Release();
+    }
+
+    ~Direct2DWindow()
+    {
+        // The documentation does not mention what order we need to release things.
+        mDC->SetTarget(nullptr);
+        mBackingStore->Release();
+        mSwapChain->Release();
+        mDC->Release();
+    }
+
+    void beginDraw() override
+    {
+        Super::beginDraw();
+    }
+
+    void endDraw() override
+    {
+        Super::endDraw();
+
+        DXGI_PRESENT_PARAMETERS parameters = { 0 };
+        parameters.DirtyRectsCount = 0;
+        parameters.pDirtyRects = nullptr;
+        parameters.pScrollRect = nullptr;
+        parameters.pScrollOffset = nullptr;
+
+        HRESULT err = mSwapChain->Present1(1, 0, &parameters);
+        if (err != S_OK && err != DXGI_STATUS_OCCLUDED) {
+            printError("swapChain->Present1() failed", err);
+        }
+    }
+};
+
+//-----------------------------------------------------------------------------
 class Direct2DBitmap : public Direct2DContext
 {
+    using Super = Direct2DContext;
 public:
     BitmapType mType;
     int mBytesPerPixel;
@@ -1151,8 +1332,27 @@ public:
         mNativeDC = nullptr;  // so Super doesn't crash
     }
 
+    void beginDraw() override
+    {
+        Super::beginDraw();
+        if (mReadBitmap) {
+            mReadBitmap->Release();
+            mReadBitmap = nullptr;
+        }
+    }
+
+    void endDraw() override
+    {
+        Super::endDraw();
+    }
+
     Color pixelAt(int x, int y) override
     {
+        if (mDrawingState == DrawingState::kDrawing) {
+            printError("DrawContext::pixelAt() called before endDraw()");
+            return Color::kPurple;
+        }
+
         HRESULT err;
         if (!mReadBitmap) {
             D2D1_BITMAP_PROPERTIES1 bitmapProps;
@@ -1169,12 +1369,8 @@ public:
                 printError("Could not create readable bitmap", err);
                 return Color::kPurple;
             }
-        }
-
-        if (mDrawingState == DrawingState::kDrawing) {
-            flush();
             D2D1_POINT_2U destUpperLeft = { 0, 0 };
-            D2D1_RECT_U srcRect = { 0, 0, width(), height() };
+            D2D1_RECT_U srcRect = { 0, 0, UINT32(width()), UINT32(height()) };
             mReadBitmap->CopyFromBitmap(&destUpperLeft, mBitmap, &srcRect);
         }
 
@@ -1207,7 +1403,7 @@ public:
                 c = Color(int(rgba[2]), int(rgba[1]), int(rgba[0]), 255);
                 break;
             case kBitmapGreyscale:
-                return Color(int(rgba[0]), int(rgba[0]), int(rgba[0]), 255);
+                c = Color(int(rgba[0]), int(rgba[0]), int(rgba[0]), 255);
                 break;
             case kBitmapAlpha:
                 c = Color(0, 0, 0, int(rgba[0]));
@@ -1219,9 +1415,9 @@ public:
     }
 };
 //--------------------------- DrawContext -------------------------------------
-std::shared_ptr<DrawContext> DrawContext::fromDirect2D(void* renderTarget, int width, int height, float dpi)
+std::shared_ptr<DrawContext> DrawContext::fromHwnd(void* hwnd)
 {
-    return std::make_shared<Direct2DContext>(renderTarget, width, height, dpi);
+    return std::make_shared<Direct2DWindow>((HWND)hwnd);
 }
 
 std::shared_ptr<DrawContext> DrawContext::createDirect2DBitmap(BitmapType type, int width, int height,

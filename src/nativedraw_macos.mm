@@ -221,6 +221,9 @@ public:
         scale(mDPI / 72.0f, mDPI / 72.0f);
     }
 
+    void beginDraw() override {}
+    void endDraw() override {}
+
     void save() override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;

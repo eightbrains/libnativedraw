@@ -410,7 +410,7 @@ public:
     static std::shared_ptr<DrawContext> fromX11(void* display, const void* window, int width, int height, float dpi);
     static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi = 72.0f);
 #elif defined(_WIN32) || defined(_WIN64)
-    static std::shared_ptr<DrawContext> fromDirect2D(void* deviceContext, int width, int height, float dpi);
+    static std::shared_ptr<DrawContext> fromHwnd(void* hwnd);
     static std::shared_ptr<DrawContext> createDirect2DBitmap(BitmapType type, int width, int height,
                                                              float dpi = 72.0f);
 #endif
@@ -428,6 +428,9 @@ public:
     int width() const { return mWidth; }
     int height() const { return mHeight; }
     float dpi() const { return mDPI; }
+
+    virtual void beginDraw() = 0;
+    virtual void endDraw() = 0;
 
     virtual void save() = 0;
     virtual void restore() = 0;
@@ -474,9 +477,11 @@ public:
     virtual void clipToPath(std::shared_ptr<BezierPath> path) = 0;
 
     void* nativeDC() const { return mNativeDC; }
-    // This function can be slow.
+    // Cannot be called within a beginDraw()/endDraw() pair.
+    // Note that this function can be slow.
     // Design note: this is not const because it's easier in Windows that way.
     virtual Color pixelAt(int x, int y) = 0;
+    // Cannot be called within a beginDraw()/endDraw() pair.
     virtual std::shared_ptr<Image> copyToImage() = 0;
 
     virtual Font::Metrics fontMetrics(const Font& font) const = 0;

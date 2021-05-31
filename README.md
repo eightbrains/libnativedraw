@@ -39,6 +39,7 @@ Performance
 -----------
 `make timing` will create a timing test app. Results for different platforms are summarized below. Linux offer much greater precision on the numbers because both macOS and Windows sync to VBlank, so the drawing quantum is 1/60 sec on Windows and 1/120 sec on macOS.
 
+Numbers represent objects/sec.
 | | macOS | Linux | Windows (Direct2D) |
 |-|-------|-------|--------------------|
 |Rects (fill)|53000|33250|1000000|

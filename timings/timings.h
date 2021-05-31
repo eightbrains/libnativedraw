@@ -1,9 +1,12 @@
 #include <chrono>
+#include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace eb {
+class Image;
 class DrawContext;
 }
 
@@ -29,6 +32,8 @@ private:
     };
     std::vector<Run> mRuns;
     int mRunIdx = 0;
+
+    std::shared_ptr<eb::Image> mImg100;
 
     struct Result {
         int n = 0;

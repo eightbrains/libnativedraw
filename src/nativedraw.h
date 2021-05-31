@@ -212,10 +212,10 @@ public:
     float alpha() const { return _rgba[3]; }
     const float* rgba() const { return _rgba; }
 
-    float setRed(float r) { _rgba[0] = r; }
-    float setGreen(float g) { _rgba[1] = g; }
-    float setBlue(float b) { _rgba[2] = b; }
-    float setAlpha(float a) { _rgba[3] = a; }
+    void setRed(float r) { _rgba[0] = r; }
+    void setGreen(float g) { _rgba[1] = g; }
+    void setBlue(float b) { _rgba[2] = b; }
+    void setAlpha(float a) { _rgba[3] = a; }
 
     Color toGrey() const {
         float grey = 0.2126f * red() + 0.7152f * green() + 0.0722f * blue();
@@ -403,10 +403,14 @@ public:
     static std::shared_ptr<DrawContext> createCoreGraphicsBitmap(BitmapType type, int width, int height,
                                                                  float dpi = 72.0f);
 #elif defined(__unix__)
-    static std::shared_ptr<DrawContext> fromCairo(void* cairo_t, int width, int height, float dpi);
-    static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi);
+    // Note that an Xlib Window is NOT a pointer, so you will need to call this
+    // as fromX11(display, &window, ...). (Window is actually a typedef of
+    // long int, but we do not want to hard-code it, nor do we want to include
+    // Xlib.h in this header.
+    static std::shared_ptr<DrawContext> fromX11(void* display, const void* window, int width, int height, float dpi);
+    static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi = 72.0f);
 #elif defined(_WIN32) || defined(_WIN64)
-    static std::shared_ptr<DrawContext> fromDirect2D(void* deviceContext, int width, int height, float dpi);
+    static std::shared_ptr<DrawContext> fromHwnd(void* hwnd);
     static std::shared_ptr<DrawContext> createDirect2DBitmap(BitmapType type, int width, int height,
                                                              float dpi = 72.0f);
 #endif
@@ -414,11 +418,19 @@ public:
     DrawContext(void *nativeDC, int width, int height, float dpi);
     virtual ~DrawContext() {}
 
+    // This is the preferred function to create a bitmap if you already have a
+    // context (for instance, if you are creating a bitmap for a window).
+    virtual std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+                                                      float dpi = 72.0f) = 0;
+
     virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
 
     int width() const { return mWidth; }
     int height() const { return mHeight; }
     float dpi() const { return mDPI; }
+
+    virtual void beginDraw() = 0;
+    virtual void endDraw() = 0;
 
     virtual void save() = 0;
     virtual void restore() = 0;
@@ -465,9 +477,11 @@ public:
     virtual void clipToPath(std::shared_ptr<BezierPath> path) = 0;
 
     void* nativeDC() const { return mNativeDC; }
-    // This function can be slow.
+    // Cannot be called within a beginDraw()/endDraw() pair.
+    // Note that this function can be slow.
     // Design note: this is not const because it's easier in Windows that way.
     virtual Color pixelAt(int x, int y) = 0;
+    // Cannot be called within a beginDraw()/endDraw() pair.
     virtual std::shared_ptr<Image> copyToImage() = 0;
 
     virtual Font::Metrics fontMetrics(const Font& font) const = 0;

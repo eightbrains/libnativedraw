@@ -142,7 +142,6 @@ public:
         }
 
         mBitmap = createBitmap(mType, mWidth, mHeight, dpi);
-        mBitmap->fill(mBGColor);
     }
 
     void teardown() override
@@ -238,8 +237,10 @@ public:
     {
         const int size = 3;
         Color fg(0.0f, 0.0f, 0.0f, 1.0f);
+        mBitmap->beginDraw();
         mBitmap->setFillColor(fg);
         mBitmap->drawRect(Rect::fromPixels(0, 0, 2 * size, size, mBitmap->dpi()), kPaintFill);
+        mBitmap->endDraw();
 
         for (int y = 0;  y < size;  ++y) {
             for (int x = 0;  x < size;  ++x) {
@@ -289,10 +290,13 @@ public:
                 break;
         }
 
+        mBitmap->beginDraw();
         // Don't use fill(), in case it takes a different code path than drawRect()
         mBitmap->setFillColor(writeColor);
         auto dpi = mBitmap->dpi();
         mBitmap->drawRect(Rect::fromPixels(0, 0, mWidth, mHeight, dpi), kPaintFill);
+        mBitmap->endDraw();
+
         // We only need to sample one pixel, but this way we also
         // test that our indexing is correct.
         for (int x = 0; x < mWidth; ++x) {
@@ -319,10 +323,12 @@ public:
     {
         Color origColor = Color::kBlue;
         Color fillFuncColor = Color::kGreen;
+        mBitmap->beginDraw();
         mBitmap->setFillColor(origColor);
 
         // Test that fill sets all the pixels to fillFuncColor
         mBitmap->fill(fillFuncColor);
+        mBitmap->endDraw();
         for (int y = 0;  y < mHeight;  ++y) {
             for (int x = 0;  x < mWidth;  ++x) {
                 auto pixel = mBitmap->pixelAt(x, y);
@@ -336,7 +342,9 @@ public:
         // Draw a rectangle over all the pixels without calling
         // setFillColor() and see if we get the proper pixels
         auto dpi = mBitmap->dpi();
+        mBitmap->beginDraw();
         mBitmap->drawRect(Rect::fromPixels(0, 0, mWidth, mHeight, dpi), kPaintFill);
+        mBitmap->endDraw();
         for (int y = 0;  y < mHeight;  ++y) {
             for (int x = 0;  x < mWidth;  ++x) {
                 auto pixel = mBitmap->pixelAt(x, y);
@@ -360,12 +368,15 @@ public:
         int margin = 1;
         auto dpi = mBitmap->dpi();
         Color fg = Color::kBlack;
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->setFillColor(fg);
         mBitmap->translate(PicaPt::fromPixels(margin + 2, dpi),
                            PicaPt::fromPixels(margin, dpi));
         mBitmap->rotate(-90.0f);
         mBitmap->scale(3.0, 2.0);
         mBitmap->drawRect(Rect::fromPixels(0, 0, 3, 1, dpi), kPaintFill);
+        mBitmap->endDraw();
 
         return verifyFillRect(1, 1, 2, 9, mBGColor, fg);
     }
@@ -384,8 +395,11 @@ public:
         auto dpi = mBitmap->dpi();
         auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
         r.inset(PicaPt::fromPixels(3, dpi), PicaPt::fromPixels(3, dpi));
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->setFillColor(color);
         mBitmap->drawRect(r, kPaintFill);
+        mBitmap->endDraw();
 
         return verifyFillRect(margin, margin, mWidth - 2 * margin, mHeight - 2 * margin, mBGColor, color);
     }
@@ -407,6 +421,7 @@ public:
 
         auto dpi = mBitmap->dpi();
         auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
+        mBitmap->beginDraw();
         mBitmap->setFillColor(bg);
         mBitmap->drawRect(r, kPaintFill);
 
@@ -415,6 +430,7 @@ public:
         mBitmap->setStrokeWidth(PicaPt::fromPixels(1, dpi));
         mBitmap->setStrokeColor(fg);
         mBitmap->drawRect(r, kPaintStroke);
+        mBitmap->endDraw();
 
         int xLeft = int(r.x.toPixels(dpi));
         int xRight = int(r.maxX().toPixels(dpi));
@@ -468,9 +484,12 @@ public:
         if (mStrokeWidth % 2 == 1) {
             r.inset(PicaPt::fromPixels(0.5, dpi), PicaPt::fromPixels(0.5, dpi));
         }
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->setStrokeWidth(PicaPt::fromPixels(mStrokeWidth, dpi));
         mBitmap->setStrokeColor(color);
         mBitmap->drawRect(r, kPaintStroke);
+        mBitmap->endDraw();
 
         float halfWidth = 0.5 * float(mStrokeWidth);
         int xLeftMin = (r.x.toPixels(dpi) - halfWidth);
@@ -536,6 +555,7 @@ public:
         // including antialiased ones as fractional pixels.
         Color bg = Color::kBlack;
         Color fg = Color::kWhite;
+        mBitmap->beginDraw();
         mBitmap->setFillColor(bg);
         mBitmap->drawRect(Rect::fromPixels(0, 0, mWidth, mHeight, dpi), kPaintFill);
 
@@ -546,6 +566,7 @@ public:
         int y = margin + strokeWidth / 2;
         mBitmap->drawLines({ Point::fromPixels(x, y, dpi),
                              Point::fromPixels(x, y + strokeLength, dpi) });
+        mBitmap->endDraw();
 
         float total = 0.0f;
         for (int y = 0; y < mHeight; ++y) {
@@ -615,6 +636,7 @@ public:
         // including antialiased ones as fractional pixels.
         Color bg = Color::kBlack;
         Color fg = Color::kWhite;
+        mBitmap->beginDraw();
         mBitmap->setFillColor(bg);
         mBitmap->drawRect(Rect::fromPixels(0, 0, mWidth, mHeight, dpi), kPaintFill);
         mBitmap->setStrokeColor(fg);
@@ -625,6 +647,7 @@ public:
         int y = margin + strokeWidth / 2;
         auto r = Rect::fromPixels(x, y, strokeLength, strokeLength, dpi);
         mBitmap->drawLines({ r.upperLeft(), r.upperRight(), r.lowerRight(), r.lowerLeft(), r.upperLeft() });
+        mBitmap->endDraw();
 
         float total = 0.0f;
         for (int y = 0; y < mHeight; ++y) {
@@ -691,6 +714,8 @@ public:
                                        PicaPt::fromPixels(2, dpi), PicaPt::fromPixels(1, dpi),
                                        PicaPt::fromPixels(3, dpi), PicaPt::fromPixels(1, dpi) };
 
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->setStrokeColor(fg);
         mBitmap->setStrokeWidth(PicaPt::fromPixels(1, dpi));
         mBitmap->setStrokeDashes(dashes, PicaPt(0));
@@ -699,24 +724,31 @@ public:
         std::vector<Point> points = { Point::fromPixels(float(margin), 3.5, dpi),
                                       Point::fromPixels(float(mWidth) - margin, 3.5, dpi) };
         mBitmap->drawLines(points);
+        mBitmap->endDraw();
         auto err = verify(margin, 3, dashes, fg, "bad pixel (offset=0)");
         if (!err.empty()) { return err; }
 
+        mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->setStrokeDashes(dashes, PicaPt::fromPixels(1, dpi));
         mBitmap->drawLines(points);
+        mBitmap->endDraw();
         err = verify(margin + 1, 3, dashes, fg, "bad pixel (offset=1)");
         if (!err.empty()) { return err; }
 
+        mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->setStrokeDashes(dashes, PicaPt::fromPixels(2, dpi));
         mBitmap->drawLines(points);
+        mBitmap->endDraw();
         err = verify(margin + 2, 3, dashes, fg, "bad pixel (offset=2)");
         if (!err.empty()) { return err; }
 
+        mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->setStrokeDashes({}, PicaPt(0));
         mBitmap->drawLines(points);
+        mBitmap->endDraw();
         int y = 3;
         for (int x = margin;  x < mWidth - 1;  ++x) {
             auto pixel = mBitmap->pixelAt(x, y);
@@ -778,10 +810,13 @@ public:
         if (mStrokeWidth % 2 == 1) {
             r.inset(PicaPt::fromPixels(0.5, dpi), PicaPt::fromPixels(0.5, dpi));
         }
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->setStrokeColor(strokeColor);
         mBitmap->setStrokeWidth(PicaPt::fromPixels(mStrokeWidth, dpi));
         mBitmap->setFillColor(fillColor);
         mBitmap->drawRect(r, kPaintStrokeAndFill);
+        mBitmap->endDraw();
 
         // Adjust bounds so we can use Rect::contains(). We need to shrink the width and
         // height by a pixel because we are comparing pixels (an area) with a mathematical
@@ -860,11 +895,13 @@ public:
         auto rect2 = Rect::fromPixels(3, 3, 6, 5, dpi);
         auto intersection = Rect::fromPixels(3, 3, 4, 3, dpi);
 
+        mBitmap->beginDraw();
         mBitmap->fill(bg);
         mBitmap->setFillColor(fill1);
         mBitmap->drawRect(rect1, kPaintFill);
         mBitmap->setFillColor(fill2);
         mBitmap->drawRect(rect2, kPaintFill);
+        mBitmap->endDraw();
 
         auto onePx = PicaPt::fromPixels(1, dpi);
         rect1.width -= onePx;
@@ -918,11 +955,13 @@ public:
         Color fg = Color::kWhite;
         auto dpi = mBitmap->dpi();
         auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
+        mBitmap->beginDraw();
         mBitmap->setFillColor(bg);
         mBitmap->drawRect(r, kPaintFill);
         mBitmap->setFillColor(fg);
         r.inset(PicaPt::fromPixels(margin, dpi), PicaPt::fromPixels(margin, dpi));
         mBitmap->drawRoundedRect(r, PicaPt::fromPixels(mRadius, dpi), kPaintFill);
+        mBitmap->endDraw();
 
         float total = 0.0f;
         for (int y = 0; y < mHeight; ++y) {
@@ -967,12 +1006,14 @@ public:
         Color fg = Color::kWhite;
         auto dpi = mBitmap->dpi();
         auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
+        mBitmap->beginDraw();
         mBitmap->setFillColor(bg);
         mBitmap->drawRect(r, kPaintFill);
         mBitmap->setFillColor(fg);
         r.inset(PicaPt::fromPixels(margin, dpi), PicaPt::fromPixels(margin, dpi));
         r.height -= PicaPt::fromPixels(1, dpi);  // test for flipped coordinates
         mBitmap->drawEllipse(r, kPaintFill);
+        mBitmap->endDraw();
 
         float total = 0.0f;
         for (int y = 0; y < mHeight; ++y) {
@@ -1010,9 +1051,12 @@ public:
         auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
         auto clip = Rect::fromPixels(margin, margin, mWidth - 3 * margin, mHeight - 3 * margin, dpi);
 
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->clipToRect(clip);
         mBitmap->setFillColor(fg);
         mBitmap->drawRect(r, kPaintFill);
+        mBitmap->endDraw();
         return verifyFillRect(margin, margin, mWidth - 3 * margin, mHeight - 3 * margin, mBGColor, fg);
     }
 };
@@ -1030,11 +1074,14 @@ public:
         auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
         auto clip = Rect::fromPixels(margin, margin, mWidth - 3 * margin, mHeight - 3 * margin, dpi);
 
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         auto path = mBitmap->createBezierPath();
         path->addRect(clip);
         mBitmap->clipToPath(path);
         mBitmap->setFillColor(fg);
         mBitmap->drawRect(r, kPaintFill);
+        mBitmap->endDraw();
         return verifyFillRect(margin, margin, mWidth - 3 * margin, mHeight - 3 * margin, mBGColor, fg);
     }
 };
@@ -1053,6 +1100,8 @@ public:
         auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
         int inset1 = 1;
         auto clip1 = r.insetted(PicaPt::fromPixels(inset1, dpi), PicaPt::fromPixels(inset1, dpi));
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->clipToRect(clip1);
         mBitmap->setStrokeWidth(PicaPt::fromPixels(2, dpi));
         mBitmap->setStrokeColor(stroke1);
@@ -1086,6 +1135,8 @@ public:
         mBitmap->drawLines({ Point::fromPixels(0, 10, dpi),
                              Point::fromPixels(mWidth, 10, dpi) });
         auto lineRect = Rect::fromPixels(inset1, 9, mWidth - 2 * inset1, 2, dpi);
+
+        mBitmap->endDraw();
 
         // Shrink the rects so that contains() will work will pixel values
         auto onePx = PicaPt::fromPixels(1, dpi);
@@ -1158,6 +1209,7 @@ public:
         // the line, so we don't want to use those.
         const char *glyph = "T";
         float baselineY = kMargin + metrics.ascent.toPixels(dpi);
+        mBitmap->beginDraw();
         mBitmap->fill(bg);
         mBitmap->setFillColor(fg);
         mBitmap->setStrokeColor(baselineColor);
@@ -1170,6 +1222,7 @@ public:
         mBitmap->drawLines({ Point::fromPixels(0, baselineYpx, dpi),
                              Point::fromPixels(mWidth, baselineYpx, dpi) });
         mBitmap->drawText(glyph, upperLeft, arial, kPaintFill);
+        mBitmap->endDraw();
         // Compute height of glyph
         float yMin = 100.0f, yMax = 0.0f;
         int midY = int(mPointSize / 2);
@@ -1211,10 +1264,12 @@ public:
         // writeTIFF("/tmp/debug-font.tiff", *mBitmap);
 
         // Compute metrics for "g"
+        mBitmap->beginDraw();
         mBitmap->fill(bg);
         mBitmap->drawLines({ Point::fromPixels(0, baselineYpx, dpi),
                              Point::fromPixels(mWidth, baselineYpx, dpi) });  // helps with debugging
         mBitmap->drawText("g", upperLeft, arial, kPaintFill);
+        mBitmap->endDraw();
         yMax = 0.0f;
         for (int y = 0;  y < mHeight;  ++y) {
             for (int x = 0;  x < mWidth;  ++x) {
@@ -1251,6 +1306,13 @@ public:
 
     std::string run() override
     {
+        // Fill the background, otherwise if we fail, the pixel values are
+        // garbage which makes the problem look like a memory problem instead
+        // of a font problem.
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
+        mBitmap->endDraw();
+
         auto dpi = mBitmap->dpi();
         eb::Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
         auto metrics = font.metrics(*mBitmap);
@@ -1260,6 +1322,7 @@ public:
         // TODO: what is the expected behavior if we attempt to draw?
         //    macOS:   nothing shows up
         //    Windows: uses a font, but appears to be the wrong size
+
         return "";
     }
 };
@@ -1285,32 +1348,43 @@ public:
         // Assume that the ascents of the different styles don't change much
         mCapHeight = font.metrics(*mBitmap).capHeight.toPixels(dpi);
         auto p = Point::fromPixels(kMargin, kMargin, dpi);
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->setFillColor(fg);
         mBitmap->drawText("I", p, font, kPaintFill);
+        mBitmap->endDraw();
         if (isItalic()) { return "glyph appears to be italic (expected regular)"; }
         if (isBold()) { return "glyph appears to be bold (expected regular)"; }
 
         auto bold = font.fontWithStyle(kStyleBold);
+        mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->drawText("I", p, bold, kPaintFill);
+        mBitmap->endDraw();
         if (isItalic()) { return "glyph appears to be italic (expected bold)"; }
         if (!isBold()) { return "glyph appears to be regular (expected bold)"; }
 
         auto italic = bold.fontWithStyle(kStyleItalic);  // also tests removing bold
+        mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->drawText("I", p, italic, kPaintFill);
+        mBitmap->endDraw();
         if (!isItalic()) { return "glyph appears to be regular (expected italic)"; }
         if (isBold()) { return "glyph appears to be bold (expected italic)"; }
 
         auto boldItalic = bold.fontWithStyle(kStyleBoldItalic);
+        mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->drawText("I", p, boldItalic, kPaintFill);
+        mBitmap->endDraw();
         if (!isItalic()) { return "glyph appears not to be italic (expected bold+italic)"; }
         if (!isBold()) { return "glyph appears not to be bold (expected bold+italic)"; }
 
         auto regular = boldItalic.fontWithStyle(kStyleNone);  // test removing bold and italic
+        mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->drawText("I", p, font, kPaintFill);
+        mBitmap->endDraw();
         if (isItalic()) { return "glyph appears to be italic (expected regular) [#2]"; }
         if (isBold()) { return "glyph appears to be italic (expected regular) [#2]"; }
 
@@ -1406,6 +1480,7 @@ public:
         Point topLeft = Point::fromPixels(2, 0, dpi);
         int y = kPointSize / 2;
 
+        mBitmap->beginDraw();
         mBitmap->setFillColor(fill);
         mBitmap->setStrokeColor(stroke);
         mBitmap->setStrokeWidth(strokeWidth);
@@ -1414,6 +1489,7 @@ public:
         // and count the number of stroked pixels.
         mBitmap->fill(bg);
         mBitmap->drawText("O", topLeft, font, kPaintStroke);
+        mBitmap->endDraw();
         float nStroke = 0.0f;
         for (int x = 0;  x < mWidth;  ++x) {
             auto pixel = mBitmap->pixelAt(x, y);
@@ -1431,8 +1507,10 @@ public:
         }
 
         // Test stroke and fill
+        mBitmap->beginDraw();
         mBitmap->fill(bg);
         mBitmap->drawText("O", topLeft, font, kPaintStrokeAndFill);
+        mBitmap->endDraw();
         nStroke = 0.0f;
         float nFill = 0.0f;
         for (int x = 0;  x < mWidth;  ++x) {
@@ -1471,12 +1549,17 @@ public:
         auto rect2 = Rect::fromPixels(5, 3, 3, 5, srcDPI);
         auto destRect = Rect::fromPixels(2, 2, src->width(), src->height(), destDPI);
 
+        src->beginDraw();
         src->fill(bgColor);
         src->setFillColor(rect1Color);
         src->drawRect(rect1, kPaintFill);
         src->setFillColor(rect2Color);
         src->drawRect(rect2, kPaintFill);
+        src->endDraw();
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
         mBitmap->drawImage(src->copyToImage(), destRect);
+        mBitmap->endDraw();
 
         // writeTIFF("/tmp/debug-blit.tiff", src); // debugging
 
@@ -1518,12 +1601,50 @@ public:
     }
 };
 
+class ImageCopyTest : public BitmapTest
+{
+public:
+    ImageCopyTest() : BitmapTest("copyToImage lifetime", 13, 15) {}
+
+    std::string run() override
+    {
+        // Tests to make sure that the result of copyToImage() is still usable after
+        // the bitmap context that originally created it is gone. (Otherwise it is
+        // not copyToImage, it is asImageRef).
+        Color bgColor(255, 255, 255, 255);
+        Color rectColor(0, 255, 0, 255);
+        auto src = makeImage(rectColor);  // returns copy of the temp context
+        auto destDPI = mBitmap->dpi();
+        auto srcDPI = src->dpi();
+
+        mBitmap->beginDraw();
+        mBitmap->drawImage(src, Rect::fromPixels(0, 0, mBitmap->width(), mBitmap->height(), mBitmap->dpi()));
+        mBitmap->endDraw();
+
+        return verifyFillRect(0, 0, mBitmap->width(), mBitmap->height(), bgColor, rectColor);
+    }
+
+protected:
+    std::shared_ptr<Image> makeImage(const Color& fill)
+    {
+        auto src = createBitmap(kBitmapRGB, mBitmap->width(), mBitmap->height(),
+                                mBitmap->dpi());
+        src->beginDraw();
+        src->fill(fill);
+        src->endDraw();
+        // 'src' will be destroyed, so if internal resources are destroyed,
+        // the result of copyToImage() won't work.
+        return src->copyToImage();
+    }
+};
+
 /*void TextDebug()
 {
     eb::Font font("Arial", PicaPt(20));
     Bitmap bitmap(100, 50, kBitmapRGB);
     auto metrics = font.metrics(bitmap);
     int baselineY = int(metrics.ascent.toPixels(bitmap.dpi()));
+    bitmap.beginDraw();
     bitmap.fill(Color::kWhite);
     bitmap.setStrokeColor(Color::kBlue);
     bitmap.drawLines({ Point(PicaPt(0.5), PicaPt(baselineY + 0.5)),
@@ -1531,6 +1652,7 @@ public:
 //    bitmap.drawText("TyAgAVA", Point(PicaPt(0), PicaPt(0)), font, kPaintFill);
     bitmap.drawText("T", Point(PicaPt(0), PicaPt(0)), font, kPaintFill);
     bitmap.drawText("g", Point(PicaPt(15), PicaPt(0)), font, kPaintFill);
+    bitmap.endDraw();
 
     writeTIFF("/tmp/out.tiff", bitmap);
 } */
@@ -1587,6 +1709,7 @@ int main(int argc, char *argv[])
         std::make_shared<FontStyleTest>(),
         std::make_shared<StrokedTextTest>(),
         std::make_shared<ImageTest>(),
+        std::make_shared<ImageCopyTest>(),
     };
 
     const char *TERM = std::getenv("TERM");

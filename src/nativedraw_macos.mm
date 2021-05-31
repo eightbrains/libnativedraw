@@ -191,6 +191,12 @@ public:
             setNativeDC(cgcontext);
         }
     }
+
+    std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+                                              float dpi /*= 72.0f*/) override
+    {
+        return DrawContext::createCoreGraphicsBitmap(type, width, height, dpi);
+    }
    
     std::shared_ptr<BezierPath> createBezierPath() const override
     {
@@ -214,6 +220,9 @@ public:
        
         scale(mDPI / 72.0f, mDPI / 72.0f);
     }
+
+    void beginDraw() override {}
+    void endDraw() override {}
 
     void save() override
     {

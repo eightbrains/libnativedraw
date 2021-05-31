@@ -14,6 +14,11 @@ namespace ND_NAMESPACE {
 
 namespace {
 
+void printError(const std::string& message)
+{
+    std::cerr << "[ERROR] " << message << std::endl;
+}
+
 void setCairoSourceColor(cairo_t *gc, const Color& color)
 {
     cairo_set_source_rgba(gc, double(color.red()), double(color.green()),
@@ -220,6 +225,16 @@ public:
         return std::make_shared<CairoPath>();
     }
 
+    void beginDraw() override
+    {
+        mDrawingState = DrawingState::kDrawing;
+    }
+
+    void endDraw() override
+    {
+        mDrawingState = DrawingState::kNotDrawing;
+    }
+
     void save() override
     {
         cairo_save(cairoContext());
@@ -313,7 +328,6 @@ public:
         setCairoSourceColor(gc, color);
         cairo_rectangle(gc, 0.0, 0.0, double(mWidth), double(mHeight));
         cairo_fill(cairoContext());
-        mDrawingState = DrawingState::kDrawing;
     }
 
     void clearRect(const Rect& rect) override
@@ -326,7 +340,6 @@ public:
                         rect.width.toPixels(mDPI), rect.height.toPixels(mDPI));
         cairo_fill(gc);
         cairo_set_operator(gc, old_op);
-        mDrawingState = DrawingState::kDrawing;
     }
 
     void drawLines(const std::vector<Point>& lines) override
@@ -385,10 +398,10 @@ public:
         float sx = destWidthPx / image->width();
         float sy = destHeightPx / image->height();
         scale(sx, sy);
-        cairo_set_source_surface(gc, (cairo_surface_t*)image->nativeHandle(), 0.0, 0.0);
+        cairo_set_source_surface(gc, (cairo_surface_t*)image->nativeHandle()
+                                 ,0.0, 0.0);
         cairo_paint(gc);
         restore();
-        mDrawingState = DrawingState::kDrawing;
     }
 
     void clipToRect(const Rect& rect) override
@@ -487,7 +500,6 @@ protected:
                 cairo_stroke(gc);
                 break;
         }
-        mDrawingState = DrawingState::kDrawing;
     }
 
     void setFont(const Font& font) const
@@ -548,9 +560,10 @@ public:
     Color pixelAt(int x, int y) override
     {
         if (mDrawingState == DrawingState::kDrawing) {
-            mDrawingState = DrawingState::kNotDrawing;
-            cairo_surface_flush(mSurface);
+            printError("DrawContext::pixelAt() cannot be called between beginDraw() and endDraw()");
+            endDraw();  // but make it work anyway...
         }
+        cairo_surface_flush(mSurface);
         unsigned char *data = cairo_image_surface_get_data(mSurface);
         unsigned char *rgba = data + y * cairo_image_surface_get_stride(mSurface);
         switch(cairo_image_surface_get_format(mSurface)) {
@@ -583,7 +596,8 @@ public:
                                             width(), height(), dpi());
     }
 
-    std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+    std::shared_ptr<DrawContext> createBitmap(BitmapType type,
+                                              int width, int height,
                                               float dpi /*= 72.0f*/) override
     {
         return std::make_shared<CairoBitmap>(type, width, height, dpi);
@@ -650,10 +664,12 @@ public:
         cairo_surface_destroy(mSurface);
     }
 
-    std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
+    std::shared_ptr<DrawContext> createBitmap(BitmapType type,
+                                              int width, int height,
                                               float dpi /*= 72.0f*/) override
     {
-        return DrawContext::createCairoX11Bitmap(mDisplay, type, width, height, dpi);
+        return DrawContext::createCairoX11Bitmap(mDisplay, type, width, height,
+                                                 dpi);
     }
 
 protected:
@@ -683,6 +699,7 @@ public:
 
 class CairoX11Bitmap : public CairoX11DrawContext
 {
+    using Super = CairoX11DrawContext;
 private:
     BitmapType mType;
     std::shared_ptr<ShareableX11Pixmap> mPixmap;
@@ -738,21 +755,22 @@ public:
         delete mReadable;
     }
 
+    void beginDraw() override
+    {
+        Super::beginDraw();
+        delete mReadable;
+        mReadable = nullptr;
+    }
+
     Color pixelAt(int x, int y) override
     {
-        if (mDrawingState == DrawingState::kDrawing) {
-            mDrawingState = DrawingState::kNotDrawing;
-            delete mReadable;
+        if (!mReadable) {
             mReadable = new CairoBitmap(mType, width(), height(), dpi());
             auto *readableGC = (cairo_t *)mReadable->nativeDC();
             cairo_set_source_surface(readableGC, mSurface, 0.0, 0.0);
             cairo_paint(readableGC);
         }
-        if (mReadable) {
-            return mReadable->pixelAt(x, y);
-        } else {
-            return Color::kPurple;
-        }
+        return mReadable->pixelAt(x, y);
     }
 
     std::shared_ptr<Image> copyToImage() override
@@ -767,9 +785,11 @@ public:
 //    return std::make_shared<CairoDrawContext>(cairo_t_, width, height, dpi);
 //}
 
-std::shared_ptr<DrawContext> DrawContext::fromX11(void* display, const void* window, int width, int height, float dpi)
+std::shared_ptr<DrawContext> DrawContext::fromX11(
+            void* display, const void* window, int width, int height, float dpi)
 {
-    return std::make_shared<CairoX11DrawContext>(display, window, width, height, dpi);
+    return std::make_shared<CairoX11DrawContext>(display, window, width, height,
+                                                 dpi);
 }
 
 std::shared_ptr<DrawContext> DrawContext::createCairoX11Bitmap(

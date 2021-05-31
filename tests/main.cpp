@@ -1306,6 +1306,13 @@ public:
 
     std::string run() override
     {
+        // Fill the background, otherwise if we fail, the pixel values are
+        // garbage which makes the problem look like a memory problem instead
+        // of a font problem.
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
+        mBitmap->endDraw();
+
         auto dpi = mBitmap->dpi();
         eb::Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
         auto metrics = font.metrics(*mBitmap);
@@ -1315,6 +1322,7 @@ public:
         // TODO: what is the expected behavior if we attempt to draw?
         //    macOS:   nothing shows up
         //    Windows: uses a font, but appears to be the wrong size
+
         return "";
     }
 };

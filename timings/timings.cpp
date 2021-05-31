@@ -14,7 +14,7 @@ static const int kNTimesPerRun = 50;
 // which also takes 1/60 sec).
 #ifdef __APPLE__
 // macOS' image blitting is so slow that 50000 would take a long time
-static const int kNObjs = 500;
+static const int kNObjs = 3000;
 #else
 static const int kNObjs = 10000;
 #endif
@@ -374,7 +374,6 @@ Timings::Timings()
                           this->mImg100 = createImage(dc, 100, 100, 72.0f);
                       }
                   } },
-              Run{kBaseRunName, 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
               Run{kBaseRunName, 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
               Run{"rects (fill)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRects(dc, nObjs, 100, 100,

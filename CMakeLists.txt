@@ -12,15 +12,16 @@ set(LIB_SOURCES src/nativedraw.cpp
 if (APPLE)
     list(APPEND LIB_SOURCES src/nativedraw_macos.mm)
 endif()
-add_library(libnativedraw ${LIB_HEADERS} ${LIB_SOURCES})
+add_library(nativedraw ${LIB_HEADERS} ${LIB_SOURCES})
+set_target_properties(nativedraw PROPERTIES PUBLIC_HEADER src/nativedraw.h)
 
 # Platform-specific
 if (APPLE)
     find_library(CORE_GRAPHICS CoreGraphics)
     find_library(APPKIT AppKit)
-    target_link_libraries(libnativedraw ${APPKIT} ${CORE_GRAPHICS})
+    target_link_libraries(nativedraw ${APPKIT} ${CORE_GRAPHICS})
 elseif (WIN32)
-    target_link_libraries(libnativedraw d3d11 d2d1 dwrite)
+    target_link_libraries(nativedraw d3d11 d2d1 dwrite)
 elseif (UNIX)  # note that APPLE is UNIX, so need to check that first
     find_package(X11)
     find_path(CAIRO_INCLUDE_DIRS
@@ -38,10 +39,13 @@ elseif (UNIX)  # note that APPLE is UNIX, so need to check that first
     endif()
 
     include_directories(${X11_INCLUDE_DIRS} ${CAIRO_INCLUDE_DIRS})
-    target_link_libraries(libnativedraw ${CAIRO_LIBRARIES}
-                                        ${X11_Xrender_LIB}
-                                        ${X11_LIBRARIES})
+    target_link_libraries(nativedraw ${CAIRO_LIBRARIES}
+                                     ${X11_Xrender_LIB}
+                                     ${X11_LIBRARIES})
 endif()
 
 add_subdirectory(tests)
 add_subdirectory(timings)
+
+install(TARGETS nativedraw
+        PUBLIC_HEADER)

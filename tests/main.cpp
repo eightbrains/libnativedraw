@@ -20,6 +20,10 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+#ifndef ND_NAMESPACE
+#define ND_NAMESPACE eb
+#endif // ND_NAMESPACE
+
 #include "../src/nativedraw.h"
 
 #include <cstdlib>  // getenv()
@@ -45,7 +49,7 @@
 static Display *gXDisplay = nullptr;
 #endif
 
-using namespace eb;
+using namespace ND_NAMESPACE;
 
 std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
                                           float dpi)
@@ -1215,7 +1219,7 @@ public:
         Color fg = Color::kRed;
         Color baselineColor = Color::kBlue;
         auto dpi = mBitmap->dpi();
-        eb::Font arial(mFontName, PicaPt::fromPixels(mPointSize, dpi));
+        Font arial(mFontName, PicaPt::fromPixels(mPointSize, dpi));
         auto metrics = arial.metrics(*mBitmap);
 
         if (metrics.ascent.toPixels(dpi) == 0.0f || metrics.ascent.toPixels(dpi) == 0.0f) {
@@ -1336,7 +1340,7 @@ public:
         mBitmap->endDraw();
 
         auto dpi = mBitmap->dpi();
-        eb::Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
+        Font font("NonExistentFont", PicaPt::fromPixels(kFontHeight, dpi));
         auto metrics = font.metrics(*mBitmap);
         if (metrics.ascent != PicaPt(0) || metrics.descent != PicaPt(0)) {
             return "Expected non-existent font to have zero metrics";
@@ -1366,7 +1370,7 @@ public:
     {
         Color fg = Color::kRed;
         auto dpi = mBitmap->dpi();
-        eb::Font font("Arial", PicaPt::fromPixels(kFontHeight, dpi));
+        Font font("Arial", PicaPt::fromPixels(kFontHeight, dpi));
         // Assume that the ascents of the different styles don't change much
         mCapHeight = font.metrics(*mBitmap).capHeight.toPixels(dpi);
         auto p = Point::fromPixels(kMargin, kMargin, dpi);
@@ -1498,7 +1502,7 @@ public:
         auto strokeWidth = PicaPt::fromPixels(2, dpi);
         // We want a font that is heavy enough that we can tell if it is filled or not.
         // Georgia is thicker than, say, Arial, and bold will help.
-        eb::Font font("Georgia", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
+        Font font("Georgia", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
         Point topLeft = Point::fromPixels(2, 0, dpi);
         int y = kPointSize / 2;
 
@@ -1662,7 +1666,7 @@ protected:
 
 /*void TextDebug()
 {
-    eb::Font font("Arial", PicaPt(20));
+    Font font("Arial", PicaPt(20));
     Bitmap bitmap(100, 50, kBitmapRGB);
     auto metrics = font.metrics(bitmap);
     int baselineY = int(metrics.ascent.toPixels(bitmap.dpi()));

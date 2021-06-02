@@ -20,13 +20,17 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
+#ifndef ND_NAMESPACE
+#define ND_NAMESPACE eb
+#endif // ND_NAMESPACE
+
 #include "../src/nativedraw.h"
 #include "timings.h"
 
 #include <chrono>
 #include <iostream>
 
-using namespace eb;
+using namespace ND_NAMESPACE;
 
 namespace {
 static const int kNTimesPerRun = 50;
@@ -456,7 +460,7 @@ Timings::Timings()
         };
 }
 
-Timings::State Timings::runNext(eb::DrawContext *dc)
+Timings::State Timings::runNext(DrawContext *dc)
 {
     auto& lastRun = mRuns[mRunIdx];
     auto resultIt = mResults.find(lastRun.name);

@@ -42,7 +42,7 @@ std::shared_ptr<Timings> gTimings;
         CGFloat dpi = 72.0f * self.window.backingScaleFactor;
 
         auto cgContext = NSGraphicsContext.currentContext.CGContext;
-        auto dc = eb::DrawContext::fromCoreGraphics(cgContext, width, height, dpi);
+        auto dc = ND_NAMESPACE::DrawContext::fromCoreGraphics(cgContext, width, height, dpi);
         if (gTimings->runNext(dc.get()) == Timings::CONTINUE) {
             // self.needsDisplay will be cleared when drawRect finishes, so we
             // need to set it afterwards.

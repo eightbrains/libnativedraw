@@ -33,7 +33,7 @@ namespace {
     static const int kHeight = 768;
 
     std::shared_ptr<Timings> gTimings;
-    std::shared_ptr<eb::DrawContext> gDC;
+    std::shared_ptr<ND_NAMESPACE::DrawContext> gDC;
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -77,7 +77,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     UpdateWindow(w);
 
     gTimings = std::make_shared<Timings>();
-    gDC = eb::DrawContext::fromHwnd(w);
+    gDC = ND_NAMESPACE::DrawContext::fromHwnd(w);
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0))

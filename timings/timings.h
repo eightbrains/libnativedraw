@@ -27,7 +27,11 @@
 #include <string>
 #include <vector>
 
-namespace eb {
+#ifndef ND_NAMESPACE
+#define ND_NAMESPACE eb
+#endif // ND_NAMESPACE
+
+namespace ND_NAMESPACE {
 class Image;
 class DrawContext;
 }
@@ -44,18 +48,18 @@ public:
     Timings();
 
     enum State { CONTINUE, DONE };
-    State runNext(eb::DrawContext *dc);
+    State runNext(ND_NAMESPACE::DrawContext *dc);
 
 private:
     struct Run {
         std::string name;
         int nObjs;
-        std::function<void(eb::DrawContext&, int)> func;
+        std::function<void(ND_NAMESPACE::DrawContext&, int)> func;
     };
     std::vector<Run> mRuns;
     int mRunIdx = 0;
 
-    std::shared_ptr<eb::Image> mImg100;
+    std::shared_ptr<ND_NAMESPACE::Image> mImg100;
 
     struct Result {
         int n = 0;

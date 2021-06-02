@@ -33,7 +33,8 @@ namespace {
     static const int kHeight = 768;
 }
 
-bool OnDraw(Display *display, Window window, Timings& timings, eb::DrawContext& dc);
+bool OnDraw(Display *display, Window window, Timings& timings,
+            ND_NAMESPACE::DrawContext& dc);
 
 int main(int argc, const char *argv[])
 {
@@ -44,7 +45,8 @@ int main(int argc, const char *argv[])
     XSelectInput(display, window, ExposureMask);
 
     auto timings = std::make_shared<Timings>();
-    auto dc = eb::DrawContext::fromX11(display, &window, kWidth, kHeight, 72.0f);
+    auto dc = ND_NAMESPACE::DrawContext::fromX11(display, &window,
+                                                 kWidth, kHeight, 72.0f);
 
     bool done = false;
     XEvent event;
@@ -69,7 +71,8 @@ int main(int argc, const char *argv[])
     return 0;
 }
 
-bool OnDraw(Display *display, Window window, Timings& timings, eb::DrawContext& dc)
+bool OnDraw(Display *display, Window window, Timings& timings,
+            ND_NAMESPACE::DrawContext& dc)
 {
     if (timings.runNext(&dc) == Timings::CONTINUE) {
         XEvent e;

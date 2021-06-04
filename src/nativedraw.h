@@ -239,6 +239,9 @@ public:
     void setBlue(float b) { _rgba[2] = b; }
     void setAlpha(float a) { _rgba[3] = a; }
 
+    Color lighter() const;
+    Color darker() const;
+
     Color toGrey() const {
         float grey = 0.2126f * red() + 0.7152f * green() + 0.0722f * blue();
         return Color(grey, grey, grey, alpha());

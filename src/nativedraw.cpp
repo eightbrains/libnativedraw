@@ -46,6 +46,56 @@ const Color Color::kGreen(0.0f, 1.0f, 0.0f, 1.0f);
 const Color Color::kBlue(0.0f, 0.0f, 1.0f, 1.0f);
 const Color Color::kPurple(1.0f, 0.0f, 1.0f, 1.0f);
 
+Color Color::lighter() const {
+    float r = red();
+    if (r < 0.9f) {
+        r += 0.1f;
+    } else {
+        r = 0.5 * r + 0.5f;
+    }
+
+    float g = green();
+    if (g < 0.9f) {
+        g += 0.1f;
+    } else {
+        g = 0.5 * g + 0.5f;
+    }
+
+    float b = blue();
+    if (b < 0.9f) {
+        b += 0.1f;
+    } else {
+        b = 0.5 * r + 0.5f;
+    }
+
+    return Color(r, g, b, alpha());
+}
+
+Color Color::darker() const {
+    float r = red();
+    if (r > 0.1f) {
+        r -= 0.1f;
+    } else {
+        r = 0.5 * r;
+    }
+
+    float g = green();
+    if (g > 0.1f) {
+        g -= 0.1f;
+    } else {
+        g = 0.5 * g;
+    }
+
+    float b = blue();
+    if (b > 0.1f) {
+        b -= 0.1f;
+    } else {
+        b = 0.5 * r;
+    }
+
+    return Color(r, g, b, alpha());
+}
+
 std::size_t Color::hash() const
 {
     std::size_t result = 0;

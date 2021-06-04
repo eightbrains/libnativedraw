@@ -21,6 +21,11 @@
 //-----------------------------------------------------------------------------
 
 #if __APPLE__
+
+#if ! __has_feature(objc_arc)
+#error "ARC is off"
+#endif
+
 #include "nativedraw.h"
 
 #include "nativedraw_private.h"
@@ -478,6 +483,10 @@ public:
         CGContextScaleCTM(gc, 1, -1);
         CTFrameDraw(ctframe, gc);
         CGContextRestoreGState(gc);
+
+        CFRelease(ctframe);
+        CFRelease(layout);
+        CGPathRelease(path);
     }
 
     void drawImage(std::shared_ptr<Image> image, const Rect& destRect) override

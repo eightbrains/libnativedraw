@@ -17,6 +17,10 @@ set_target_properties(nativedraw PROPERTIES PUBLIC_HEADER src/nativedraw.h)
 
 # Platform-specific
 if (APPLE)
+    # We have to enable ARC automatically. All ObjC objects are internal, so
+    # callers do not need to have ARC enabled, hence PRIVATE is sufficient.
+    target_compile_options(nativedraw PRIVATE "-fobjc-arc")
+
     find_library(CORE_GRAPHICS CoreGraphics)
     find_library(APPKIT AppKit)
     target_link_libraries(nativedraw ${APPKIT} ${CORE_GRAPHICS})

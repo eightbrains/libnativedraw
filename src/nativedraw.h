@@ -289,8 +289,8 @@ class DrawContext;
 
 // Design note:
 // Q: Why not use enum classes?
-// A: We want to be able to export to straight C easily. For C++ they are still in the
-//    $ND_NAMESPACE namespace so they aren't actually global.
+// A: We want to be able to export to straight C easily. For C++ they are still
+//    in the $ND_NAMESPACE namespace so they aren't actually global.
 enum FontStyle { kStyleNone = 0, kStyleItalic = 1, kStyleBold = 2, kStyleBoldItalic = 3 };
 enum FontWeight { kWeightAuto = 0,
                   kWeightUltraLight = 100,
@@ -323,6 +323,14 @@ class Font
     //    so that things like widgets can set their fonts in the constructor
     //    before they know where they will be rendered, otherwise using
     //    fonts gets really inconvenient.
+    // Q: Why is textMetrics() a member of DrawContext instead of Font?
+    // A: To ensure consistency between the metrics and the drawing, the glpyh
+    //    layout should be done by the same code for both drawing and metrics.
+    //    One could imagine a situation where different resolutions produce
+    //    differently sized fonts, or even different displays use different
+    //    rendering paths (say, a high-DPI monitor versus a low-resolution
+    //    monitor, which might shape and kern the glyphs differently). In this
+    //    case the metrics would depend on the draw context.
 public:
     struct Metrics
     {
@@ -332,6 +340,14 @@ public:
         PicaPt xHeight;
         PicaPt capHeight;
         PicaPt lineHeight;
+    };
+
+    struct TextMetrics
+    {
+        PicaPt width;
+        PicaPt height;
+        PicaPt advanceX;
+        PicaPt advanceY;
     };
 
     Font(const Font& f);
@@ -515,6 +531,10 @@ public:
     virtual std::shared_ptr<Image> copyToImage() = 0;
 
     virtual Font::Metrics fontMetrics(const Font& font) const = 0;
+
+    // Returns the metrics for a single line of text
+    virtual Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
+                                          PaintMode mode) const = 0;
 
 protected:
     void setInitialState();

@@ -1226,7 +1226,7 @@ public:
         auto metrics = arial.metrics(*mBitmap);
 
         if (metrics.ascent.toPixels(dpi) == 0.0f || metrics.ascent.toPixels(dpi) == 0.0f) {
-            return "Font does exist: metrics are 0";
+            return "Font does not exist: metrics are 0";
         }
 //        if (metrics.lineHeight.toPixels(dpi) != float(mPointSize)) {
 //            return createFloatError("incorrect line height", mPointSize, metrics.lineHeight.toPixels(dpi));
@@ -1561,6 +1561,57 @@ public:
     }
 };
 
+class TextMetricsTest : public BitmapTest
+{
+public:
+    TextMetricsTest() : BitmapTest("text metrics", 1, 1) {}
+
+    std::string run() override
+    {
+        // Fill the background so that if we have an error at least we get
+        // consistent values for the fill, even though they are essentially
+        // meaningless.
+        mBitmap->fill(mBGColor);
+
+        float fontSize = 12.0f;
+        float dpi = 72.0f;
+        Font font("Arial", PicaPt::fromPixels(fontSize, dpi));
+
+        // Make sure we don't crash or get bogus numbers for empty string
+        auto tm = mBitmap->textMetrics("", font, kPaintFill);
+        if (tm.width != PicaPt::kZero || tm.height != PicaPt::kZero) {
+            std::stringstream err;
+            err << "Empty string has non-zero size: (" << tm.width.toPixels(dpi)
+                << ", " << tm.height.toPixels(dpi) << ")";
+            return err.str();
+        }
+
+        tm = mBitmap->textMetrics("Ag", font, kPaintFill);
+#if defined(__APPLE__)
+        if (tm.width < PicaPt::fromPixels(14.6f, dpi) ||
+            tm.width > PicaPt::fromPixels(14.7f, dpi) ||
+            tm.height < PicaPt::fromPixels(13.4f, dpi) ||
+            tm.height > PicaPt::fromPixels(13.5f, dpi)) {
+#elif defined(_WIN32) || defined(_WIN64)
+        if (tm.width < PicaPt::fromPixels(14.6f, dpi) ||
+            tm.width > PicaPt::fromPixels(14.7f, dpi) ||
+            tm.height < PicaPt::fromPixels(13.7f, dpi) ||
+            tm.height > PicaPt::fromPixels(13.8f, dpi)) {
+#else
+        if (tm.width != PicaPt::fromPixels(14.0f, dpi) ||
+            (tm.height != PicaPt::fromPixels(11.0f, dpi) &&
+             tm.height != PicaPt::fromPixels(12.0f, dpi))) {
+#endif
+            std::stringstream err;
+            err << fontSize << "pt \"Ag\" has incorrect size: ("
+                << tm.width.toPixels(dpi) << ", " << tm.height.toPixels(dpi) << ")";
+            return err.str();
+        }
+
+        return "";
+    }
+};
+
 class ImageTest : public BitmapTest
 {
 public:
@@ -1737,6 +1788,7 @@ int main(int argc, char *argv[])
         std::make_shared<BadFontTest>(),
         std::make_shared<FontStyleTest>(),
         std::make_shared<StrokedTextTest>(),
+        std::make_shared<TextMetricsTest>(),
         std::make_shared<ImageTest>(),
         std::make_shared<ImageCopyTest>(),
     };

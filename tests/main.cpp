@@ -1573,14 +1573,13 @@ public:
         // meaningless.
         mBitmap->fill(mBGColor);
 
-        const PicaPt zero(0);
         float fontSize = 12.0f;
         float dpi = 72.0f;
         Font font("Arial", PicaPt::fromPixels(fontSize, dpi));
 
         // Make sure we don't crash or get bogus numbers for empty string
         auto tm = mBitmap->textMetrics("", font, kPaintFill);
-        if (tm.width != zero || tm.height != zero) {
+        if (tm.width != PicaPt::kZero || tm.height != PicaPt::kZero) {
             std::stringstream err;
             err << "Empty string has non-zero size: (" << tm.width.toPixels(dpi)
                 << ", " << tm.height.toPixels(dpi) << ")";
@@ -1588,15 +1587,20 @@ public:
         }
 
         tm = mBitmap->textMetrics("Ag", font, kPaintFill);
-#if defined(__APPLE__) || defined(_WIN32) || defined(_WIN64)
-        if (tm.width < PicaPt::fromPixels(14.6, dpi) ||
-            tm.width > PicaPt::fromPixels(14.7, dpi) ||
-            tm.height < PicaPt::fromPixels(13.4, dpi) ||
-            tm.height > PicaPt::fromPixels(13.5, dpi)) {
+#if defined(__APPLE__)
+        if (tm.width < PicaPt::fromPixels(14.6f, dpi) ||
+            tm.width > PicaPt::fromPixels(14.7f, dpi) ||
+            tm.height < PicaPt::fromPixels(13.4f, dpi) ||
+            tm.height > PicaPt::fromPixels(13.5f, dpi)) {
+#elif defined(_WIN32) || defined(_WIN64)
+        if (tm.width < PicaPt::fromPixels(14.6f, dpi) ||
+            tm.width > PicaPt::fromPixels(14.7f, dpi) ||
+            tm.height < PicaPt::fromPixels(13.7f, dpi) ||
+            tm.height > PicaPt::fromPixels(13.8f, dpi)) {
 #else
-        if (tm.width != PicaPt::fromPixels(14.0, dpi) ||
-            (tm.height != PicaPt::fromPixels(11.0, dpi) &&
-             tm.height != PicaPt::fromPixels(12.0, dpi))) {
+        if (tm.width != PicaPt::fromPixels(14.0f, dpi) ||
+            (tm.height != PicaPt::fromPixels(11.0f, dpi) &&
+             tm.height != PicaPt::fromPixels(12.0f, dpi))) {
 #endif
             std::stringstream err;
             err << fontSize << "pt \"Ag\" has incorrect size: ("

@@ -385,6 +385,61 @@ static ResourceManager<Font, FontInfo> gFontMgr(createFont, destroyFont);
 
 } // namespace
 
+//------------------------ Text layout object ---------------------------------
+class TextObj
+{
+public:
+    TextObj(const char* textUTF8, const Font& font, float dpi)
+    {
+        // Convert from UTF8 -> WCHAR
+        const int kNullTerminated = -1;
+        int nCharsNeeded = MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, NULL, 0);
+        WCHAR* wtext = new WCHAR[nCharsNeeded + 1];  // nCharsNeeded includes \0, but +1 just in case
+        wtext[0] = '\0';  // in case conversion fails
+        MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, wtext, nCharsNeeded);
+
+        // Set alignment
+        auto* format = gFontMgr.get(font, dpi).format;
+        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR); // top
+
+        // Create the text layout (don't snap to pixel)
+        auto textOpts = D2D1_DRAW_TEXT_OPTIONS_NO_SNAP;
+        HRESULT err = Direct2D::instance().writeFactory()
+                              ->CreateTextLayout(wtext, nCharsNeeded - 1, // don't pass the \0
+                format, 10000.0f, 10000.0f, &mLayout);
+        delete [] wtext;
+
+
+        // Snapping to pixel sometimes puts the text above the baseline
+        // (as desired) or on the pixel of the baseline (not desired).
+        // Do our own snapping so that we can get consistent results.
+        // This requires getting the origin of the line ourself.
+        DWRITE_LINE_METRICS* lineMetrics = nullptr;
+        UINT32 nLines;
+        mLayout->GetLineMetrics(lineMetrics, 0, &nLines);
+        lineMetrics = new DWRITE_LINE_METRICS[nLines];
+        mLayout->GetLineMetrics(lineMetrics, nLines, &nLines);
+        float offsetPx = PicaPt::fromPixels(float(lineMetrics->baseline), 96.0f).toPixels(dpi);
+        offsetPx = offsetPx - std::floor(offsetPx);
+        mDrawOffset = PicaPt::fromPixels(offsetPx, dpi);
+        delete[] lineMetrics;
+    }
+
+    ~TextObj()
+    {
+        mLayout->Release();
+    }
+
+    const PicaPt& drawOffset() const { return mDrawOffset; }
+
+    IDWriteTextLayout* layout() const { return mLayout; }
+
+private:
+    IDWriteTextLayout* mLayout = nullptr;
+    PicaPt mDrawOffset;
+};
+
 //---------------------- Custom text renderer ---------------------------------
 // We need our own renderer so that we can draw outlines
 class CustomTextRenderer : public IDWriteTextRenderer
@@ -908,43 +963,12 @@ public:
     void drawText(const char* textUTF8, const Point& topLeft, const Font& font,
                   PaintMode mode) override
     {
-        // Convert from UTF8 -> WCHAR
-        const int kNullTerminated = -1;
-        int nCharsNeeded = MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, NULL, 0);
-        WCHAR* wtext = new WCHAR[nCharsNeeded + 1];  // nCharsNeeded includes \0, but +1 just in case
-        wtext[0] = '\0';  // in case conversion fails
-        MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, wtext, nCharsNeeded);
-
-        // Set alignment
-        auto* format = gFontMgr.get(font, mDPI).format;
-        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR); // top
-
-        // Create the text layout (don't snap to pixel)
+        TextObj t(textUTF8, font, mDPI);
         auto& state = mStateStack.back();
         auto* gc = deviceContext();
-        auto textOpts = D2D1_DRAW_TEXT_OPTIONS_NO_SNAP;
-        IDWriteTextLayout* layout = nullptr;
-        HRESULT err = Direct2D::instance().writeFactory()
-                              ->CreateTextLayout(wtext, nCharsNeeded - 1, // don't pass the \0
-                format, 10000.0f, 10000.0f, &layout);
 
-        // Snapping to pixel sometimes puts the text above the baseline
-        // (as desired) or on the pixel of the baseline (not desired).
-        // Do our own snapping so that we can get consistent results.
-        // This requires getting the origin of the line ourself.
-        DWRITE_LINE_METRICS* lineMetrics = nullptr;
-        UINT32 nLines;
-        layout->GetLineMetrics(lineMetrics, 0, &nLines);
-        lineMetrics = new DWRITE_LINE_METRICS[nLines];
-        layout->GetLineMetrics(lineMetrics, nLines, &nLines);
-        float offsetPx = PicaPt::fromPixels(float(lineMetrics->baseline), 96.0f).toPixels(mDPI);
-        offsetPx = offsetPx - std::floor(offsetPx);
-        auto offset = PicaPt::fromPixels(offsetPx, mDPI);
-        delete[] lineMetrics;
-
-        // Finally, we can draw. gc->DrawTextLayout() works fine for filled text,
-        // but has no support for outlines, so we need to use our own custom
+        // gc->DrawTextLayout() works fine for filled text but has
+        // no support for outlines, so we need to use our own custom
         // text renderer :(
         const Color* fillColor = nullptr;
         const Color* strokeColor = nullptr;
@@ -961,10 +985,30 @@ public:
         auto *textRenderer = new CustomTextRenderer(
                                         state.transform, mSolidBrush, fillColor,
                                         strokeColor, strokeWidth, strokeStyle);
-        layout->Draw(gc, textRenderer, toD2D(topLeft.x), toD2D(topLeft.y - offset));
+        t.layout()->Draw(gc, textRenderer, toD2D(topLeft.x),
+                         toD2D(topLeft.y - t.drawOffset()));
         textRenderer->Release();
+    }
 
-        delete [] wtext;
+    Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
+                                  PaintMode mode) const override
+    {
+        TextObj t(textUTF8, font, mDPI);
+        DWRITE_TEXT_METRICS metrics;
+        t.layout()->GetMetrics(&metrics);
+        Font::TextMetrics tm;
+        tm.width = PicaPt::fromPixels(metrics.width, 96.0f);
+        tm.height = PicaPt::fromPixels(metrics.height, 96.0f);
+        if (tm.width == PicaPt::kZero) {
+            tm.height = PicaPt::kZero;
+        }
+        tm.advanceX = tm.width;
+        if (metrics.lineCount <= 1) {
+            tm.advanceY = PicaPt::kZero;
+        } else {
+            tm.advanceY = tm.height;
+        }
+        return tm;
     }
 
     void drawImage(std::shared_ptr<Image> image, const Rect& rect) override

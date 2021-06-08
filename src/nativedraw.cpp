@@ -27,6 +27,8 @@
 
 namespace ND_NAMESPACE {
 
+const PicaPt PicaPt::kZero(0.0f);
+
 PicaPt operator+(float lhs, const PicaPt& rhs)
     { return PicaPt(lhs + rhs.pt); }
 PicaPt operator*(float lhs, const PicaPt& rhs)
@@ -357,6 +359,19 @@ DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi)
     : mNativeDC(nativeDC), mWidth(width), mHeight(height), mDPI(dpi)
 {
 }
+
+PicaPt DrawContext::onePixel() const
+{
+    return PicaPt::fromPixels(1.0f, mDPI);
+}
+
+PicaPt DrawContext::ceilToNearestPixel(const PicaPt& p) const
+{
+    auto onePx = onePixel();
+    float n = std::ceil(p.asFloat() / onePx.asFloat());
+    return PicaPt(n * onePx);
+}
+
 void DrawContext::setInitialState()
 {
     setFillColor(Color::kBlack);

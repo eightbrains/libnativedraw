@@ -44,6 +44,8 @@ namespace ND_NAMESPACE {
 // computer graphics, it's hard to come up with a meaningful name.
 struct PicaPt
 {
+    static const PicaPt kZero;
+
     PicaPt() : pt(0.0f) {}
     explicit PicaPt(float pt_) : pt(pt_) {}
 
@@ -453,6 +455,9 @@ public:
     int width() const { return mWidth; }
     int height() const { return mHeight; }
     float dpi() const { return mDPI; }
+
+    virtual PicaPt onePixel() const;
+    PicaPt ceilToNearestPixel(const PicaPt& p) const;
 
     virtual void beginDraw() = 0;
     virtual void endDraw() = 0;

@@ -1223,7 +1223,7 @@ public:
         auto metrics = arial.metrics(*mBitmap);
 
         if (metrics.ascent.toPixels(dpi) == 0.0f || metrics.ascent.toPixels(dpi) == 0.0f) {
-            return "Font does exist: metrics are 0";
+            return "Font does not exist: metrics are 0";
         }
 //        if (metrics.lineHeight.toPixels(dpi) != float(mPointSize)) {
 //            return createFloatError("incorrect line height", mPointSize, metrics.lineHeight.toPixels(dpi));
@@ -1558,6 +1558,47 @@ public:
     }
 };
 
+class TextMetricsTest : public BitmapTest
+{
+public:
+    TextMetricsTest() : BitmapTest("text metrics", 1, 1) {}
+
+    std::string run() override
+    {
+        // Fill the background so that if we have an error at least we get
+        // consistent values for the fill, even though they are essentially
+        // meaningless.
+        mBitmap->fill(mBGColor);
+
+        const PicaPt zero(0);
+        float fontSize = 12.0f;
+        float dpi = 72.0f;
+        Font font("Arial", PicaPt::fromPixels(fontSize, dpi));
+
+        // Make sure we don't crash or get bogus numbers for empty string
+        auto tm = mBitmap->textMetrics("", font, kPaintFill);
+        if (tm.width != zero || tm.height != zero) {
+            std::stringstream err;
+            err << "Empty string has non-zero size: (" << tm.width.toPixels(dpi)
+                << ", " << tm.height.toPixels(dpi) << ")";
+            return err.str();
+        }
+
+        tm = mBitmap->textMetrics("Ag", font, kPaintFill);
+        if (tm.width < PicaPt::fromPixels(14.6, dpi) ||
+            tm.width > PicaPt::fromPixels(14.7, dpi) ||
+            tm.height < PicaPt::fromPixels(13.4, dpi) ||
+            tm.height > PicaPt::fromPixels(13.5, dpi)) {
+            std::stringstream err;
+            err << fontSize << "pt \"Ag\" has incorrect size: ("
+                << tm.width.toPixels(dpi) << ", " << tm.height.toPixels(dpi) << ")";
+            return err.str();
+        }
+
+        return "";
+    }
+};
+
 class ImageTest : public BitmapTest
 {
 public:
@@ -1734,6 +1775,7 @@ int main(int argc, char *argv[])
         std::make_shared<BadFontTest>(),
         std::make_shared<FontStyleTest>(),
         std::make_shared<StrokedTextTest>(),
+        std::make_shared<TextMetricsTest>(),
         std::make_shared<ImageTest>(),
         std::make_shared<ImageCopyTest>(),
     };

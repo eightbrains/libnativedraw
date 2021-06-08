@@ -487,6 +487,22 @@ public:
         return fontInfo->metrics;
     }
 
+    Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
+                                  PaintMode mode) const
+    {
+        cairo_text_extents_t extents;
+        auto *gc = cairoContext();
+        setFont(font);
+        cairo_text_extents(gc, textUTF8, &extents);
+
+        Font::TextMetrics tm;
+        tm.width = PicaPt::fromPixels(float(extents.width), dpi());
+        tm.height = PicaPt::fromPixels(float(extents.height), dpi());
+        tm.advanceX = PicaPt::fromPixels(float(extents.x_advance), dpi());
+        tm.advanceY = PicaPt::fromPixels(float(extents.y_advance), dpi());
+        return tm;
+    }
+
     Color pixelAt(int x, int y) override
     {
         assert(false);  // need a bitmap context

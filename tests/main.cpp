@@ -1588,10 +1588,16 @@ public:
         }
 
         tm = mBitmap->textMetrics("Ag", font, kPaintFill);
+#if defined(__APPLE__) || defined(_WIN32) || defined(_WIN64)
         if (tm.width < PicaPt::fromPixels(14.6, dpi) ||
             tm.width > PicaPt::fromPixels(14.7, dpi) ||
             tm.height < PicaPt::fromPixels(13.4, dpi) ||
             tm.height > PicaPt::fromPixels(13.5, dpi)) {
+#else
+        if (tm.width != PicaPt::fromPixels(14.0, dpi) ||
+            (tm.height != PicaPt::fromPixels(11.0, dpi) &&
+             tm.height != PicaPt::fromPixels(12.0, dpi))) {
+#endif
             std::stringstream err;
             err << fontSize << "pt \"Ag\" has incorrect size: ("
                 << tm.width.toPixels(dpi) << ", " << tm.height.toPixels(dpi) << ")";

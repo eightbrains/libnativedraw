@@ -45,8 +45,10 @@
 #endif // windows
 
 #if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
-#include <X11/Xlib.h>
-static Display *gXDisplay = nullptr;
+#define USING_X11 1
+#include "x11.h"
+#else
+#define USING_X11 0
 #endif
 
 using namespace ND_NAMESPACE;
@@ -56,8 +58,9 @@ std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height
 {
 #if __APPLE__
     return DrawContext::createCoreGraphicsBitmap(type, width, height, dpi);
-#elif defined(__unix__)
-    return DrawContext::createCairoX11Bitmap(gXDisplay, type, width, height, dpi);
+#elif USING_X11
+    return DrawContext::createCairoX11Bitmap(X11GetDisplay(), type, width,
+                                             height, dpi);
 #elif defined(_WIN32) || defined(_WIN64)
     return DrawContext::createDirect2DBitmap(type, width, height, dpi);
 #else
@@ -1689,8 +1692,8 @@ static std::string kGreen = "\033[32m";
 
 int main(int argc, char *argv[])
 {
-#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
-    gXDisplay = XOpenDisplay(nullptr);
+#if USING_X11
+    X11Open();
 #endif
 
     std::vector<std::shared_ptr<Test>> test = {
@@ -1780,8 +1783,8 @@ int main(int argc, char *argv[])
                   << " FAILED" << kNormal << std::endl;
     }
 
-#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
-    XCloseDisplay(gXDisplay);
+#if USING_X11
+    X11Close();
 #endif
 
     return nFailed;  // 0 = success

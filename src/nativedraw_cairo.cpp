@@ -290,7 +290,8 @@ public:
 
     void calcContextPixel(const Point& point, float *x, float *y) override
     {
-        double xx, yy;
+        double xx = double(point.x.toPixels(mDPI));
+        double yy = double(point.y.toPixels(mDPI));
         cairo_user_to_device(cairoContext(), &xx, &yy);
         if (x) {
             *x = float(xx);

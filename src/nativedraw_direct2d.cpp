@@ -822,6 +822,19 @@ public:
         mStateStack.back().transform = newM;
     }
 
+    void calcContextPixel(const Point& point, float *x, float *y) override
+    {
+        D2D1_POINT_2F p = toD2DPoint(point);
+        auto& m = mStateStack.back().transform;
+        auto newP = m->TransformPoint(p);
+        if (x) {
+            *x = newP.x;
+        }
+        if (y) {
+            *y = newP.y;
+        }
+    }
+
     void fill(const Color& color) override
     {
         auto* gc = deviceContext();

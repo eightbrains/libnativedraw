@@ -276,8 +276,6 @@ public:
         // Set the initial state *after* creating the state stack,
         // so that the state setting functions will set the state properly.
         setInitialState();
-       
-        scale(mDPI / 72.0f, mDPI / 72.0f);
     }
 
     void beginDraw() override {}
@@ -289,7 +287,6 @@ public:
         CGContextSaveGState(gc);
         mStateStack.push_back(mStateStack.back());
     }
-
 
     void translate(const PicaPt& dx, const PicaPt& dy) override
     {
@@ -311,6 +308,20 @@ public:
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextScaleCTM(gc, sx, sy);
+    }
+
+    void calcContextPixel(const Point& point, float *x, float *y) override
+    {
+        CGContextRef gc = (CGContextRef)mNativeDC;
+        CGAffineTransform t = CGContextGetCTM(gc);
+        CGPoint p = CGPointMake(point.x.toPixels(72.0f), point.y.toPixels(72.0f));
+        p = CGPointApplyAffineTransform(p, t);
+        if (x) {
+            *x = float(p.x);
+        }
+        if (y) {
+            *y = float(p.y);
+        }
     }
 
     void restore() override
@@ -669,6 +680,7 @@ public:
                                         mColorspace,
                                         alphaInfo);
         setNativeDC(gc);
+        scale(mDPI / 72.0f, mDPI / 72.0f);
     }
 
     ~CoreGraphicsBitmap()

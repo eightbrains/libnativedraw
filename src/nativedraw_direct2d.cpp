@@ -410,7 +410,6 @@ public:
                 format, 10000.0f, 10000.0f, &mLayout);
         delete [] wtext;
 
-
         // Snapping to pixel sometimes puts the text above the baseline
         // (as desired) or on the pixel of the baseline (not desired).
         // Do our own snapping so that we can get consistent results.
@@ -420,9 +419,7 @@ public:
         mLayout->GetLineMetrics(lineMetrics, 0, &nLines);
         lineMetrics = new DWRITE_LINE_METRICS[nLines];
         mLayout->GetLineMetrics(lineMetrics, nLines, &nLines);
-        float offsetPx = PicaPt::fromPixels(float(lineMetrics->baseline), 96.0f).toPixels(dpi);
-        offsetPx = offsetPx - std::floor(offsetPx);
-        mDrawOffset = PicaPt::fromPixels(offsetPx, dpi);
+        mBaseline = PicaPt::fromPixels(float(lineMetrics->baseline), 96.0f);
         delete[] lineMetrics;
     }
 
@@ -431,13 +428,13 @@ public:
         mLayout->Release();
     }
 
-    const PicaPt& drawOffset() const { return mDrawOffset; }
+    const PicaPt& baseline() const { return mBaseline; }
 
     IDWriteTextLayout* layout() const { return mLayout; }
 
 private:
     IDWriteTextLayout* mLayout = nullptr;
-    PicaPt mDrawOffset;
+    PicaPt mBaseline;
 };
 
 //---------------------- Custom text renderer ---------------------------------
@@ -822,6 +819,22 @@ public:
         mStateStack.back().transform = newM;
     }
 
+    void calcContextPixel(const Point& point, float *x, float *y) override
+    {
+        D2D1_POINT_2F p = toD2DPoint(point.x, point.y);
+        auto& m = mStateStack.back().transform;
+        auto newP = m.TransformPoint(p);
+        // We set the DPI of the context, so Direct2D scales automatically
+        // for us if we use it's assumed 96 dpi pixels. Since we want the
+        // actual real pixels, we need to apply the scaling manually.
+        if (x) {
+            *x = newP.x * mDPI / 96.0f;
+        }
+        if (y) {
+            *y = newP.y * mDPI / 96.0f;
+        }
+    }
+
     void fill(const Color& color) override
     {
         auto* gc = deviceContext();
@@ -985,8 +998,22 @@ public:
         auto *textRenderer = new CustomTextRenderer(
                                         state.transform, mSolidBrush, fillColor,
                                         strokeColor, strokeWidth, strokeStyle);
+        // We have chosen to snap the text to pixels ourself because Windows
+        // is not consistent about it. The expectation of this function is that
+        // topLeft.y + font.ascent = baselineY. This is the mathematical line;
+        // the pixel "at" baselineY begins at the baseline and continues below,
+        // so visually the pixel "at" baselineY is "below" the baseline. At any
+        // rate, the ascent pixels of the glyph should all be above the baseline.
+        // It seems that y + ascent != baseline in Direct2D, so we need to take
+        // the actual baseline, and offset topLeft.y so that the result is that
+        // the ascending pixels stop exactly at the mathematical baseline.
+        Font::Metrics fm = fontMetrics(font);
+        PicaPt actualBaseline = topLeft.y + t.baseline();
+        PicaPt expectedBaseline = topLeft.y + fm.ascent;
+        float offsetPx = actualBaseline.toPixels(mDPI) -
+                         std::floor(expectedBaseline.toPixels(mDPI));
         t.layout()->Draw(gc, textRenderer, toD2D(topLeft.x),
-                         toD2D(topLeft.y - t.drawOffset()));
+                         toD2D(topLeft.y - PicaPt::fromPixels(offsetPx, mDPI)));
         textRenderer->Release();
     }
 

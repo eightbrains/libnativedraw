@@ -48,54 +48,94 @@ const Color Color::kGreen(0.0f, 1.0f, 0.0f, 1.0f);
 const Color Color::kBlue(0.0f, 0.0f, 1.0f, 1.0f);
 const Color Color::kPurple(1.0f, 0.0f, 1.0f, 1.0f);
 
-Color Color::lighter() const {
+Color Color::lighter(float amount /*= 0.1f*/) const {
+    float maxVal = 1.0f - amount;
     float r = red();
-    if (r < 0.9f) {
-        r += 0.1f;
+    if (r < maxVal) {
+        r += amount;
     } else {
         r = 0.5 * r + 0.5f;
     }
 
     float g = green();
-    if (g < 0.9f) {
-        g += 0.1f;
+    if (g < maxVal) {
+        g += amount;
     } else {
         g = 0.5 * g + 0.5f;
     }
 
     float b = blue();
-    if (b < 0.9f) {
-        b += 0.1f;
+    if (b < maxVal) {
+        b += amount;
     } else {
-        b = 0.5 * r + 0.5f;
+        b = 0.5 * b + 0.5f;
     }
 
-    return Color(r, g, b, alpha());
+    // (1, 1, 1, 0.25) should increase alpha; (0, 0, 0, 0.25) should not
+    float a = alpha();
+    if (a < 1.0f) {
+        float grey = toGrey().red();
+        if (grey > 0.5f) {
+            if (a < maxVal) {
+                a += amount;
+            } else {
+                a = 0.5 * a + 0.5f;
+            }
+        } else {
+            if (a > amount) {
+                a -= amount;
+            } else {
+                a = 0.5 * a;
+            }
+        }
+    }
+
+    return Color(r, g, b, a);
 }
 
-Color Color::darker() const {
+Color Color::darker(float amount /*= 0.1f*/) const {
     float r = red();
-    if (r > 0.1f) {
-        r -= 0.1f;
+    if (r > amount) {
+        r -= amount;
     } else {
         r = 0.5 * r;
     }
 
     float g = green();
-    if (g > 0.1f) {
-        g -= 0.1f;
+    if (g > amount) {
+        g -= amount;
     } else {
         g = 0.5 * g;
     }
 
     float b = blue();
-    if (b > 0.1f) {
-        b -= 0.1f;
+    if (b > amount) {
+        b -= amount;
     } else {
-        b = 0.5 * r;
+        b = 0.5 * b;
     }
 
-    return Color(r, g, b, alpha());
+
+    // (0, 0, 0, 0.25) should increase alpha; (1, 1, 1, 0.25) should not
+    float a = alpha();
+    if (a < 1.0f) {
+        float grey = toGrey().red();
+        if (grey < 0.5f) {
+            if (a < 1.0f - amount) {
+                a += amount;
+            } else {
+                a = 0.5 * a + 0.5f;
+            }
+        } else {
+            if (a > amount) {
+                a -= amount;
+            } else {
+                a = 0.5 * a;
+            }
+        }
+   }
+
+    return Color(r, g, b, a);
 }
 
 std::size_t Color::hash() const
@@ -127,10 +167,20 @@ struct Font::Impl
     }
 };
 
+Font::Font()
+    : Font("Arial", PicaPt::fromPixels(12.0f, 72.0f))
+{}
+
 Font::Font(const Font& f)
     : mImpl(new Font::Impl())
 {
     *mImpl = *f.mImpl;  // copy
+}
+
+Font& Font::operator=(const Font& rhs) noexcept
+{
+    *mImpl = *rhs.mImpl;  // copy
+    return *this;
 }
 
 Font::Font(const std::string& family, const PicaPt& pointSize,
@@ -363,6 +413,20 @@ DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi)
 PicaPt DrawContext::onePixel() const
 {
     return PicaPt::fromPixels(1.0f, mDPI);
+}
+
+PicaPt DrawContext::floorToNearestPixel(const PicaPt& p) const
+{
+    auto onePx = onePixel();
+    float n = std::floor(p.asFloat() / onePx.asFloat());
+    return PicaPt(n * onePx);
+}
+
+PicaPt DrawContext::roundToNearestPixel(const PicaPt& p) const
+{
+    auto onePx = onePixel();
+    float n = std::round(p.asFloat() / onePx.asFloat());
+    return PicaPt(n * onePx);
 }
 
 PicaPt DrawContext::ceilToNearestPixel(const PicaPt& p) const

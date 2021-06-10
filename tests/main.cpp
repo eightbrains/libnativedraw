@@ -148,6 +148,27 @@ public:
     virtual void writeBitmapToFile(const std::string& path) const = 0;
     virtual void teardown() {}
 
+    std::string createFloatError(const std::string& msg, float expected,
+                                 float got, std::string units = "")
+    {
+        if (!units.empty()) {
+            units = std::string(" ") + units;
+        }
+        std::stringstream err;
+        err << msg << ": expected " << expected << units << ", got " << got
+            << units;
+        return err.str();
+    }
+
+    std::string createColorError(const std::string& msg, const Color& expected,
+                                 const Color& got)
+    {
+        std::stringstream err;
+        err << msg << ": expected " << expected.toHexString() << ", got "
+            << got.toHexString();
+        return err.str();
+    }
+
 protected:
     std::string mName;
 };
@@ -220,24 +241,6 @@ public:
             }
         }
         return "";
-    }
-
-    std::string createFloatError(const std::string& msg, float expected, float got,
-                                 std::string units = "")
-    {
-        if (!units.empty()) {
-            units = std::string(" ") + units;
-        }
-        std::stringstream err;
-        err << msg << ": expected " << expected << units << ", got " << got << units;
-        return err.str();
-    }
-
-    std::string createColorError(const std::string& msg, const Color& expected, const Color& got)
-    {
-        std::stringstream err;
-        err << msg << ": expected " << expected.toHexString() << ", got " << got.toHexString();
-        return err.str();
     }
 
     std::string createPixelError(const std::string& msg, int x, int y,
@@ -1274,20 +1277,26 @@ public:
 
         // Verify that the glyph sits directly on top of the baseline-line (which
         // should be the pixels directly below the glyph)
-        float totalAboveLine = 0.0f;
-        int aboveY = int(baselineYpx) - 1;
-        for (int x = 0;  x < mWidth;  ++x) {
-            auto above = mBitmap->pixelAt(x, aboveY);
-            totalAboveLine += above.red();
-            auto on = mBitmap->pixelAt(x, int(baselineYpx));
-            if (on.red() > 0.0f) {
-                return createPixelError("glyph descends below the baseline",
-                                        x, int(baselineYpx), baselineColor, above);
-            }
+        std::string result;
+        result = verifySitsOnTopOfBaseline(arial, upperLeft);
+        if (!result.empty()) {
+            return "[baseline offset = 0px] " + result;
         }
-        if (totalAboveLine == 0.0f) {
-            return std::string("glyph sits above baseline: y=") + std::to_string(aboveY) +
-                   " is has no red pixels";
+        result = verifySitsOnTopOfBaseline(arial, upperLeft + Point(PicaPt::kZero, PicaPt::fromPixels(0.25f, dpi)));
+        if (!result.empty()) {
+            return "[baseline offset = 0.25px] " + result;
+        }
+        result = verifySitsOnTopOfBaseline(arial, upperLeft + Point(PicaPt::kZero, PicaPt::fromPixels(0.49f, dpi)));
+        if (!result.empty()) {
+            return "[baseline offset = 0.49px] " + result;
+        }
+        result = verifySitsOnTopOfBaseline(arial, upperLeft + Point(PicaPt::kZero, PicaPt::fromPixels(0.51f, dpi)));
+        if (!result.empty()) {
+            return "[baseline offset = 0.51px] " + result;
+        }
+        result = verifySitsOnTopOfBaseline(arial, upperLeft + Point(PicaPt::kZero, PicaPt::fromPixels(0.75f, dpi)));
+        if (!result.empty()) {
+            return "[baseline offset = 0.75px] " + result;
         }
 
         // writeTIFF("/tmp/debug-font.tiff", *mBitmap);
@@ -1315,6 +1324,48 @@ public:
             auto err = createFloatError("incorrect descent", metrics.descent.toPixels(dpi), descent);
             err += " (ascent: " + std::to_string(metrics.ascent.toPixels(dpi)) + ")";
             return err;
+        }
+
+        return "";
+    }
+
+    std::string verifySitsOnTopOfBaseline(const Font& font, const Point& upperLeft)
+    {
+        float dpi = mBitmap->dpi();
+        Color bg = Color::kBlack;
+        Color fg = Color::kRed;
+        Color baselineColor = Color::kBlue;
+
+        auto metrics = font.metrics(*mBitmap);
+        auto baselineY = (upperLeft.y + metrics.ascent).toPixels(dpi);
+
+        mBitmap->beginDraw();
+        mBitmap->fill(bg);
+        mBitmap->setFillColor(fg);
+        mBitmap->setStrokeColor(baselineColor);
+        mBitmap->setStrokeWidth(PicaPt::fromPixels(1, dpi));
+        // Draw a 1px line at pixel baselineYpx. Since the baseline is the
+        // bottom of the ascenders, the line should be completely below an
+        // ascender-only glyph like "T".
+        float baselineYpx = std::floor(baselineY) + 0.5f;
+        mBitmap->drawLines({ Point::fromPixels(0, baselineYpx, dpi),
+                             Point::fromPixels(mWidth, baselineYpx, dpi) });
+        mBitmap->drawText("T", upperLeft, font, kPaintFill);
+        mBitmap->endDraw();
+        float totalAboveLine = 0.0f;
+        int aboveY = int(baselineYpx) - 1;
+        for (int x = 0;  x < mWidth;  ++x) {
+            auto above = mBitmap->pixelAt(x, aboveY);
+            totalAboveLine += above.red();
+            auto on = mBitmap->pixelAt(x, int(baselineYpx));
+            if (on.red() > 0.0f) {
+                return createPixelError("glyph descends below the baseline",
+                                        x, int(baselineYpx), baselineColor, above);
+            }
+        }
+        if (totalAboveLine == 0.0f) {
+            return std::string("glyph sits above baseline: y=") + std::to_string(aboveY) +
+                   " is has no red pixels";
         }
 
         return "";
@@ -1718,6 +1769,134 @@ protected:
     }
 };
 
+class ColorFuncTest : public Test
+{
+public:
+    ColorFuncTest() : Test("Color lighter() and darker()") {}
+
+    std::string run() override
+    {
+        auto fuzzyFloatEqual = [](float x, float y) { return (std::abs(x - y) < 0.005); };
+        auto fuzzyEqual = [fuzzyFloatEqual](const Color& c1, const Color& c2) {
+            return (fuzzyFloatEqual(c1.red(), c2.red())
+                    && fuzzyFloatEqual(c1.green(), c2.green())
+                    && fuzzyFloatEqual(c1.blue(), c2.blue())
+                    && fuzzyFloatEqual(c1.alpha(), c2.alpha()));
+        };
+
+        Color c(0.4f, 0.6f, 0.8f);
+        Color got = c.lighter();
+        Color expected = Color(0.5f, 0.7f, 0.9f);
+        if (!fuzzyEqual(got, expected)) {
+            return createColorError("Color(0.4, 0.5, 0.8).lighter()", expected,
+                                    got);
+        }
+
+        got = c.darker();
+        expected = Color(0.3f, 0.5f, 0.7f);
+        if (!fuzzyEqual(got, expected)) {
+            return createColorError("Color(0.4, 0.5, 0.8).darker()", expected,
+                                    got);
+        }
+
+        got = Color(1.0f, 1.0f, 1.0f, 0.25f).lighter();
+        expected = Color(1.0f, 1.0f, 1.0f, 0.35f);
+        if (!fuzzyEqual(got, expected)) {
+            return createColorError("Color(1, 1, 1, 0.25).lighter()", expected, got);
+        }
+
+        got = Color(1.0f, 1.0f, 1.0f, 0.25f).darker();
+        expected = Color(0.9f, 0.9f, 0.9f, 0.15f);
+        if (!fuzzyEqual(got, expected)) {
+            return createColorError("Color(1, 1, 1, 0.25).darker()", expected, got);
+        }
+
+        got = Color(0.0f, 0.0f, 0.0f, 0.25f).lighter();
+        expected = Color(0.1f, 0.1f, 0.1f, 0.15f);
+        if (!fuzzyEqual(got, expected)) {
+            return createColorError("Color(0, 0, 0, 0.25).lighter()", expected, got);
+        }
+
+        got = Color(0.0f, 0.0f, 0.0f, 0.25f).darker();
+        expected = Color(0.0f, 0.0f, 0.0f, 0.35f);
+        if (!fuzzyEqual(got, expected)) {
+            return createColorError("Color(0, 0, 0, 0.25).darker()", expected, got);
+        }
+
+        return "";
+    }
+
+    std::string debugImage() const override { return ""; }
+    void writeBitmapToFile(const std::string& path) const override {}
+};
+
+class TransformTest : public BitmapTest
+{
+public:
+    TransformTest() : BitmapTest("translate/scale/rotate", 1, 1) {}
+
+    std::string run() override
+    {
+        auto dpi = mBitmap->dpi();
+
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);  // so failure doesn't print unitialized colors
+        mBitmap->endDraw();
+
+        mBitmap->scale(2, 3);
+        mBitmap->save();
+        mBitmap->translate(PicaPt::fromPixels(1, dpi),
+                           PicaPt::fromPixels(2, dpi));
+        mBitmap->save();
+        mBitmap->scale(0.1, 0.1);
+        mBitmap->restore();
+
+        float x, y;
+        calcNativePixel(Point(PicaPt::kZero, PicaPt::kZero), &x, &y);
+        // Easy to debug: should be (x:1, y:2) scaled by (sx:2, sy:3)
+        if (x != 4 && y != 6) {
+            std::stringstream s;
+            s << "calcContextPixel((0, 0)): expected (4, 6), got ("
+              << x << ", " << y << ")";
+            return s.str();
+        }
+        calcNativePixel(Point(PicaPt::fromPixels(1.0f, dpi),
+                              PicaPt::fromPixels(-1.0f, dpi)), &x, &y);
+        if (x != 5 && y != 3) {
+            std::stringstream s;
+            s << "calcContextPixel((1, -1)): expected (5, 3), got ("
+              << x << ", " << y << ")";
+            return s.str();
+        }
+
+        mBitmap->rotate(30.0);
+        calcNativePixel(Point(PicaPt::fromPixels(1.0f, dpi),
+                              PicaPt::fromPixels(-1.0f, dpi)), &x, &y);
+        if (std::abs(x - 4.540f) < 0.001f && std::abs(y - 5.159f) < 0.001f) {
+            std::stringstream s;
+            s << "calcContextPixel((1, -1)): expected (4.540, 5.159), got ("
+              << x << ", " << y << ")";
+            return s.str();
+        }
+
+        mBitmap->restore();
+
+        return "";
+    }
+
+    void calcNativePixel(const Point& p, float *x, float *y)
+    {
+#ifdef __APPLE__
+        mBitmap->calcContextPixel(p, x, y);
+        if (y) {
+            *y = float(mBitmap->height()) - *y;
+        }
+#else
+        mBitmap->calcContextPixel(p, x, y);
+#endif
+    }
+};
+
 /*void TextDebug()
 {
     Font font("Arial", PicaPt(20));
@@ -1791,6 +1970,8 @@ int main(int argc, char *argv[])
         std::make_shared<TextMetricsTest>(),
         std::make_shared<ImageTest>(),
         std::make_shared<ImageCopyTest>(),
+        std::make_shared<ColorFuncTest>(),
+        std::make_shared<TransformTest>()
     };
 
     const char *TERM = std::getenv("TERM");

@@ -241,8 +241,8 @@ public:
     void setBlue(float b) { _rgba[2] = b; }
     void setAlpha(float a) { _rgba[3] = a; }
 
-    Color lighter() const;
-    Color darker() const;
+    Color lighter(float amount = 0.1f) const;
+    Color darker(float amount = 0.1f) const;
 
     Color toGrey() const {
         float grey = 0.2126f * red() + 0.7152f * green() + 0.0722f * blue();
@@ -350,10 +350,12 @@ public:
         PicaPt advanceY;
     };
 
+    Font();
     Font(const Font& f);
     Font(const std::string& family, const PicaPt& pointSize,
          FontStyle style = kStyleNone, FontWeight weight = kWeightAuto);
     ~Font();  // for unique_ptr
+    Font& operator=(const Font& rhs) noexcept;
 
     std::string family() const;
     Font& setFamily(const std::string& family);
@@ -473,6 +475,8 @@ public:
     float dpi() const { return mDPI; }
 
     virtual PicaPt onePixel() const;
+    PicaPt floorToNearestPixel(const PicaPt& p) const;
+    PicaPt roundToNearestPixel(const PicaPt& p) const;
     PicaPt ceilToNearestPixel(const PicaPt& p) const;
 
     virtual void beginDraw() = 0;
@@ -535,6 +539,12 @@ public:
     // Returns the metrics for a single line of text
     virtual Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
                                           PaintMode mode) const = 0;
+
+    // Multiplies point by the current transformation matrix and returns
+    // the point in context pixel coordinates. Note that the pixel coordinates
+    // are native to the underlying operating system not portable. In fact, they
+    // may even be different between a bitmap and a window on the same system.
+    virtual void calcContextPixel(const Point& point, float *x, float *y) = 0;
 
 protected:
     void setInitialState();

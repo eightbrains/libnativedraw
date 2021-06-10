@@ -288,6 +288,19 @@ public:
         cairo_scale(cairoContext(), sx, sy);
     }
 
+    void calcContextPixel(const Point& point, float *x, float *y) override
+    {
+        double xx = double(point.x.toPixels(mDPI));
+        double yy = double(point.y.toPixels(mDPI));
+        cairo_user_to_device(cairoContext(), &xx, &yy);
+        if (x) {
+            *x = float(xx);
+        }
+        if (y) {
+            *y = float(yy);
+        }
+    }
+
     void setFillColor(const Color& color) override
     {
         mStateStack.back().fillColor = color;

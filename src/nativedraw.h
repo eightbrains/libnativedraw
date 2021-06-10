@@ -541,7 +541,9 @@ public:
                                           PaintMode mode) const = 0;
 
     // Multiplies point by the current transformation matrix and returns
-    // the point in context pixel coordinates.
+    // the point in context pixel coordinates. Note that the pixel coordinates
+    // are native to the underlying operating system not portable. In fact, they
+    // may even be different between a bitmap and a window on the same system.
     virtual void calcContextPixel(const Point& point, float *x, float *y) = 0;
 
 protected:

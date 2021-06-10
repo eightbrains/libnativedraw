@@ -1852,7 +1852,7 @@ public:
         mBitmap->restore();
 
         float x, y;
-        mBitmap->calcContextPixel(Point(PicaPt::kZero, PicaPt::kZero), &x, &y);
+        calcNativePixel(Point(PicaPt::kZero, PicaPt::kZero), &x, &y);
         // Easy to debug: should be (x:1, y:2) scaled by (sx:2, sy:3)
         if (x != 4 && y != 6) {
             std::stringstream s;
@@ -1860,9 +1860,8 @@ public:
               << x << ", " << y << ")";
             return s.str();
         }
-        mBitmap->calcContextPixel(Point(PicaPt::fromPixels(1.0f, dpi),
-                                        PicaPt::fromPixels(-1.0f, dpi)),
-                                  &x, &y);
+        calcNativePixel(Point(PicaPt::fromPixels(1.0f, dpi),
+                              PicaPt::fromPixels(-1.0f, dpi)), &x, &y);
         if (x != 5 && y != 3) {
             std::stringstream s;
             s << "calcContextPixel((1, -1)): expected (5, 3), got ("
@@ -1871,9 +1870,8 @@ public:
         }
 
         mBitmap->rotate(30.0);
-        mBitmap->calcContextPixel(Point(PicaPt::fromPixels(1.0f, dpi),
-                                        PicaPt::fromPixels(-1.0f, dpi)),
-                                  &x, &y);
+        calcNativePixel(Point(PicaPt::fromPixels(1.0f, dpi),
+                              PicaPt::fromPixels(-1.0f, dpi)), &x, &y);
         if (std::abs(x - 4.540f) < 0.001f && std::abs(y - 5.159f) < 0.001f) {
             std::stringstream s;
             s << "calcContextPixel((1, -1)): expected (4.540, 5.159), got ("
@@ -1884,6 +1882,18 @@ public:
         mBitmap->restore();
 
         return "";
+    }
+
+    void calcNativePixel(const Point& p, float *x, float *y)
+    {
+#ifdef __APPLE__
+        mBitmap->calcContextPixel(p, x, y);
+        if (y) {
+            *y = float(mBitmap->height()) - *y;
+        }
+#else
+        mBitmap->calcContextPixel(p, x, y);
+#endif
     }
 };
 

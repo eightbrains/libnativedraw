@@ -339,7 +339,7 @@ public:
         PicaPt leading;
         PicaPt xHeight;
         PicaPt capHeight;
-        PicaPt lineHeight;
+        PicaPt lineHeight;  // ascent + descent + leading
     };
 
     struct TextMetrics

@@ -1231,9 +1231,9 @@ public:
         if (metrics.ascent.toPixels(dpi) == 0.0f || metrics.ascent.toPixels(dpi) == 0.0f) {
             return "Font does not exist: metrics are 0";
         }
-//        if (metrics.lineHeight.toPixels(dpi) != float(mPointSize)) {
-//            return createFloatError("incorrect line height", mPointSize, metrics.lineHeight.toPixels(dpi));
-//        }
+        if (metrics.lineHeight != metrics.ascent + metrics.descent + metrics.leading) {
+            return "incorrect line height, should be: ascent + descent + leading";
+        }
 
         // Compute metrics for glyph. We want a glyph that does not go below
         // the baseline. Typically rounded shapes need to descend a little

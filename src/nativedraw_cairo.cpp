@@ -494,6 +494,7 @@ public:
                 fontInfo->metrics.capHeight = PicaPt(0);
                 fontInfo->metrics.xHeight = PicaPt(0);
             }
+            fontInfo->metrics.lineHeight = fontInfo->metrics.ascent + fontInfo->metrics.descent + fontInfo->metrics.leading;
 
             fontInfo->metricsInitialized = true;
         }

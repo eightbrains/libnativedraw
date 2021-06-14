@@ -54,21 +54,21 @@ Color Color::lighter(float amount /*= 0.1f*/) const {
     if (r < maxVal) {
         r += amount;
     } else {
-        r = 0.5 * r + 0.5f;
+        r = 0.5f * r + 0.5f;
     }
 
     float g = green();
     if (g < maxVal) {
         g += amount;
     } else {
-        g = 0.5 * g + 0.5f;
+        g = 0.5f * g + 0.5f;
     }
 
     float b = blue();
     if (b < maxVal) {
         b += amount;
     } else {
-        b = 0.5 * b + 0.5f;
+        b = 0.5f * b + 0.5f;
     }
 
     // (1, 1, 1, 0.25) should increase alpha; (0, 0, 0, 0.25) should not
@@ -79,13 +79,13 @@ Color Color::lighter(float amount /*= 0.1f*/) const {
             if (a < maxVal) {
                 a += amount;
             } else {
-                a = 0.5 * a + 0.5f;
+                a = 0.5f * a + 0.5f;
             }
         } else {
             if (a > amount) {
                 a -= amount;
             } else {
-                a = 0.5 * a;
+                a = 0.5f * a;
             }
         }
     }
@@ -98,21 +98,21 @@ Color Color::darker(float amount /*= 0.1f*/) const {
     if (r > amount) {
         r -= amount;
     } else {
-        r = 0.5 * r;
+        r = 0.5f * r;
     }
 
     float g = green();
     if (g > amount) {
         g -= amount;
     } else {
-        g = 0.5 * g;
+        g = 0.5f * g;
     }
 
     float b = blue();
     if (b > amount) {
         b -= amount;
     } else {
-        b = 0.5 * b;
+        b = 0.5f * b;
     }
 
 
@@ -124,13 +124,13 @@ Color Color::darker(float amount /*= 0.1f*/) const {
             if (a < 1.0f - amount) {
                 a += amount;
             } else {
-                a = 0.5 * a + 0.5f;
+                a = 0.5f * a + 0.5f;
             }
         } else {
             if (a > amount) {
                 a -= amount;
             } else {
-                a = 0.5 * a;
+                a = 0.5f * a;
             }
         }
    }

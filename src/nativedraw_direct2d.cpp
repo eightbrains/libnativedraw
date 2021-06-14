@@ -73,6 +73,7 @@ public:
     ID2D1Factory1* factory() { return mD2DFactory; }
     IDWriteFactory* writeFactory() { return mWriteFactory; }
     IDXGIDevice* dxgiDevice() { return mDXGIDevice; }
+    ID3D11DeviceContext* d3d11DeviceContext() { return mD3DDeviceContext; }
 
     ID2D1DeviceContext* createDeviceContext()
     {
@@ -1190,23 +1191,14 @@ class Direct2DWindow : public Direct2DContext
 {
     using Super = Direct2DContext;
 protected:
-    ID2D1DeviceContext* mDC;
+    ID2D1DeviceContext* mDC = nullptr;
     IDXGISwapChain1* mSwapChain = nullptr;
     ID2D1Bitmap1* mBackingStore = nullptr;
 
 public:
-    explicit Direct2DWindow(HWND hwnd)
-        : Direct2DContext(nullptr, 0, 0, 96)
+    explicit Direct2DWindow(HWND hwnd, int width, int height, float dpi)
+        : Direct2DContext(nullptr, width, height, dpi)
     {
-        RECT r;
-        GetClientRect(hwnd, &r);
-        mWidth = r.right - r.left;
-        mHeight = r.bottom - r.top;
-        mDPI = float(GetDpiForWindow(hwnd));
-        if (mDPI == 0.0) {  // only happens if invalid window
-            mDPI = 96.0;
-        }
-
         // The code below has convinced me to never program for
         // Windows without an abstraction layer. And if I'm going to use
         // an abstraction layer, it's going to be cross platform, because
@@ -1508,9 +1500,9 @@ public:
     }
 };
 //--------------------------- DrawContext -------------------------------------
-std::shared_ptr<DrawContext> DrawContext::fromHwnd(void* hwnd)
+std::shared_ptr<DrawContext> DrawContext::fromHwnd(void* hwnd, int width, int height, float dpi)
 {
-    return std::make_shared<Direct2DWindow>((HWND)hwnd);
+    return std::make_shared<Direct2DWindow>((HWND)hwnd, width, height, dpi);
 }
 
 std::shared_ptr<DrawContext> DrawContext::createDirect2DBitmap(BitmapType type, int width, int height,

@@ -77,7 +77,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     UpdateWindow(w);
 
     gTimings = std::make_shared<Timings>();
-    gDC = ND_NAMESPACE::DrawContext::fromHwnd(w);
+    gDC = ND_NAMESPACE::DrawContext::fromHwnd(w, kWidth, kHeight,
+                                              float(GetDpiForWindow(w)));
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0))

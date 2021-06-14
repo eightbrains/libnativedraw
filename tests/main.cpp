@@ -326,7 +326,7 @@ public:
         // Don't use fill(), in case it takes a different code path than drawRect()
         mBitmap->setFillColor(writeColor);
         auto dpi = mBitmap->dpi();
-        mBitmap->drawRect(Rect::fromPixels(0, 0, mWidth, mHeight, dpi), kPaintFill);
+        mBitmap->drawRect(Rect::fromPixels(0.0f, 0.0f, mWidth, mHeight, dpi), kPaintFill);
         mBitmap->endDraw();
 
         // We only need to sample one pixel, but this way we also
@@ -375,7 +375,7 @@ public:
         // setFillColor() and see if we get the proper pixels
         auto dpi = mBitmap->dpi();
         mBitmap->beginDraw();
-        mBitmap->drawRect(Rect::fromPixels(0, 0, mWidth, mHeight, dpi), kPaintFill);
+        mBitmap->drawRect(Rect::fromPixels(0.0f, 0.0f, mWidth, mHeight, dpi), kPaintFill);
         mBitmap->endDraw();
         for (int y = 0;  y < mHeight;  ++y) {
             for (int x = 0;  x < mWidth;  ++x) {
@@ -397,17 +397,17 @@ public:
 
     std::string run() override
     {
-        int margin = 1;
+        float margin = 1.0f;
         auto dpi = mBitmap->dpi();
         Color fg = Color::kBlack;
         mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->setFillColor(fg);
-        mBitmap->translate(PicaPt::fromPixels(margin + 2, dpi),
+        mBitmap->translate(PicaPt::fromPixels(margin + 2.0f, dpi),
                            PicaPt::fromPixels(margin, dpi));
         mBitmap->rotate(-90.0f);
         mBitmap->scale(3.0, 2.0);
-        mBitmap->drawRect(Rect::fromPixels(0, 0, 3, 1, dpi), kPaintFill);
+        mBitmap->drawRect(Rect::fromPixels(0.0f, 0.0f, 3.0f, 1.0f, dpi), kPaintFill);
         mBitmap->endDraw();
 
         return verifyFillRect(1, 1, 2, 9, mBGColor, fg);
@@ -425,8 +425,8 @@ public:
         int margin = 3;
         Color color(1.0f, 1.0f, 0.0f, 1.0f); // asymmetric, tests RGBA/BGRA swap
         auto dpi = mBitmap->dpi();
-        auto r = Rect::fromPixels(0, 0, mWidth, mHeight, dpi);
-        r.inset(PicaPt::fromPixels(3, dpi), PicaPt::fromPixels(3, dpi));
+        auto r = Rect::fromPixels(0.0f, 0.0f, mWidth, mHeight, dpi);
+        r.inset(PicaPt::fromPixels(3.0f, dpi), PicaPt::fromPixels(3.0f, dpi));
         mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->setFillColor(color);

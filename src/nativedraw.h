@@ -455,7 +455,7 @@ public:
     static std::shared_ptr<DrawContext> fromX11(void* display, const void* window, int width, int height, float dpi);
     static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi = 72.0f);
 #elif defined(_WIN32) || defined(_WIN64)
-    static std::shared_ptr<DrawContext> fromHwnd(void* hwnd);
+    static std::shared_ptr<DrawContext> fromHwnd(void* hwnd, int width, int height, float dpi);
     static std::shared_ptr<DrawContext> createDirect2DBitmap(BitmapType type, int width, int height,
                                                              float dpi = 72.0f);
 #endif

@@ -244,6 +244,13 @@ public:
     Color lighter(float amount = 0.1f) const;
     Color darker(float amount = 0.1f) const;
 
+    // Blends two colors. Amount must be in [0, 1], and is essentially the
+    // alpha value. Blending is done by component, according to:
+    //     this * (1.0f - amount) + dest * amount
+    // Note that this not exactly alpha blending, and is intended to blend
+    // between two solid colors (although the alpha channels are blended, too).
+    Color blend(const Color& dest, float amount);
+
     Color toGrey() const {
         float grey = 0.2126f * red() + 0.7152f * green() + 0.0722f * blue();
         return Color(grey, grey, grey, alpha());

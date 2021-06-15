@@ -48,7 +48,8 @@ const Color Color::kGreen(0.0f, 1.0f, 0.0f, 1.0f);
 const Color Color::kBlue(0.0f, 0.0f, 1.0f, 1.0f);
 const Color Color::kPurple(1.0f, 0.0f, 1.0f, 1.0f);
 
-Color Color::lighter(float amount /*= 0.1f*/) const {
+Color Color::lighter(float amount /*= 0.1f*/) const
+{
     float maxVal = 1.0f - amount;
     float r = red();
     if (r < maxVal) {
@@ -93,7 +94,8 @@ Color Color::lighter(float amount /*= 0.1f*/) const {
     return Color(r, g, b, a);
 }
 
-Color Color::darker(float amount /*= 0.1f*/) const {
+Color Color::darker(float amount /*= 0.1f*/) const
+{
     float r = red();
     if (r > amount) {
         r -= amount;
@@ -136,6 +138,15 @@ Color Color::darker(float amount /*= 0.1f*/) const {
    }
 
     return Color(r, g, b, a);
+}
+
+Color Color::blend(const Color& dest, float amount)
+{
+    float srcAmount = 1.0f - amount;
+    return Color(srcAmount * red() + amount * dest.red(),
+                 srcAmount * green() + amount * dest.green(),
+                 srcAmount * blue() + amount * dest.blue(),
+                 srcAmount * alpha() + amount * dest.alpha());
 }
 
 std::size_t Color::hash() const

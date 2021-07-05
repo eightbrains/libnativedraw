@@ -96,11 +96,13 @@ struct Point
     static Point fromPixels(float xPx, float yPx, float dpi)
         { return Point(PicaPt::fromPixels(xPx, dpi), PicaPt::fromPixels(yPx, dpi)); }
 
-    Point operator+(const Point& rhs) { return Point(x + rhs.x, y + rhs.y); }
+    Point operator+(const Point& rhs) const
+        { return Point(x + rhs.x, y + rhs.y); }
     Point& operator+=(const Point& rhs)
         { x += rhs.x; y += rhs.y; return *this; }
 
-    Point operator-(const Point& rhs) { return Point(x - rhs.x, y - rhs.y); }
+    Point operator-(const Point& rhs) const
+        { return Point(x - rhs.x, y - rhs.y); }
     Point& operator-=(const Point& rhs)
         { x -= rhs.x; y -= rhs.y; return *this; }
 
@@ -154,6 +156,15 @@ struct Rect
     bool contains(const Point& p) const {
         return (p.x >= x && p.x <= x + width && p.y >= y && p.y <= y + height);
     }
+
+    bool intersects(const Rect& r) const {
+        return !((r.x < x && r.x + r.width < x) ||
+                 (r.x > x + width && r.x + r.width > x + width) ||
+                 (r.y < y && r.y + r.height < y) ||
+                 (r.y > y + height && r.y + r.height > y + height));
+    }
+
+    Size size() const { return Size(width, height); }
 
     Point upperLeft() const  { return Point(x, y); }
     Point upperRight() const { return Point(maxX(), y); }

@@ -311,6 +311,23 @@ private:
 class DrawContext;
 
 // Design note:
+// Q: This is strange?
+// A: Enums do not OR together well. This gives enum class syntax at the
+//    call site, but also permits ORing. The tradeoff is that the type
+//    information at the definition (int) is not very helpful.
+struct Alignment {
+    static const int kLeft = (1 << 0);
+    static const int kHCenter = (1 << 1);
+    static const int kRight = (1 << 2);
+    static const int kTop = (1 << 4);
+    static const int kVCenter = (1 << 5);
+    static const int kBottom = (1 << 6);
+    static const int kCenter = kHCenter | kVCenter;
+    static const int kHorizMask = 0b00001111;
+    static const int kVertMask =  0b11110000;
+};
+
+// Design note:
 // Q: Why not use enum classes?
 // A: We want to be able to export to straight C easily. For C++ they are still
 //    in the $ND_NAMESPACE namespace so they aren't actually global.
@@ -541,6 +558,12 @@ public:
     // baseline so that in the above example the ascent actually ends at
     // pixel 16.
     virtual void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode) = 0;
+
+    // Draws text within the provided rectangle. Use the values from Alignment
+    // in the alignment parameter (e.g. Alignment::kLeft | Alignment::kVCenter).
+    void drawText(const char *textUTF8, const Rect& r, int alignment,
+                  const Font& font, PaintMode mode);
+
     virtual void drawImage(std::shared_ptr<Image> image, const Rect& destRect) = 0;
 
     virtual void clipToRect(const Rect& rect) = 0;

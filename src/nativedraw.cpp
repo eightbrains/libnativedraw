@@ -464,4 +464,36 @@ void DrawContext::drawRoundedRect(const Rect& rect, const PicaPt& radius, PaintM
     drawPath(path, mode);
 }
 
+void DrawContext::drawText(const char *textUTF8, const Rect& r, int alignment,
+                           const Font& font, PaintMode mode)
+{
+    auto metrics = fontMetrics(font);
+    Point pt;
+    if (alignment & Alignment::kBottom) {
+        pt.y = r.maxY() - (metrics.ascent + metrics.descent);
+    } else if (alignment & Alignment::kVCenter) {
+        // Visually the descenders (if any) do not feel like they are part of the
+        // block of text, so just the cap-height should be centered. However,
+        // drawing will start from the ascent (which may be above the
+        // cap-height). The descent below acts as the lower margin.
+        pt.y = r.midY() - 0.5f * metrics.capHeight - (metrics.ascent - metrics.capHeight);
+    } else {
+        // The ascent value is kind of arbitrary, and many fonts seem to use it
+        // to put the leading in, so it is taller than necessary (either that or
+        // there are some really tall glyphs somewhere in those Unicode
+        // characters). The cap-height is the visual ascent.
+        pt.y = r.minY() - (metrics.ascent - metrics.capHeight);
+    }
+    if (alignment & Alignment::kRight) {
+        auto width = textMetrics(textUTF8, font, kPaintFill).width;
+        pt.x = r.maxX() - width;
+    } else if (alignment & Alignment::kHCenter) {
+        auto width = textMetrics(textUTF8, font, kPaintFill).width;
+        pt.x = r.midX() - 0.5f * width;
+    } else {
+        pt.x = r.minX();
+    }
+    drawText(textUTF8, pt, font, mode);
+}
+
 } // namespace $ND_NAMESPACE

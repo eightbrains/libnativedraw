@@ -501,15 +501,15 @@ public:
         return fontInfo->metrics;
     }
 
-    Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
-                                  PaintMode mode) const
+    TextMetrics textMetrics(const char *textUTF8, const Font& font,
+                            PaintMode mode /*=kPaintFill*/) const
     {
         cairo_text_extents_t extents;
         auto *gc = cairoContext();
         setFont(font);
         cairo_text_extents(gc, textUTF8, &extents);
 
-        Font::TextMetrics tm;
+        TextMetrics tm;
         tm.width = PicaPt::fromPixels(float(extents.width), dpi());
         tm.height = PicaPt::fromPixels(float(extents.height), dpi());
         tm.advanceX = PicaPt::fromPixels(float(extents.x_advance), dpi());

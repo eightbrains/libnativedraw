@@ -23,6 +23,8 @@
 #include "nativedraw.h"
 #include "nativedraw_private.h"
 
+#include <assert.h>
+
 #include <iostream>
 
 namespace ND_NAMESPACE {
@@ -286,6 +288,60 @@ Font Font::fontWithWeight(FontWeight w) const
         s = FontStyle(int(s) & (~kStyleBold));
     }
     return Font(family(), pointSize(), s, w);
+}
+//-----------------------------------------------------------------------------
+const TextLayout::Glyph* TextLayout::glyphAtPoint(const Point& p) const
+{
+    // TODO: can we do binary search?
+    for (auto &glyph : glyphs()) {
+        if (glyph.frame.contains(p)) {
+            return &glyph;
+        }
+    }
+    return nullptr;
+}
+
+Point TextLayout::pointAtIndex(long index) const
+{
+    auto &glyphs = this->glyphs();
+    if (glyphs.empty()) {
+        return Point(PicaPt::kZero, PicaPt::kZero);
+    }
+
+    if (index >= long(glyphs.size())) {
+        return glyphs.back().frame.upperRight();
+    }
+    
+    if (index < 0) {
+        index = 1;
+    }
+
+    // Note that there are not necessarily as many glyphs as there are
+    // bytes in the string! Do a fuzzy binary search (instead of a linear
+    // search), since this will be used often in drawing for the cursor
+    // and selection.
+    int lowerIdx = 0, idx = glyphs.size() / 2, upperIdx = int(glyphs.size() - 1);
+    while (lowerIdx != idx && upperIdx != idx) {
+        if (index < glyphs[idx].index) {
+            upperIdx = idx;
+            auto dist = idx - lowerIdx;
+            if (lowerIdx < idx) {
+                idx -= std::max(1, dist / 2);
+            }
+        } else if (index > glyphs[idx].index) {
+            lowerIdx = idx;
+            auto dist = upperIdx - idx;
+            if (upperIdx > idx) {
+                idx += std::max(1, dist / 2);
+            }
+        } else {
+            lowerIdx = idx;
+            upperIdx = idx;
+        }
+        assert(lowerIdx <= idx);
+        assert(upperIdx >= idx);
+    }
+    return glyphs[idx].frame.upperLeft();
 }
 
 //-----------------------------------------------------------------------------

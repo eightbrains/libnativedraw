@@ -1018,13 +1018,13 @@ public:
         textRenderer->Release();
     }
 
-    Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
-                                  PaintMode mode) const override
+    TextMetrics textMetrics(const char *textUTF8, const Font& font,
+                            PaintMode mode /*=kPaintFill*/) const override
     {
         TextObj t(textUTF8, font, mDPI);
         DWRITE_TEXT_METRICS metrics;
         t.layout()->GetMetrics(&metrics);
-        Font::TextMetrics tm;
+        TextMetrics tm;
         tm.width = PicaPt::fromPixels(metrics.width, 96.0f);
         tm.height = PicaPt::fromPixels(metrics.height, 96.0f);
         if (tm.width == PicaPt::kZero) {

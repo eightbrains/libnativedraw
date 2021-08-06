@@ -30,6 +30,8 @@
 
 #include "nativedraw_private.h"
 
+#include <string>
+
 #include <unordered_map>
 
 #include <CoreGraphics/CoreGraphics.h>
@@ -178,18 +180,72 @@ static ResourceManager<Font, NSFont*> gFontMgr(createFont, destroyFont);
 } // namespace
 
 //----------------------------- Text Obj --------------------------------------
-class TextObj
+class TextObj : public TextLayout
 {
 public:
-    TextObj(NSAttributedString *attrText)
+    TextObj(const DrawContext& dc, const char *utf8, const Font& font,
+            const Color& color, const Color& outlineColor,
+            const PicaPt& strokeWidthPica, PaintMode mode)
     {
-        mLayout = CTFramesetterCreateWithAttributedString((CFAttributedStringRef)attrText);
+        mLen = strlen(utf8);
+        mDPI = 72.0f;
+        mFont = font;
+
+        Color fillColor;
+        if (mode & kPaintFill) {
+            fillColor = color;
+        } else {
+            fillColor = Color::kTransparent;
+        }
+        NSFont *nsfont72 = gFontMgr.get(font, mDPI);
+        NSColor *nsfill = [NSColor colorWithRed:CGFloat(fillColor.red())
+                                          green:CGFloat(fillColor.green())
+                                           blue:CGFloat(fillColor.blue())
+                                          alpha:CGFloat(fillColor.alpha())];
+        NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
+        attr[NSFontAttributeName] = nsfont72;
+        attr[NSForegroundColorAttributeName] = nsfill;
+        // attr[NSParagraphStyleAttributeName] = paragraphStyle;
+
+        if (mode & kPaintStroke) {
+            Color strokeColor = outlineColor;
+            // Apple's documentation says that NSStrokeWidthAttributeName is a
+            // percentage of the font height (NOT the raw stroke width). Since
+            // the DPI is being handled by the transform, stroke width is
+            // already in the correct units (namely PicaPt), just like
+            // nsfont72.pointSize is (since we got the 72 dpi version of the
+            // font).
+            float strokeWidth = strokeWidthPica.asFloat();
+            strokeWidth = strokeWidth / nsfont72.pointSize * 100.0f;
+            NSColor *nsstroke = [NSColor colorWithRed:CGFloat(strokeColor.red())
+                                                green:CGFloat(strokeColor.green())
+                                                 blue:CGFloat(strokeColor.blue())
+                                                alpha:CGFloat(strokeColor.alpha())];
+            attr[NSStrokeColorAttributeName] = nsstroke;
+            if (mode & kPaintFill) {
+                // Negative width signals to both stroke and fill
+                attr[NSStrokeWidthAttributeName] = @(-strokeWidth);
+            } else {
+                attr[NSStrokeWidthAttributeName] = @(strokeWidth);
+            }
+        }
+
+        auto *nsstring = [[NSAttributedString alloc]
+                          initWithString:[NSString stringWithUTF8String:utf8]
+                              attributes:attr];  // auto-releases on return
+
+        mLayout = CTFramesetterCreateWithAttributedString((CFAttributedStringRef)nsstring);
         auto r = CGRectMake(0, 0, 10000, 10000);
         mPath = CGPathCreateWithRect(r, nullptr);
         mFrame = CTFramesetterCreateFrame(mLayout,
                                           CFRangeMake(0, 0), // entire string
                                           mPath, nullptr);
-   }
+
+        mMetrics.width = PicaPt(-1);
+        mMetrics.height = PicaPt(-1);
+        mMetrics.advanceX = PicaPt(0);
+        mMetrics.advanceY = PicaPt(0);
+    }
 
     ~TextObj()
     {
@@ -198,12 +254,126 @@ public:
         CGPathRelease(mPath);
     }
 
-    CTFrameRef ctframe() { return mFrame; }
+    CTFrameRef ctframe() const { return mFrame; }
+
+    const TextMetrics& metrics() const override
+    {
+        if (mMetrics.width >= PicaPt::kZero) {
+            return mMetrics;
+        }
+
+        mMetrics.width = PicaPt(0);
+        mMetrics.height = PicaPt(0);
+        mMetrics.advanceX = PicaPt(0);
+        mMetrics.advanceY = PicaPt(0);
+
+        NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
+        double width;
+        CGFloat ascent, descent, leading;
+        for (int i = 0;  i < lines.count;  ++i) {
+            width = CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
+                                               &ascent, &descent, &leading);
+            mMetrics.width = std::max(mMetrics.width, PicaPt::fromPixels(width, mDPI));
+            mMetrics.height += PicaPt::fromPixels(ascent + descent, mDPI);
+            if (i < lines.count - 1) {
+                mMetrics.height += PicaPt::fromPixels(leading, mDPI);
+            } else {
+                mMetrics.advanceY += PicaPt::fromPixels(leading, mDPI);
+            }
+        }
+        mMetrics.advanceX = mMetrics.width;
+        if (lines.count > 1) {
+            mMetrics.advanceY += mMetrics.height;  // height, plus leading from above
+        } else {
+            mMetrics.advanceY = PicaPt(0);
+        }
+
+        return mMetrics;
+    }
+
+    const std::vector<Glyph>& glyphs() const override
+    {
+        if (!mGlyphsInitialized) {
+            NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
+            int nGlyphs = 0;
+            for (int i = 0;  i < lines.count;  ++i) {
+                nGlyphs += CTLineGetGlyphCount((CTLineRef)[lines objectAtIndex:i]);
+            }
+            mGlyphs.reserve(nGlyphs);
+            CGFloat x = 0.0;
+            PicaPt yPt = PicaPt::kZero;
+            for (int i = 0;  i < lines.count;  ++i) {
+                NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:i]);
+                int nRuns = runs.count;
+                for (int r = 0;  r < nRuns;  ++r) {
+                    CTRunRef run = (__bridge CTRunRef)[runs objectAtIndex:r];
+                    int n = CTRunGetGlyphCount(run);
+                    const CGPoint *positions = CTRunGetPositionsPtr(run);
+                    const CGSize *advances = CTRunGetAdvancesPtr(run);
+                    const CFIndex *indices = CTRunGetStringIndicesPtr(run);
+                    CGFloat ascent, descent, leading;
+                    CTRunGetTypographicBounds(run, CFRangeMake(0, 0),
+                                              &ascent, &descent, &leading);
+                    PicaPt hPt = PicaPt::fromPixels(ascent + descent, mDPI);
+                    for (int g = 0;  g < n;  ++g) {
+                        if (!mGlyphs.empty()) {
+                            mGlyphs.back().indexOfNext = indices[g];
+                        }
+                        mGlyphs.push_back({
+                            indices[g],
+                            Rect(PicaPt::fromPixels(x + positions[g].x, mDPI),
+                                 yPt,
+                                 PicaPt::fromPixels(advances[g].width, mDPI),
+                                 hPt),
+                            });
+                    }
+                    yPt += PicaPt::fromPixels(ascent + descent + leading, mDPI);
+                }
+            }
+            if (!mGlyphs.empty()) {
+                mGlyphs.back().indexOfNext = mLen;
+            }
+
+            mGlyphsInitialized = true;
+        }
+        return mGlyphs;
+    }
+
+    void draw(DrawContext& dc, const Point& topLeft) const
+    {
+        // You'd think that adding the ascent to the upper left y would give the
+        // baseline, but it can be off by a pixel (notably between Arial and Helvetica).
+        // Use the line origin for more consistent results.
+        NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
+        CGPoint origin;
+        CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 1), &origin);
+
+        CGContextRef gc = (CGContextRef)dc.nativeDC();
+        CGContextSaveGState(gc);
+        CGContextSetTextMatrix(gc, CGAffineTransformIdentity);
+        // (Note that macOS will properly align the text to the pixel boundary; we don't need to.)
+        // Note that we've scaled the coordinates so that one unit is one PicaPt, not one pixel.
+        // TopLeft *is* in PicaPt; origin and nsfont.ascender are in text-bitmap units which apparently
+        // take into account the scale factor.
+        NSFont *nsfont72 = gFontMgr.get(mFont, 72.0f);
+        CGContextTranslateCTM(gc,
+                              topLeft.x.asFloat(),
+                              topLeft.y.asFloat() + origin.y + nsfont72.ascender - PicaPt::fromPixels(1, dc.dpi()).asFloat());
+        CGContextScaleCTM(gc, 1, -1);
+        CTFrameDraw(mFrame, gc);
+        CGContextRestoreGState(gc);
+    }
 
 private:
+    int mLen;
+    float mDPI;
+    Font mFont;
     CGPathRef mPath;
     CTFramesetterRef mLayout;
     CTFrameRef mFrame;
+    mutable std::vector<Glyph> mGlyphs;
+    mutable bool mGlyphsInitialized = false;
+    mutable TextMetrics mMetrics;
 };
 
 //------------------------ CoreGraphicsImage ----------------------------------
@@ -262,6 +432,15 @@ public:
         return std::make_shared<CoreGraphicsPath>();
     }
 
+    std::shared_ptr<TextLayout> createTextLayout(
+                         const char *utf8, const Font& font, const Color& color,
+                         const PicaPt& width /*= PicaPt::kZero*/) const override
+    {
+        return std::make_shared<TextObj>(*this, utf8, font, color,
+                                         Color::kTransparent, PicaPt::kZero,
+                                         /*width,*/ kPaintFill);
+    }
+    
     void setNativeDC(void *nativeDC)
     {
         mNativeDC = nativeDC;
@@ -457,31 +636,19 @@ public:
     void drawText(const char *textUTF8, const Point& topLeft, const Font& font,
                   PaintMode mode) override
     {
-        CGContextRef gc = (CGContextRef)mNativeDC;
+        auto textObj = textLayoutForCurrent(textUTF8, font, mode);
+        drawText(textObj, topLeft);
+    }
 
-        auto textObj = TextObj(createNSAttributedStringForCurrent(textUTF8, font, mode));
-        auto ctframe = textObj.ctframe();
-
-        // You'd think that adding the ascent to the upper left y would give the
-        // baseline, but it can be off by a pixel (notably between Arial and Helvetica).
-        // Use the line origin for more consistent results.
-        NSArray* lines = (NSArray*)CTFrameGetLines(ctframe);
-        CGPoint origin;
-        CTFrameGetLineOrigins(ctframe, CFRangeMake(0, 1), &origin);
-
-        CGContextSaveGState(gc);
-        CGContextSetTextMatrix(gc, CGAffineTransformIdentity);
-        // (Note that macOS will properly align the text to the pixel boundary; we don't need to.)
-        // Note that we've scaled the coordinates so that one unit is one PicaPt, not one pixel.
-        // TopLeft *is* in PicaPt; origin and nsfont.ascender are in text-bitmap units which apparently
-        // take into account the scale factor.
-        NSFont *nsfont72 = gFontMgr.get(font, 72.0f);
-        CGContextTranslateCTM(gc,
-                              topLeft.x.asFloat(),
-                              topLeft.y.asFloat() + origin.y + nsfont72.ascender - PicaPt::fromPixels(1, mDPI).asFloat());
-        CGContextScaleCTM(gc, 1, -1);
-        CTFrameDraw(ctframe, gc);
-        CGContextRestoreGState(gc);
+    void drawText(const TextLayout& layout, const Point& p) override
+    {
+        // We know we have a TextObj, because that is the only thing
+        // we give out, so dynamic casting would be unnecessarily slow,
+        // which is not what you want in your drawing functions. But we
+        // do not want to make it a virtual function, either, otherwise
+        // it end up visible in the user-visible interface.
+        const TextObj *to = static_cast<const TextObj*>(&layout);
+        to->draw(*this, p);
     }
 
     void drawImage(std::shared_ptr<Image> image, const Rect& destRect) override
@@ -531,16 +698,16 @@ public:
         return m;
     }
 
-    Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
-                                  PaintMode mode) const override
+    TextMetrics textMetrics(const char *textUTF8, const Font& font,
+                            PaintMode mode /*=kPaintFill*/) const override
     {
-        Font::TextMetrics tm;
+        TextMetrics tm;
         tm.width = PicaPt(0);
         tm.height = PicaPt(0);
         tm.advanceX = PicaPt(0);
         tm.advanceY = PicaPt(0);
 
-        auto textObj = TextObj(createNSAttributedStringForCurrent(textUTF8, font, mode));
+        auto textObj = textLayoutForCurrent(textUTF8, font, mode);
         auto ctframe = textObj.ctframe();
         NSArray* lines = (NSArray*)CTFrameGetLines(ctframe);
         double width;
@@ -566,52 +733,13 @@ public:
         return tm;
     }
 
-    NSAttributedString* createNSAttributedStringForCurrent(const char *textUTF8,
-                                                           const Font& font,
-                                                           PaintMode mode) const
+    TextObj textLayoutForCurrent(const char *textUTF8, const Font& font,
+                                 PaintMode mode) const
     {
-        Color fillColor;
-        if (mode & kPaintFill) {
-            fillColor = mStateStack.back().fillColor;
-        } else {
-            fillColor = Color::kTransparent;
-        }
-        NSFont *nsfont72 = gFontMgr.get(font, 72.0f);
-        NSColor *nsfill = [NSColor colorWithRed:CGFloat(fillColor.red())
-                                          green:CGFloat(fillColor.green())
-                                           blue:CGFloat(fillColor.blue())
-                                          alpha:CGFloat(fillColor.alpha())];
-        NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
-        attr[NSFontAttributeName] = nsfont72;
-        attr[NSForegroundColorAttributeName] = nsfill;
-        // attr[NSParagraphStyleAttributeName] = paragraphStyle;
-
-        if (mode & kPaintStroke) {
-            Color strokeColor = mStateStack.back().strokeColor;
-            // Apple's documentation says that NSStrokeWidthAttributeName is a
-            // percentage of the font height (NOT the raw stroke width). Since
-            // the DPI is being handled by the transform, stroke width is
-            // already in the correct units (namely PicaPt), just like
-            // nsfont72.pointSize is (since we got the 72 dpi version of the
-            // font).
-            float strokeWidth = mStateStack.back().strokeWidth.asFloat();
-            strokeWidth = strokeWidth / nsfont72.pointSize * 100.0f;
-            NSColor *nsstroke = [NSColor colorWithRed:CGFloat(strokeColor.red())
-                                                green:CGFloat(strokeColor.green())
-                                                 blue:CGFloat(strokeColor.blue())
-                                                alpha:CGFloat(strokeColor.alpha())];
-            attr[NSStrokeColorAttributeName] = nsstroke;
-            if (mode & kPaintFill) {
-                // Negative width signals to both stroke and fill
-                attr[NSStrokeWidthAttributeName] = @(-strokeWidth);
-            } else {
-                attr[NSStrokeWidthAttributeName] = @(strokeWidth);
-            }
-        }
-
-        return [[NSAttributedString alloc]
-                initWithString:[NSString stringWithUTF8String:textUTF8]
-                    attributes:attr];
+        return TextObj(*this, textUTF8, font, mStateStack.back().fillColor,
+                       mStateStack.back().strokeColor,
+                       mStateStack.back().strokeWidth,
+                       mode);
     }
 
     Color pixelAt(int x, int y) override

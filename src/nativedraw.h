@@ -594,7 +594,7 @@ public:
     // the text, except on macOS/iOS which use transient contexts (however, the
     // DPI should be the same as the original context, which it normally is,
     // except in cases like where the window moves to another monitor).
-    virtual void drawText(const TextLayout& layout, const Point& p) = 0;
+    virtual void drawText(const TextLayout& layout, const Point& topLeft) = 0;
 
     virtual void drawImage(std::shared_ptr<Image> image, const Rect& destRect) = 0;
 

@@ -114,5 +114,11 @@ struct BezierPath::Impl
     std::vector<Command> commands;
 };
 
+// Returns an array such that out[i] where i is an index into a UTF-16 string,
+// gives the index into utf8. Multibyte UTF-16 characters have the same index
+// for each byte, which eliminates the need for error checking in the unfortunate
+// event of a bug that results in lookup up in the middle of a character.
+std::vector<int> utf8IndicesForUTF16Indices(const char *utf8);
+
 } // namespace $ND_NAMESPACE
 #endif // _NATIVE_DRAW_PRIVATE_H

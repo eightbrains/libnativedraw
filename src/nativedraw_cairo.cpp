@@ -29,8 +29,11 @@
 #include <cairo/cairo.h>
 #include <cairo/cairo-xlib.h>
 #include <cairo/cairo-xlib-xrender.h>
+#include <pango/pangocairo.h>
 
 #include <iostream>
+
+#include <assert.h>
 
 namespace ND_NAMESPACE {
 
@@ -178,26 +181,206 @@ private:
 //---------------------------------- Fonts ------------------------------------
 namespace {
 
-class CairoFont
+// This class exists so that the PangoContext will be automatically destroyed.
+// This is not strictly necessary, as exiting would obviously free it,
+// but it does prevent unnecesary noise in leak detectors.
+class TextContext
 {
 public:
+    TextContext()
+    {
+        mContext = pango_font_map_create_context(pango_cairo_font_map_get_default());
+    }
+
+    ~TextContext()
+    {
+        g_object_unref(mContext);
+    }
+
+    PangoContext* context() { return mContext; }
+
+private:
+    PangoContext *mContext = nullptr;
+};
+TextContext gPangoContext;
+
+struct PangoFontInfo
+{
+public:
+    PangoFontDescription *fontDescription = nullptr;
     bool metricsInitialized = false;
     Font::Metrics metrics;
 };
 
-static CairoFont* createFont(const Font& font, float dpi)
+static PangoFontInfo* createFont(const Font& font, float dpi)
 {
-    return new CairoFont();
+    auto *desc = pango_font_description_new();
+    pango_font_description_set_family(desc, font.family().c_str());
+    pango_font_description_set_style(desc,
+                            (font.style() & kStyleItalic) ? PANGO_STYLE_ITALIC
+                                                          : PANGO_STYLE_NORMAL);
+    pango_font_description_set_weight(desc, PangoWeight(font.weight()));
+    pango_font_description_set_size(desc,
+    // Pango appears to assume the DPI is 96.0, so therefore the conversion
+    // of one pica-pt is 96 pixels instead of 72. To undo that, multiply
+    // the 72 dpi value by 72/96 = 0.75.
+                                    int(std::round(0.75f * font.pointSize().toPixels(dpi) * float(PANGO_SCALE))));
+
+    auto *info = new PangoFontInfo();
+    info->fontDescription = desc;
+    return info;
 }
 
-static void destroyFont(CairoFont *fontResource)
+static void destroyFont(PangoFontInfo *fontResource)
 {
+    pango_font_description_free(fontResource->fontDescription);
     delete fontResource;
 }
 
-static ResourceManager<Font, CairoFont*> gFontMgr(createFont, destroyFont);
+static ResourceManager<Font, PangoFontInfo*> gFontMgr(createFont, destroyFont);
 
 } // namespace
+
+//-------------------------------- Text Obj------------------------------------
+namespace {
+
+class TextObj : public TextLayout
+{
+public:
+    TextObj(const char *utf8, cairo_t *cairoContext, float dpi, const Font& font,
+            const Color& fillColor,
+            const Color& strokeColor, const PicaPt& strokeWidth,
+            const PicaPt& width = PicaPt::kZero)
+    {
+        static const int kNullTerminated = -1;
+
+        mDPI = dpi;
+        mFillColor = fillColor;
+        mStrokeColor = strokeColor;
+        mStrokeWidth = strokeWidth;
+        mFont = font;
+        mIsEmptyText = (utf8 == nullptr || *utf8 == '\0');
+        // pango_cairo_create_layout() creates a new PangoContext for every
+        // layout which is not ideal.
+        mLayout = pango_layout_new(gPangoContext.context());
+        pango_layout_set_text(mLayout, utf8, kNullTerminated);
+        PangoFontInfo* pf = gFontMgr.get(font, dpi);
+        pango_layout_set_font_description(mLayout, pf->fontDescription);
+
+        if (width > PicaPt::kZero) {
+            pango_layout_set_width(mLayout, int(std::ceil(width.toPixels(dpi) * PANGO_SCALE)));
+        }
+    }
+
+    ~TextObj()
+    {
+        g_object_unref(mLayout);
+    }
+
+    const Color& fillColor() const { return mFillColor; }
+    const Color& strokeColor() const { return mStrokeColor; }
+    const PicaPt& strokeWidth() const { return mStrokeWidth; }
+    const Font& font() const { return mFont; }
+    PangoLayout* pangoLayout() const { return mLayout; }
+
+    // This only used to calculate the font metrics that aren't included
+    // Pango's extremely limited set.
+    Size inkExtents() const
+    {
+        // Note that we want the ink rectangle, because we will be calculating
+        // cap-height and x-height, and we only want the height of what's
+        // actually been inked. (The logical rectangle is the entire em-height.)
+        PangoRectangle ink;
+        pango_layout_get_pixel_extents(mLayout, &ink, nullptr);
+        return Size(PicaPt::fromPixels(ink.width, mDPI),
+                    PicaPt::fromPixels(ink.height, mDPI));
+    }
+
+    const TextMetrics& metrics() const override
+    {
+        if (!mMetricsValid) {
+            if (!mIsEmptyText) {
+                int w, h;
+                pango_layout_get_pixel_size(mLayout, &w, &h);
+                mMetrics.width = PicaPt::fromPixels(w, mDPI);
+                mMetrics.height = PicaPt::fromPixels(h, mDPI);
+                mMetrics.advanceX = mMetrics.width;
+                if (pango_layout_get_line_count(mLayout) > 1) {
+                    mMetrics.advanceY = mMetrics.height;
+                } else {
+                    mMetrics.advanceY = PicaPt::kZero;
+                }
+            }
+            mMetricsValid = true;
+        }
+        return mMetrics;
+    }
+
+    const std::vector<Glyph>& glyphs() const override
+    {
+        if (!mGlyphsValid) {
+            assert(mGlyphs.empty());
+            PangoLayoutIter *it = pango_layout_get_iter(mLayout);
+            bool isEmpty = (pango_layout_iter_get_run(it) == NULL &&
+                            pango_layout_iter_at_last_line(it));
+            PangoRectangle logical;
+            float invPangoScale = 1.0f / float(PANGO_SCALE);
+            if (!isEmpty) {
+                PangoLayoutLine *lastLine = pango_layout_get_line(mLayout, 0);
+                do {
+                    int textIdx = pango_layout_iter_get_index(it);
+                    bool lastGlyphWasSpace = false;
+                    PangoLayoutLine *line = pango_layout_iter_get_line(it);
+                    if (!mGlyphs.empty()) {
+                        mGlyphs.back().indexOfNext = textIdx;
+                        lastGlyphWasSpace = (mGlyphs.back().frame.width == PicaPt::kZero);
+                    }
+                    // The logical rectangle is the entire line height, and
+                    // also is non-zero width/height for spaces. The ink
+                    // rectangle only contains pixels that were inked, so is
+                    // not the line height high, and is zero-size for spaces.
+                    pango_layout_iter_get_cluster_extents(it, nullptr, &logical);
+                    Rect r(PicaPt::fromPixels(float(logical.x) * invPangoScale, mDPI),
+                           PicaPt::fromPixels(float(logical.y) * invPangoScale, mDPI),
+                           PicaPt::fromPixels(float(logical.width) * invPangoScale, mDPI),
+                           PicaPt::fromPixels(float(logical.height) * invPangoScale, mDPI));
+                    mGlyphs.emplace_back(textIdx, r);
+                } while(pango_layout_iter_next_cluster(it));
+            }
+            pango_layout_iter_free(it);
+            if (!mGlyphs.empty()) {
+                int nLines = pango_layout_get_line_count(mLayout);
+                if (nLines > 0) {
+                    // Find last index. Maybe it would be quicker to use strlen?
+                    PangoLayoutLine *line = pango_layout_get_line(mLayout,
+                                                                  nLines - 1);
+                    mGlyphs.back().indexOfNext = line->start_index + line->length;
+                }
+            }
+            mGlyphsValid = true;
+        }
+
+        return mGlyphs;
+    }
+
+private:
+    PangoLayout *mLayout;
+    float mDPI;
+    Color mFillColor;
+    Color mStrokeColor;
+    PicaPt mStrokeWidth;
+    Font mFont;  // cannot be a ref, as cannot guarantee it will remain valid
+    bool mIsEmptyText;
+
+    mutable TextMetrics mMetrics;
+    mutable bool mMetricsValid = false;
+
+    mutable std::vector<Glyph> mGlyphs;
+    mutable bool mGlyphsValid = false;
+};
+
+} // namespace
+
 //---------------------------------- Image ------------------------------------
 class CairoImage : public Image
 {
@@ -245,6 +428,14 @@ public:
     std::shared_ptr<BezierPath> createBezierPath() const override
     {
         return std::make_shared<CairoPath>();
+    }
+
+    std::shared_ptr<TextLayout> createTextLayout(const char *utf8, const Font& font, const Color& color, const PicaPt& width = PicaPt::kZero) const override
+    {
+        auto *gc = cairoContext();
+        return std::make_shared<TextObj>(utf8, gc, dpi(), font, color,
+                                         Color::kTransparent, PicaPt::kZero,
+                                         width);
     }
 
     void beginDraw() override
@@ -313,6 +504,7 @@ public:
 
     void setStrokeWidth(const PicaPt& w) override
     {
+        mStateStack.back().strokeWidth = w;
         cairo_set_line_width(cairoContext(), w.toPixels(mDPI));
     }
 
@@ -414,13 +606,42 @@ public:
 
     void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode) override
     {
+        drawText(layoutFromCurrent(textUTF8, font, mode), topLeft);
+    }
+
+    void drawText(const TextLayout& layout, const Point& topLeft) override
+    {
+        // This can only be our TextObj, but we need to cast, otherwise we
+        // have to add a virtual function, which then starts putting our
+        // internals in the definition (even if we make it protected, it still
+        // needs to be in the class declaration).
+        const TextObj *text = static_cast<const TextObj*>(&layout);
+        auto &font = text->font();
+
         auto *gc = cairoContext();
-        setFont(font);
+        cairo_save(gc);
+        setCairoSourceColor(gc, text->fillColor());
+        auto fm = fontMetrics(font);
         cairo_move_to(gc,
                       topLeft.x.toPixels(mDPI),
-                      std::floor((topLeft.y + fontMetrics(font).ascent).toPixels(mDPI)));
-        cairo_text_path(gc, textUTF8);
-        drawCurrentPath(mode);
+                      std::floor(topLeft.y.toPixels(mDPI)));
+        //pango_cairo_update_context(gc, gPangoContext.context());
+        //pango_cairo_update_layout(gc, text->pangoLayout());
+        pango_cairo_show_layout(gc, text->pangoLayout());
+        if (text->strokeWidth() > PicaPt::kZero) {
+            setCairoSourceColor(gc, text->strokeColor());
+            cairo_set_line_width(gc, text->strokeWidth().toPixels(mDPI));
+            // _show_layout() has upper left of text at origin, but
+            // _layout_path() has baseline at origin.
+            cairo_move_to(gc,
+                          0.0,
+                          -(fm.ascent - fm.capHeight).toPixels(mDPI));
+            //pango_cairo_update_context(gc, gPangoContext.context());
+            //pango_cairo_update_layout(gc, text->pangoLayout());
+            pango_cairo_layout_path(gc, text->pangoLayout());
+            cairo_stroke(gc);
+        }
+        cairo_restore(gc);
     }
 
     void drawImage(std::shared_ptr<Image> image, const Rect& destRect) override
@@ -433,8 +654,8 @@ public:
         float sx = destWidthPx / image->width();
         float sy = destHeightPx / image->height();
         scale(sx, sy);
-        cairo_set_source_surface(gc, (cairo_surface_t*)image->nativeHandle()
-                                 ,0.0, 0.0);
+        cairo_set_source_surface(gc, (cairo_surface_t*)image->nativeHandle(),
+                                 0.0, 0.0);
         cairo_paint(gc);
         restore();
     }
@@ -461,32 +682,33 @@ public:
         // PicaPt, but we get the actual size font so that we can attempt
         // get more accurate values due to hinting (or lack thereof at
         // higher resolutions).
-        CairoFont* fontInfo = gFontMgr.get(font, mDPI);
+        PangoFontInfo* fontInfo = gFontMgr.get(font, mDPI);
         if (!fontInfo->metricsInitialized) {
             auto *gc = cairoContext();
-            setFont(font);
 
-            auto *face = cairo_get_font_face(gc);
-            std::string familyName = cairo_toy_font_face_get_family(face);
-            // TODO: the toy font API apparently always succeeds
-            if (familyName == font.family()) {
-                cairo_font_extents_t extents;
-                cairo_font_extents(gc, &extents);
-                fontInfo->metrics.ascent = PicaPt::fromPixels(extents.ascent, mDPI);
-                fontInfo->metrics.descent = PicaPt::fromPixels(extents.descent, mDPI);
-                auto leadingPx = extents.height - extents.ascent - extents.descent;
-                fontInfo->metrics.leading = PicaPt::fromPixels(leadingPx, mDPI);
+            auto *metrics = pango_context_get_metrics(gPangoContext.context(),
+                                                   fontInfo->fontDescription,
+                                                   pango_language_get_default());
+            if (metrics) {
+                fontInfo->metrics.ascent = PicaPt::fromPixels(float(pango_font_metrics_get_ascent(metrics)) / float(PANGO_SCALE), mDPI);
+                fontInfo->metrics.descent = PicaPt::fromPixels(float(pango_font_metrics_get_descent(metrics)) / float(PANGO_SCALE), mDPI);
+                pango_font_metrics_unref(metrics);
 
-                // Cairo doesn't have cap-height or x-height, so we need to
-                // figure those out ourselves.
-                cairo_text_extents_t tExt;
+                // Pango's font metrics only provides ascent and descent, we
+                // need to calculate cap-height, x-height and leading. It's not
+                // clear how to calculate a consistent leading, so just set it
+                // to zero (which many fonts do anyway).
+                fontInfo->metrics.leading = PicaPt::kZero;
+
                 // cap-height is for flat letters (H,I not A,O which may extend
                 // above)
-                cairo_text_extents(gc, "H", &tExt);
-                fontInfo->metrics.capHeight = PicaPt::fromPixels(tExt.height, mDPI);
+                TextObj caps("H", gc, mDPI, font, Color::kBlack,
+                             Color::kTransparent, PicaPt::kZero);
+                fontInfo->metrics.capHeight = caps.inkExtents().height;
                 // x-height is obviously height of "x"
-                cairo_text_extents(gc, "x", &tExt);
-                fontInfo->metrics.xHeight = PicaPt::fromPixels(tExt.height, mDPI);
+                TextObj x("x", gc, mDPI, font, Color::kBlack,
+                          Color::kTransparent, PicaPt::kZero);
+                fontInfo->metrics.xHeight = x.inkExtents().height;
             } else {
                 fontInfo->metrics.ascent = PicaPt(0);
                 fontInfo->metrics.descent = PicaPt(0);
@@ -494,6 +716,7 @@ public:
                 fontInfo->metrics.capHeight = PicaPt(0);
                 fontInfo->metrics.xHeight = PicaPt(0);
             }
+
             fontInfo->metrics.lineHeight = fontInfo->metrics.ascent + fontInfo->metrics.descent + fontInfo->metrics.leading;
 
             fontInfo->metricsInitialized = true;
@@ -504,17 +727,7 @@ public:
     TextMetrics textMetrics(const char *textUTF8, const Font& font,
                             PaintMode mode /*=kPaintFill*/) const
     {
-        cairo_text_extents_t extents;
-        auto *gc = cairoContext();
-        setFont(font);
-        cairo_text_extents(gc, textUTF8, &extents);
-
-        TextMetrics tm;
-        tm.width = PicaPt::fromPixels(float(extents.width), dpi());
-        tm.height = PicaPt::fromPixels(float(extents.height), dpi());
-        tm.advanceX = PicaPt::fromPixels(float(extents.x_advance), dpi());
-        tm.advanceY = PicaPt::fromPixels(float(extents.y_advance), dpi());
-        return tm;
+        return layoutFromCurrent(textUTF8, font, mode).metrics();
     }
 
     Color pixelAt(int x, int y) override
@@ -531,6 +744,24 @@ public:
 
 protected:
     inline cairo_t* cairoContext() const { return (cairo_t*)mNativeDC; }
+
+    TextObj layoutFromCurrent(const char *textUTF8, const Font& font,
+                              PaintMode mode) const
+    {
+        auto *gc = cairoContext();
+        auto &state = mStateStack.back();
+        switch(mode) {
+            case kPaintStroke:
+                return TextObj(textUTF8, gc, dpi(), font, Color::kTransparent,
+                               state.strokeColor, state.strokeWidth);
+            case kPaintFill:
+                return TextObj(textUTF8, gc, dpi(), font, state.fillColor,
+                               Color::kTransparent, PicaPt::kZero);
+            case kPaintStrokeAndFill:
+                return TextObj(textUTF8, gc, dpi(), font, state.fillColor,
+                               state.strokeColor, state.strokeWidth);
+        }
+    }
 
     void drawCurrentPath(PaintMode mode)
     {
@@ -570,6 +801,7 @@ private:
     {
         Color fillColor;
         Color strokeColor;
+        PicaPt strokeWidth;
     };
     std::vector<State> mStateStack;
 };

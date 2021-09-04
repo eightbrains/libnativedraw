@@ -343,6 +343,8 @@ enum FontWeight { kWeightAuto = 0,
                   kWeightHeavy = 800,
                   kWeightBlack = 900 };
 
+// Linux: programs should call setlocale(LC_ALL, "") to initialize user defaults
+//        otherwise metrics() will return the values for the "C" locale.
 class Font
 {
     // Design notes:

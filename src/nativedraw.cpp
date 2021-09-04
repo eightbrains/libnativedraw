@@ -25,8 +25,6 @@
 
 #include <assert.h>
 
-#include <iostream>
-
 namespace ND_NAMESPACE {
 
 //---------------------- defines from nativedraw_private.h --------------------

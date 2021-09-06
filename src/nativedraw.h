@@ -343,6 +343,8 @@ enum FontWeight { kWeightAuto = 0,
                   kWeightHeavy = 800,
                   kWeightBlack = 900 };
 
+// Linux: programs should call setlocale(LC_ALL, "") to initialize user defaults
+//        otherwise metrics() will return the values for the "C" locale.
 class Font
 {
     // Design notes:
@@ -382,14 +384,6 @@ public:
         PicaPt lineHeight;  // ascent + descent + leading
     };
 
-    struct TextMetrics
-    {
-        PicaPt width;
-        PicaPt height;
-        PicaPt advanceX;
-        PicaPt advanceY;
-    };
-
     Font();
     Font(const Font& f);
     Font(const std::string& family, const PicaPt& pointSize,
@@ -417,6 +411,37 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> mImpl;
+};
+
+struct TextMetrics
+{
+    PicaPt width;
+    PicaPt height;
+    PicaPt advanceX;
+    PicaPt advanceY;
+};
+
+class TextLayout
+{
+public:
+    struct Glyph
+    {
+        long index = -1;  // index into the original string
+        long indexOfNext = 0;  // where the next glyph starts in string;
+                               // this will be str.size() for last glyph
+        Rect frame = Rect(PicaPt::kZero, PicaPt::kZero,
+                          PicaPt::kZero, PicaPt::kZero);
+
+        Glyph() {}
+        Glyph(long i, const Rect& r) : index(i), frame(r) {}
+    };
+
+    virtual ~TextLayout() {}
+    virtual const Glyph* glyphAtPoint(const Point& p) const;
+    virtual Point pointAtIndex(long index) const;
+
+    virtual const TextMetrics& metrics() const = 0;
+    virtual const std::vector<Glyph>& glyphs() const = 0;
 };
 
 enum JoinStyle { kJoinMiter = 0, kJoinRound = 1, kJoinBevel = 2 };
@@ -509,6 +534,7 @@ public:
                                                       float dpi = 72.0f) = 0;
 
     virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
+    virtual std::shared_ptr<TextLayout> createTextLayout(const char *utf8, const Font& font, const Color& color, const PicaPt& width = PicaPt::kZero) const = 0;
 
     int width() const { return mWidth; }
     int height() const { return mHeight; }
@@ -564,6 +590,14 @@ public:
     void drawText(const char *textUTF8, const Rect& r, int alignment,
                   const Font& font, PaintMode mode);
 
+    // Draws the text. If you need a layout, you should use this function to
+    // draw it, as it avoid the need to re-create the layout inside the other
+    // text-drawing functions. Only draw using the same context that created
+    // the text, except on macOS/iOS which use transient contexts (however, the
+    // DPI should be the same as the original context, which it normally is,
+    // except in cases like where the window moves to another monitor).
+    virtual void drawText(const TextLayout& layout, const Point& topLeft) = 0;
+
     virtual void drawImage(std::shared_ptr<Image> image, const Rect& destRect) = 0;
 
     virtual void clipToRect(const Rect& rect) = 0;
@@ -583,8 +617,8 @@ public:
     virtual Font::Metrics fontMetrics(const Font& font) const = 0;
 
     // Returns the metrics for a single line of text
-    virtual Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
-                                          PaintMode mode) const = 0;
+    virtual TextMetrics textMetrics(const char *textUTF8, const Font& font,
+                                    PaintMode mode = kPaintFill) const = 0;
 
     // Multiplies point by the current transformation matrix and returns
     // the point in context pixel coordinates. Note that the pixel coordinates

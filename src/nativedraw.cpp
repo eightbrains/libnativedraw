@@ -23,10 +23,53 @@
 #include "nativedraw.h"
 #include "nativedraw_private.h"
 
-#include <iostream>
+#include <assert.h>
 
 namespace ND_NAMESPACE {
 
+//---------------------- defines from nativedraw_private.h --------------------
+std::vector<int> utf8IndicesForUTF16Indices(const char *utf8)
+{
+    std::vector<int> utf16ToIndex;
+    const uint8_t *c = (const uint8_t*)utf8;
+    while (*c != '\0') {
+        int utf8idx = c - (const uint8_t*)utf8;
+        uint32_t utf32 = 0;
+        int nMoreBytes = 0;
+        if (((*c) & 0b10000000) == 0) {
+            utf32 = uint32_t(*c++);
+        } else if (((*c) & 0b11100000) == 0b11000000) {
+            utf32 = (0b00011111 & (*c++)) << 6;
+            nMoreBytes = 1;
+        } else if (((*c) & 0b11110000) == 0b11100000) {
+            utf32 = (0b00001111 & (*c++)) << 6;
+            nMoreBytes = 2;
+        } else {
+            utf32 = (0b00000111 & (*c++)) << 6;
+            nMoreBytes = 3;
+        }
+        for (int i = nMoreBytes - 1;  i >= 0;  --i) {
+            utf32 |= (0b00111111 & (*c));
+            // Handle truncated character, either by early \0 or by start of
+            // a new character.
+            if (*c != '\0' && ((*c) & 0b10000000) == 0b10000000) { c++; }
+        }
+
+        int utf16len = (utf32 >= 0x10000 ? 2 : 1);
+        for (int i = 0;  i < utf16len;  ++i) {
+            utf16ToIndex.push_back(utf8idx);
+        }
+    }
+
+    // Add in the index to the end, too, it comes in handy for finding the
+    // location of the caret positioned at the end of the string.
+    int utf8idx = c - (const uint8_t*)utf8;
+    utf16ToIndex.push_back(utf8idx);
+
+    return utf16ToIndex;
+}
+
+//-----------------------------------------------------------------------------
 const PicaPt PicaPt::kZero(0.0f);
 
 PicaPt operator+(float lhs, const PicaPt& rhs)
@@ -286,6 +329,62 @@ Font Font::fontWithWeight(FontWeight w) const
         s = FontStyle(int(s) & (~kStyleBold));
     }
     return Font(family(), pointSize(), s, w);
+}
+//-----------------------------------------------------------------------------
+const TextLayout::Glyph* TextLayout::glyphAtPoint(const Point& p) const
+{
+    // TODO: can we do binary search?
+    for (auto &glyph : glyphs()) {
+        if (glyph.frame.contains(p)) {
+            return &glyph;
+        }
+    }
+    return nullptr;
+}
+
+Point TextLayout::pointAtIndex(long index) const
+{
+    auto &glyphs = this->glyphs();
+    if (glyphs.empty()) {
+        return Point(PicaPt::kZero, PicaPt::kZero);
+    }
+
+    if (index >= glyphs.back().indexOfNext) {
+        return glyphs.back().frame.upperRight();
+    }
+    
+    if (index < 0) {
+        index = 0;
+    }
+
+    // Note that there are not necessarily as many glyphs as there are
+    // bytes in the string! Do a fuzzy binary search (instead of a linear
+    // search), since this will be used often in drawing for the cursor
+    // and selection.
+    bool isFirstIteration = true;
+    int lowerIdx = 0, idx = glyphs.size() / 2, upperIdx = int(glyphs.size() - 1);
+    while ((lowerIdx != idx && upperIdx != idx) || isFirstIteration) {
+        if (index < glyphs[idx].index) {
+            upperIdx = idx;
+            auto dist = idx - lowerIdx;
+            if (lowerIdx < idx) {
+                idx -= std::max(1, dist / 2);
+            }
+        } else if (index > glyphs[idx].index) {
+            lowerIdx = idx;
+            auto dist = upperIdx - idx;
+            if (upperIdx > idx) {
+                idx += std::max(1, dist / 2);
+            }
+        } else {
+            lowerIdx = idx;
+            upperIdx = idx;
+        }
+        isFirstIteration = false;
+        assert(lowerIdx <= idx);
+        assert(upperIdx >= idx);
+    }
+    return glyphs[idx].frame.upperLeft();
 }
 
 //-----------------------------------------------------------------------------

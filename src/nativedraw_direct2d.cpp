@@ -386,126 +386,15 @@ static ResourceManager<Font, FontInfo> gFontMgr(createFont, destroyFont);
 
 } // namespace
 
-//------------------------ Text layout object ---------------------------------
-class TextObj
-{
-public:
-    TextObj(const char* textUTF8, const Font& font, float dpi)
-    {
-        // Convert from UTF8 -> WCHAR
-        const int kNullTerminated = -1;
-        int nCharsNeeded = MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, NULL, 0);
-        WCHAR* wtext = new WCHAR[nCharsNeeded + 1];  // nCharsNeeded includes \0, but +1 just in case
-        wtext[0] = '\0';  // in case conversion fails
-        MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, wtext, nCharsNeeded);
-
-        // Set alignment
-        auto* format = gFontMgr.get(font, dpi).format;
-        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR); // top
-
-        // Create the text layout (don't snap to pixel)
-        auto textOpts = D2D1_DRAW_TEXT_OPTIONS_NO_SNAP;
-        HRESULT err = Direct2D::instance().writeFactory()
-                              ->CreateTextLayout(wtext, nCharsNeeded - 1, // don't pass the \0
-                format, 10000.0f, 10000.0f, &mLayout);
-        delete [] wtext;
-
-        // Snapping to pixel sometimes puts the text above the baseline
-        // (as desired) or on the pixel of the baseline (not desired).
-        // Do our own snapping so that we can get consistent results.
-        // This requires getting the origin of the line ourself.
-        DWRITE_LINE_METRICS* lineMetrics = nullptr;
-        UINT32 nLines;
-        mLayout->GetLineMetrics(lineMetrics, 0, &nLines);
-        lineMetrics = new DWRITE_LINE_METRICS[nLines];
-        mLayout->GetLineMetrics(lineMetrics, nLines, &nLines);
-        mBaseline = PicaPt::fromPixels(float(lineMetrics->baseline), 96.0f);
-        delete[] lineMetrics;
-    }
-
-    ~TextObj()
-    {
-        mLayout->Release();
-    }
-
-    const PicaPt& baseline() const { return mBaseline; }
-
-    IDWriteTextLayout* layout() const { return mLayout; }
-
-private:
-    IDWriteTextLayout* mLayout = nullptr;
-    PicaPt mBaseline;
-};
-
 //---------------------- Custom text renderer ---------------------------------
-// We need our own renderer so that we can draw outlines
-class CustomTextRenderer : public IDWriteTextRenderer
+
+// Note:  to make sure that AddRef() and Release() work right, this should
+//        be created with new(), NOT on the stack!. The new object will have
+//        the refcount already at 1, so you will need to call Release().
+class BaseTextRenderer : public IDWriteTextRenderer
 {
 public:
-    // Note:  to make sure that AddRef() and Release() work right, this should
-    //        be created with new(), NOT on the stack!. The new object will have
-    //        the refcount already at 1, so you will need to call Release().
-    CustomTextRenderer(D2D1::Matrix3x2F& matrix, ID2D1SolidColorBrush *brush,
-                       const Color *fill,
-                       const Color *stroke, FLOAT strokeWidth,
-                       ID2D1StrokeStyle *style)
-        : mMatrix(matrix), mBrush(brush), mFillColor(fill)
-        , mStrokeColor(stroke), mStrokeWidth(strokeWidth), mStrokeStyle(style)
-    {}
-
-    ~CustomTextRenderer() {}
-
-    STDMETHOD(DrawGlyphRun)(void* drawContext,
-                            FLOAT baselineOriginX,
-                            FLOAT baselineOriginY,
-                            DWRITE_MEASURING_MODE measuringMode,
-                            DWRITE_GLYPH_RUN const* glyphRun,
-                            DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDescription,
-                            IUnknown* clientDrawingEffect)
-    {
-        ID2D1PathGeometry *geometry = nullptr;
-        ID2D1GeometrySink *sink = nullptr;
-        HRESULT err;
-
-        err = Direct2D::instance().factory()->CreatePathGeometry(&geometry);
-        err = geometry->Open(&sink);
-
-        err = glyphRun->fontFace->GetGlyphRunOutline(glyphRun->fontEmSize,
-                                                     glyphRun->glyphIndices,
-                                                     glyphRun->glyphAdvances,
-                                                     glyphRun->glyphOffsets,
-                                                     glyphRun->glyphCount,
-                                                     glyphRun->isSideways,
-                                                     glyphRun->bidiLevel,
-                                                     sink
-        );
-        err = sink->Close();
-
-        auto *gc = (ID2D1RenderTarget*)drawContext;
-
-        D2D1::Matrix3x2F runMatrix;
-        runMatrix.SetProduct(D2D1::Matrix3x2F::Translation(D2D1::SizeF(baselineOriginX, baselineOriginY)), mMatrix);
-        gc->SetTransform(runMatrix);
-
-        if (mFillColor) {
-            mBrush->SetColor({ mFillColor->red(), mFillColor->green(),
-                               mFillColor->blue(), mFillColor->alpha() });
-            gc->FillGeometry(geometry, mBrush);
-        }
-        if (mStrokeColor) {
-            mBrush->SetColor({ mStrokeColor->red(), mStrokeColor->green(),
-                               mStrokeColor->blue(), mStrokeColor->alpha() });
-            gc->DrawGeometry(geometry, mBrush, mStrokeWidth, mStrokeStyle);
-        }
-
-        gc->SetTransform(mMatrix);
-
-        geometry->Release();
-        sink->Release();
-
-        return err;
-    }
+    virtual ~BaseTextRenderer() {}
 
     STDMETHOD(DrawUnderline)(void* drawContext,
                              FLOAT baselineOriginX,
@@ -586,6 +475,78 @@ public:
     }
 
 protected:
+    size_t mRefCount = 1;
+};
+
+// We need our own renderer so that we can draw outlines
+class CustomTextRenderer : public BaseTextRenderer
+{
+public:
+    // Note:  to make sure that AddRef() and Release() work right, this should
+    //        be created with new(), NOT on the stack!. The new object will have
+    //        the refcount already at 1, so you will need to call Release().
+    CustomTextRenderer(D2D1::Matrix3x2F& matrix, ID2D1SolidColorBrush *brush,
+                       const Color *fill,
+                       const Color *stroke, FLOAT strokeWidth,
+                       ID2D1StrokeStyle *style)
+        : mMatrix(matrix), mBrush(brush), mFillColor(fill)
+        , mStrokeColor(stroke), mStrokeWidth(strokeWidth), mStrokeStyle(style)
+    {}
+
+    ~CustomTextRenderer() {}
+
+    STDMETHOD(DrawGlyphRun)(void* drawContext,
+                            FLOAT baselineOriginX,
+                            FLOAT baselineOriginY,
+                            DWRITE_MEASURING_MODE measuringMode,
+                            DWRITE_GLYPH_RUN const* glyphRun,
+                            DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDescription,
+                            IUnknown* clientDrawingEffect)
+    {
+        ID2D1PathGeometry *geometry = nullptr;
+        ID2D1GeometrySink *sink = nullptr;
+        HRESULT err;
+
+        err = Direct2D::instance().factory()->CreatePathGeometry(&geometry);
+        err = geometry->Open(&sink);
+
+        err = glyphRun->fontFace->GetGlyphRunOutline(glyphRun->fontEmSize,
+                                                     glyphRun->glyphIndices,
+                                                     glyphRun->glyphAdvances,
+                                                     glyphRun->glyphOffsets,
+                                                     glyphRun->glyphCount,
+                                                     glyphRun->isSideways,
+                                                     glyphRun->bidiLevel,
+                                                     sink
+        );
+        err = sink->Close();
+
+        auto *gc = (ID2D1RenderTarget*)drawContext;
+
+        D2D1::Matrix3x2F runMatrix;
+        runMatrix.SetProduct(D2D1::Matrix3x2F::Translation(D2D1::SizeF(baselineOriginX, baselineOriginY)), mMatrix);
+        gc->SetTransform(runMatrix);
+
+        if (mFillColor) {
+            mBrush->SetColor({ mFillColor->red(), mFillColor->green(),
+                               mFillColor->blue(), mFillColor->alpha() });
+            gc->FillGeometry(geometry, mBrush);
+        }
+        if (mStrokeColor) {
+            mBrush->SetColor({ mStrokeColor->red(), mStrokeColor->green(),
+                               mStrokeColor->blue(), mStrokeColor->alpha() });
+            gc->DrawGeometry(geometry, mBrush, mStrokeWidth, mStrokeStyle);
+        }
+
+        gc->SetTransform(mMatrix);
+
+        geometry->Release();
+        sink->Release();
+
+        return err;
+    }
+
+protected:
     D2D1::Matrix3x2F mMatrix;
     size_t mRefCount = 1;
     // We don't own any of these pointers
@@ -594,8 +555,209 @@ protected:
     const Color *mStrokeColor;
     FLOAT mStrokeWidth;
     ID2D1StrokeStyle *mStrokeStyle;
-
 };
+
+//--------------------------- Text layout object ------------------------------
+class GlyphGetter : public BaseTextRenderer
+{
+public:
+    // Note:  to make sure that AddRef() and Release() work right, this should
+    //        be created with new(), NOT on the stack!. The new object will have
+    //        the refcount already at 1, so you will need to call Release().
+    GlyphGetter(float dpi, const std::vector<int>& utf16To8,
+                std::vector<TextLayout::Glyph> *glyphs)
+        : mDPI(dpi), mUTF16To8(utf16To8), mGlyphs(glyphs)
+    {}
+
+    ~GlyphGetter()
+    {
+    }
+
+    STDMETHOD(DrawGlyphRun)(void* drawContext,
+                            FLOAT baselineOriginX,
+                            FLOAT baselineOriginY,
+                            DWRITE_MEASURING_MODE measuringMode,
+                            DWRITE_GLYPH_RUN const* glyphRun,
+                            DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDesc,
+                            IUnknown* clientDrawingEffect)
+    {
+        mGlyphs->reserve(mGlyphs->size() + glyphRun->glyphCount);
+        FLOAT advance = FLOAT(0.0);
+        for (unsigned int i = 0;  i < glyphRun->glyphCount;  ++i) {
+            FLOAT x, y;
+            FLOAT dir = ((glyphRun->bidiLevel & 0x1) == 0) ? 1.0f : -1.0f;
+            FLOAT w, h;
+            if (!glyphRun->isSideways) {
+                x = baselineOriginX + advance;
+                y = 0.0f;
+                if (glyphRun->glyphOffsets) {
+                    x += dir * glyphRun->glyphOffsets[i].advanceOffset;
+                    y -= glyphRun->glyphOffsets[i].ascenderOffset;
+                }
+                w = glyphRun->glyphAdvances[i];
+                h = glyphRun->fontEmSize;
+            } else {
+                x = 0.0f;
+                y = baselineOriginY + advance;
+                if (glyphRun->glyphOffsets) {
+                    y += dir * glyphRun->glyphOffsets[i].advanceOffset;
+                    x -= glyphRun->glyphOffsets[i].ascenderOffset;
+                }
+                w = glyphRun->fontEmSize;
+                h = glyphRun->glyphAdvances[i];
+            }
+            advance += dir * glyphRun->glyphAdvances[i];
+            Rect r(PicaPt::fromPixels(x, 96.0f),
+                   PicaPt::fromPixels(y, 96.0f),
+                   PicaPt::fromPixels(w, 96.0f),
+                   PicaPt::fromPixels(h, 96.0f));
+            int utf8idx = mUTF16To8[glyphRunDesc->textPosition + glyphRunDesc->clusterMap[i]];
+            if (!mGlyphs->empty()) {
+                mGlyphs->back().indexOfNext = utf8idx;
+            }
+            mGlyphs->emplace_back(utf8idx, r);
+        }
+
+        // Note: this does NOT update .indexOfNext of the last glyph, because we do not know it.
+        //       The caller of IDWriteTextLayout::Draw() will need to update that.
+
+        return NOERROR;
+    }
+
+protected:
+    float mDPI;
+    const std::vector<int>& mUTF16To8;
+    std::vector<TextLayout::Glyph> *mGlyphs;
+};
+
+class TextObj : public TextLayout
+{
+public:
+    TextObj(const char* textUTF8, const Font& font, const Color& fill, const Color& stroke,
+            const PicaPt& strokeWidth, ID2D1StrokeStyle* strokeStyle, float dpi)
+        : mFont(font)
+    {
+        mDPI = dpi;
+        mFillColor = fill;
+        mStrokeColor = stroke;
+        mStrokeWidth = strokeWidth;
+        mStrokeStyle = strokeStyle;
+
+        // Convert from UTF8 -> WCHAR
+        const int kNullTerminated = -1;
+        int nCharsNeeded = MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, NULL, 0);
+        WCHAR* wtext = new WCHAR[nCharsNeeded + 1];  // nCharsNeeded includes \0, but +1 just in case
+        wtext[0] = '\0';  // in case conversion fails
+        MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, wtext, nCharsNeeded);
+
+        // Set alignment
+        auto* format = gFontMgr.get(font, dpi).format;
+        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR); // top
+
+        // Create the text layout (don't snap to pixel)
+        auto textOpts = D2D1_DRAW_TEXT_OPTIONS_NO_SNAP;
+        HRESULT err = Direct2D::instance().writeFactory()
+                              ->CreateTextLayout(wtext, nCharsNeeded - 1, // don't pass the \0
+                                                 format, 10000.0f, 10000.0f, &mLayout);
+        delete [] wtext;
+
+        // Snapping to pixel sometimes puts the text above the baseline
+        // (as desired) or on the pixel of the baseline (not desired).
+        // Do our own snapping so that we can get consistent results.
+        // This requires getting the origin of the line ourself.
+        if (mLayout) {
+            DWRITE_LINE_METRICS* lineMetrics = nullptr;
+            UINT32 nLines;
+            mLayout->GetLineMetrics(lineMetrics, 0, &nLines);
+            lineMetrics = new DWRITE_LINE_METRICS[nLines];
+            mLayout->GetLineMetrics(lineMetrics, nLines, &nLines);
+            mBaseline = PicaPt::fromPixels(float(lineMetrics->baseline), 96.0f);
+            delete[] lineMetrics;
+        }
+
+        // We might need to get the glyphs later. This will mean either
+        // copying the char* now (ugh) so we can use it later, or generating
+        // the utf16 -> utf8 mappings. Copying the char* will require two scans,
+        // so we're just going to make the mapping.
+        mUTF16To8 = utf8IndicesForUTF16Indices(textUTF8);
+        assert(mUTF16To8.size() == nCharsNeeded);  // might fail on invalid UTF-8
+    }
+
+    ~TextObj()
+    {
+        if (mLayout) {  // handle creation failure
+            mLayout->Release();
+        }
+    }
+
+    const Color* fillColor() const
+        { return (mFillColor.alpha() > 0.001f) ? &mFillColor : nullptr; }
+    const Color* strokeColor() const
+        { return (mStrokeColor.alpha() > 0.001f) ? &mStrokeColor : nullptr; }
+    const PicaPt& strokeWidth() const { return mStrokeWidth; }
+    ID2D1StrokeStyle* strokeStyle() const { return mStrokeStyle; }
+    const Font& font() const { return mFont; }
+
+    const PicaPt& baseline() const { return mBaseline; }
+
+    IDWriteTextLayout* layout() const { return mLayout; }
+
+    const TextMetrics& metrics() const override
+    {
+        if (!mMetricsValid) {
+            DWRITE_TEXT_METRICS winMetrics;
+            layout()->GetMetrics(&winMetrics);
+            mMetrics.width = PicaPt::fromPixels(winMetrics.width, 96.0f);
+            mMetrics.height = PicaPt::fromPixels(winMetrics.height, 96.0f);
+            if (mMetrics.width == PicaPt::kZero) {
+                mMetrics.height = PicaPt::kZero;
+            }
+            mMetrics.advanceX = mMetrics.width;
+            if (winMetrics.lineCount <= 1) {
+                mMetrics.advanceY = PicaPt::kZero;
+            } else {
+                mMetrics.advanceY = mMetrics.height;
+            }
+            mMetricsValid = true;
+        }
+        return mMetrics;
+    }
+
+    const std::vector<Glyph>& glyphs() const override
+    {
+        if (!mUTF16To8.empty() && mGlyphs.empty() && mLayout) {
+            auto *glyphGetter = new GlyphGetter(mDPI, mUTF16To8, &mGlyphs);
+            mLayout->Draw(nullptr, glyphGetter, 0.0f, 0.0f);
+            glyphGetter->Release();
+        }
+        // GlyphGetter cannot know when the end of the string has been
+        // reached, so we need to fixup .nextIndex for the last glyph.
+        if (!mGlyphs.empty()) {
+            mGlyphs.back().indexOfNext = mUTF16To8.back();
+        }
+        return mGlyphs;
+    }
+
+private:
+    const Font& mFont;
+
+    float mDPI;
+    Color mFillColor;
+    Color mStrokeColor;
+    PicaPt mStrokeWidth;
+    ID2D1StrokeStyle* mStrokeStyle;
+
+    IDWriteTextLayout* mLayout = nullptr;
+    PicaPt mBaseline = PicaPt::kZero;
+
+    mutable bool mMetricsValid = false;
+    mutable TextMetrics mMetrics;
+
+    std::vector<int> mUTF16To8;
+    mutable std::vector<TextLayout::Glyph> mGlyphs;
+};
+
 //-------------------------------- Image --------------------------------------
 class Direct2DImage : public Image
 {
@@ -654,7 +816,7 @@ protected:
     //       change the color each time?
     ID2D1SolidColorBrush *mSolidBrush = nullptr;
     // TODO: is it expensive to create a new stroke frequently?
-    ID2D1StrokeStyle *mStrokeStyle = nullptr;
+    mutable ID2D1StrokeStyle *mStrokeStyle = nullptr;
 
     bool mAntialias = true;
 
@@ -685,6 +847,15 @@ public:
     std::shared_ptr<BezierPath> createBezierPath() const override
     {
         return std::make_shared<Direct2DPath>();
+    }
+
+    std::shared_ptr<TextLayout> createTextLayout(
+                         const char *utf8, const Font& font, const Color& color,
+                         const PicaPt& width /*= PicaPt::kZero*/) const override
+    {
+        return std::make_shared<TextObj>(utf8, font, color,
+                                         Color::kTransparent, PicaPt::kZero, nullptr,
+                                         mDPI /*width,*/);
     }
 
 private:
@@ -977,28 +1148,34 @@ public:
     void drawText(const char* textUTF8, const Point& topLeft, const Font& font,
                   PaintMode mode) override
     {
-        TextObj t(textUTF8, font, mDPI);
+        drawText(textForCurrentStyle(textUTF8, font, mode), topLeft);
+    }
+
+    TextMetrics textMetrics(const char *textUTF8, const Font& font,
+                            PaintMode mode /*=kPaintFill*/) const override
+    {
+        return textForCurrentStyle(textUTF8, font, mode).metrics();
+    }
+
+    void drawText(const TextLayout& layout, const Point& topLeft) override
+    {
         auto& state = mStateStack.back();
         auto* gc = deviceContext();
+
+        // We know we have a TextObj, because that is the only thing
+        // we give out, so dynamic casting would be unnecessarily slow,
+        // which is not what you want in your drawing functions. But we
+        // do not want to make it a virtual function, either, otherwise
+        // it end up visible in the user-visible interface.
+        const TextObj *text = static_cast<const TextObj*>(&layout);
 
         // gc->DrawTextLayout() works fine for filled text but has
         // no support for outlines, so we need to use our own custom
         // text renderer :(
-        const Color* fillColor = nullptr;
-        const Color* strokeColor = nullptr;
-        FLOAT strokeWidth = 0.0f;
-        ID2D1StrokeStyle* strokeStyle = nullptr;
-        if (mode & kPaintFill) {
-            fillColor = &state.fillColor;
-        }
-        if (mode & kPaintStroke) {
-            strokeColor = &state.strokeColor;
-            strokeWidth = toD2D(state.strokeWidth);
-            strokeStyle = getStrokeStyle();
-        }
+        FLOAT strokeWidth = toD2D(text->strokeWidth());
         auto *textRenderer = new CustomTextRenderer(
-                                        state.transform, mSolidBrush, fillColor,
-                                        strokeColor, strokeWidth, strokeStyle);
+                                state.transform, mSolidBrush, text->fillColor(),
+                                text->strokeColor(), strokeWidth, text->strokeStyle());
         // We have chosen to snap the text to pixels ourself because Windows
         // is not consistent about it. The expectation of this function is that
         // topLeft.y + font.ascent = baselineY. This is the mathematical line;
@@ -1008,35 +1185,14 @@ public:
         // It seems that y + ascent != baseline in Direct2D, so we need to take
         // the actual baseline, and offset topLeft.y so that the result is that
         // the ascending pixels stop exactly at the mathematical baseline.
-        Font::Metrics fm = fontMetrics(font);
-        PicaPt actualBaseline = topLeft.y + t.baseline();
+        Font::Metrics fm = fontMetrics(text->font());
+        PicaPt actualBaseline = topLeft.y + text->baseline();
         PicaPt expectedBaseline = topLeft.y + fm.ascent;
         float offsetPx = actualBaseline.toPixels(mDPI) -
                          std::floor(expectedBaseline.toPixels(mDPI));
-        t.layout()->Draw(gc, textRenderer, toD2D(topLeft.x),
-                         toD2D(topLeft.y - PicaPt::fromPixels(offsetPx, mDPI)));
+        text->layout()->Draw(gc, textRenderer, toD2D(topLeft.x),
+                             toD2D(topLeft.y - PicaPt::fromPixels(offsetPx, mDPI)));
         textRenderer->Release();
-    }
-
-    Font::TextMetrics textMetrics(const char *textUTF8, const Font& font,
-                                  PaintMode mode) const override
-    {
-        TextObj t(textUTF8, font, mDPI);
-        DWRITE_TEXT_METRICS metrics;
-        t.layout()->GetMetrics(&metrics);
-        Font::TextMetrics tm;
-        tm.width = PicaPt::fromPixels(metrics.width, 96.0f);
-        tm.height = PicaPt::fromPixels(metrics.height, 96.0f);
-        if (tm.width == PicaPt::kZero) {
-            tm.height = PicaPt::kZero;
-        }
-        tm.advanceX = tm.width;
-        if (metrics.lineCount <= 1) {
-            tm.advanceY = PicaPt::kZero;
-        } else {
-            tm.advanceY = tm.height;
-        }
-        return tm;
     }
 
     void drawImage(std::shared_ptr<Image> image, const Rect& rect) override
@@ -1132,7 +1288,7 @@ protected:
         return mSolidBrush;
     }
 
-    ID2D1StrokeStyle* getStrokeStyle()
+    ID2D1StrokeStyle* getStrokeStyle() const
     {
         if (!mStrokeStyle) {
             auto *d2d = Direct2D::instance().factory();
@@ -1160,6 +1316,25 @@ protected:
         }
 
         return mStrokeStyle;
+    }
+
+    TextObj textForCurrentStyle(const char *textUTF8, const Font& font, PaintMode mode) const
+    {
+        auto& state = mStateStack.back();
+
+        Color fillColor = Color::kTransparent;
+        Color strokeColor = Color::kTransparent;
+        PicaPt strokeWidth = PicaPt::kZero;
+        ID2D1StrokeStyle* strokeStyle = nullptr;
+        if (mode & kPaintFill) {
+            fillColor = state.fillColor;
+        }
+        if (mode & kPaintStroke) {
+            strokeColor = state.strokeColor;
+            strokeWidth = state.strokeWidth;
+            strokeStyle = getStrokeStyle();
+        }
+        return TextObj(textUTF8, font, fillColor, strokeColor, strokeWidth, strokeStyle, mDPI);
     }
 
     void pushClipLayer(std::shared_ptr<BezierPath> path)

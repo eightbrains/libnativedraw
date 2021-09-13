@@ -88,6 +88,8 @@ PicaPt operator*(float lhs, const PicaPt& rhs);
 
 struct Point
 {
+    static const Point kZero;
+
     Point() : x(PicaPt(0.0f)), y(PicaPt(0.0f)) {}
     explicit Point(const PicaPt& x_, const PicaPt& y_)
         : x(x_), y(y_)
@@ -119,6 +121,8 @@ Point operator*(float lhs, const Point& rhs);
 
 struct Size
 {
+    static const Size kZero;
+
     Size() : width(PicaPt(0.0f)), height(PicaPt(0.0f)) {}
     Size(const PicaPt& w, const PicaPt& h)
         : width(w), height(h)
@@ -130,6 +134,8 @@ struct Size
 
 struct Rect
 {
+    static const Rect kZero;
+
     Rect()
         : x(PicaPt(0.0f)), y(PicaPt(0.0f))
         , width(PicaPt(0.0f)), height(PicaPt(0.0f))

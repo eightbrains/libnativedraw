@@ -81,6 +81,11 @@ Point operator*(float lhs, const Point& rhs)
     { return Point(lhs * rhs.x, lhs * rhs.y); }
 
 //-----------------------------------------------------------------------------
+const Point Point::kZero;
+const Rect Rect::kZero;
+const Size Size::kZero;
+
+//-----------------------------------------------------------------------------
 const Color Color::kTransparent(0.0f, 0.0f, 0.0f, 0.0f);
 const Color Color::kBlack(0.0f, 0.0f, 0.0f, 1.0f);
 const Color Color::kWhite(1.0f, 1.0f, 1.0f, 1.0f);

@@ -315,6 +315,11 @@ Font Font::fontWithPointSize(const PicaPt& pointSize) const
     return Font(family(), pointSize, style(), weight());
 }
 
+Font Font::fontWithScaledPointSize(float scaling) const
+{
+    return Font(family(), scaling * pointSize(), style(), weight());
+}
+
 Font Font::fontWithStyle(FontStyle style) const
 {
     auto w = weight();

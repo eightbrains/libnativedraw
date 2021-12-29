@@ -409,6 +409,7 @@ public:
     Metrics metrics(const DrawContext& dc) const;
 
     Font fontWithPointSize(const PicaPt& pointSize) const;
+    Font fontWithScaledPointSize(float scaling) const;
     Font fontWithStyle(FontStyle style) const;
     Font fontWithWeight(FontWeight w) const;
 

@@ -183,9 +183,9 @@ static ResourceManager<Font, NSFont*> gFontMgr(createFont, destroyFont);
 class TextObj : public TextLayout
 {
 public:
-    TextObj(const DrawContext& dc, const char *utf8, const Font& font,
-            const Color& color, const Color& outlineColor,
-            const PicaPt& strokeWidthPica, PaintMode mode)
+    TextObj(const DrawContext& dc, const char *utf8, const PicaPt& width,
+            const Font& font, const Color& color, const Color& outlineColor,
+            const PicaPt& strokeWidthPica, int alignment, PaintMode mode)
     {
         mLen = strlen(utf8);
         mDPI = 72.0f;
@@ -205,7 +205,16 @@ public:
         NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
         attr[NSFontAttributeName] = nsfont72;
         attr[NSForegroundColorAttributeName] = nsfill;
-        // attr[NSParagraphStyleAttributeName] = paragraphStyle;
+        if ((alignment & Alignment::kHorizMask) != Alignment::kLeft) {
+            NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+            
+            if ((alignment & Alignment::kHorizMask) == Alignment::kRight) {
+                [paragraphStyle setAlignment:NSTextAlignmentRight];
+            } else {
+                [paragraphStyle setAlignment:NSTextAlignmentCenter];
+            }
+            attr[NSParagraphStyleAttributeName] = paragraphStyle;
+        }
 
         if (mode & kPaintStroke) {
             Color strokeColor = outlineColor;
@@ -235,7 +244,8 @@ public:
                               attributes:attr];  // auto-releases on return
 
         mLayout = CTFramesetterCreateWithAttributedString((CFAttributedStringRef)nsstring);
-        auto r = CGRectMake(0, 0, 10000, 10000);
+        CGFloat w = (width == PicaPt::kZero ? 10000 : width.asFloat());
+        auto r = CGRectMake(0, 0, w, 10000);
         mPath = CGPathCreateWithRect(r, nullptr);
         mFrame = CTFramesetterCreateFrame(mLayout,
                                           CFRangeMake(0, 0), // entire string
@@ -405,6 +415,8 @@ private:
         Color fillColor;
         Color strokeColor;
         PicaPt strokeWidth;
+        EndCapStyle endCapStyle;
+        JoinStyle joinStyle;
     };
 
     std::vector<ContextState> mStateStack;
@@ -434,11 +446,12 @@ public:
 
     std::shared_ptr<TextLayout> createTextLayout(
                          const char *utf8, const Font& font, const Color& color,
-                         const PicaPt& width /*= PicaPt::kZero*/) const override
+                         const PicaPt& width /*= PicaPt::kZero*/,
+                         int alignment /*= Alignment::kAlign*/) const override
     {
-        return std::make_shared<TextObj>(*this, utf8, font, color,
+        return std::make_shared<TextObj>(*this, utf8, width, font, color,
                                          Color::kTransparent, PicaPt::kZero,
-                                         /*width,*/ kPaintFill);
+                                         alignment, kPaintFill);
     }
     
     void setNativeDC(void *nativeDC)
@@ -526,12 +539,26 @@ public:
             setFillColor(orig);
         }
     }
+
     void clearRect(const Rect& rect) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextClearRect(gc, CGRectMake(rect.x.asFloat(), rect.y.asFloat(),
                                           rect.width.asFloat(), rect.height.asFloat()));
     }
+
+    Color fillColor() const override { return mStateStack.back().fillColor; }
+
+    Color strokeColor() const override { return mStateStack.back().strokeColor; }
+
+    PicaPt strokeWidth() const override
+        { return mStateStack.back().strokeWidth; }
+
+    EndCapStyle strokeEndCap() const override
+        { return mStateStack.back().endCapStyle; }
+
+    JoinStyle strokeJoinStyle() const override
+        { return mStateStack.back().joinStyle; }
 
     void setFillColor(const Color& color) override
     {
@@ -567,6 +594,7 @@ public:
             case kEndCapSquare:
                 CGContextSetLineCap(gc, kCGLineCapSquare); break;
         }
+        mStateStack.back().endCapStyle = cap;
     }
 
     void setStrokeJoinStyle(JoinStyle join) override
@@ -580,6 +608,7 @@ public:
             case kJoinBevel:
                 CGContextSetLineJoin(gc, kCGLineJoinBevel); break;
         }
+        mStateStack.back().joinStyle = join;
     }
 
     void setStrokeDashes(const std::vector<PicaPt> lengths, const PicaPt& offset) override
@@ -736,10 +765,9 @@ public:
     TextObj textLayoutForCurrent(const char *textUTF8, const Font& font,
                                  PaintMode mode) const
     {
-        return TextObj(*this, textUTF8, font, mStateStack.back().fillColor,
-                       mStateStack.back().strokeColor,
-                       mStateStack.back().strokeWidth,
-                       mode);
+        return TextObj(*this, textUTF8, PicaPt::kZero, font,
+                       fillColor(), strokeColor(), strokeWidth(),
+                       Alignment::kLeft, mode);
     }
 
     Color pixelAt(int x, int y) override

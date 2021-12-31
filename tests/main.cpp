@@ -1204,6 +1204,96 @@ public:
     }
 };
 
+class GettersTest : public BitmapTest
+{
+public:
+    GettersTest() : BitmapTest("getters", 1, 1) {}
+
+    std::string run() override
+    {
+        // Fill the background so that if we have an error at least we get
+        // consistent values for the fill, even though they are essentially
+        // meaningless.
+        mBitmap->fill(mBGColor);
+
+        Color fg1(1.0f, 0.0f, 0.0f, 1.0f);
+        Color fg2(0.0f, 1.0f, 0.0f, 1.0f);
+        Color strokeColor1(1.0f, 0.0f, 1.0f, 1.0f);
+        Color strokeColor2(0.0f, 1.0f, 1.0f, 1.0f);
+        PicaPt strokeWidth1(1);
+        PicaPt strokeWidth2(2);
+        auto endCap1 = kEndCapRound;
+        auto endCap2 = kEndCapSquare;
+        auto join1 = kJoinRound;
+        auto join2 = kJoinBevel;
+
+        mBitmap->beginDraw();
+
+        mBitmap->setFillColor(fg1);
+        mBitmap->setStrokeColor(strokeColor1);
+        mBitmap->setStrokeWidth(strokeWidth1);
+        mBitmap->setStrokeEndCap(endCap1);
+        mBitmap->setStrokeJoinStyle(join1);
+        auto err = verifyGetters(fg1, strokeColor1, strokeWidth1, endCap1, join1);
+        if (!err.empty()) {
+            return err;
+        }
+
+        mBitmap->save();
+        mBitmap->setFillColor(fg2);
+        mBitmap->setStrokeColor(strokeColor2);
+        mBitmap->setStrokeWidth(strokeWidth2);
+        mBitmap->setStrokeEndCap(endCap2);
+        mBitmap->setStrokeJoinStyle(join2);
+        err = verifyGetters(fg2, strokeColor2, strokeWidth2, endCap2, join2);
+        if (!err.empty()) {
+            return err;
+        }
+
+        mBitmap->restore();
+        err = verifyGetters(fg1, strokeColor1, strokeWidth1, endCap1, join1);
+        if (!err.empty()) {
+            return err;
+        }
+        
+        mBitmap->endDraw();
+
+        return "";
+    }
+
+    std::string verifyGetters(const Color& fg, const Color& strokeColor,
+                              const PicaPt& strokeWidth, EndCapStyle endCap,
+                              JoinStyle join)
+    {
+        if (mBitmap->fillColor().toRGBA() != fg.toRGBA()) {
+            return createColorError("fillColor()", fg, mBitmap->fillColor());
+        }
+        if (mBitmap->strokeColor().toRGBA() != strokeColor.toRGBA()) {
+            return createColorError("strokeColor()", strokeColor,
+                                    mBitmap->strokeColor());
+        }
+        if (mBitmap->strokeWidth() != strokeWidth) {
+            std::stringstream err;
+            err << "strokeWidth(): expected " << strokeWidth.asFloat()
+                << " pt but got " << mBitmap->strokeWidth().asFloat() << " pt";
+            return err.str();
+        }
+        if (mBitmap->strokeEndCap() != endCap) {
+            std::stringstream err;
+            err << "endCapStyle(): expected " << int(endCap) << " but got "
+                << int(mBitmap->strokeEndCap());
+            return err.str();
+        }
+        if (mBitmap->strokeJoinStyle() != join) {
+            std::stringstream err;
+            err << "joinStyle(): expected " << int(join) << " but got "
+                << int(mBitmap->strokeJoinStyle());
+            return err.str();
+        }
+        return "";
+    }
+};
+
 class FontTest : public BitmapTest
 {
     static constexpr int kMargin = 1;
@@ -1626,7 +1716,8 @@ public:
 
         float fontSize = 12.0f;
         float dpi = 72.0f;
-        Font font("Arial", PicaPt::fromPixels(fontSize, dpi));
+        auto fontSizePt = PicaPt::fromPixels(fontSize, dpi);
+        Font font("Arial", fontSizePt);
 
         // Make sure we don't crash or get bogus numbers for empty string
         auto tm = mBitmap->textMetrics("", font, kPaintFill);
@@ -1661,6 +1752,27 @@ public:
             err << fontSize << "pt \"Ag\" has incorrect size: ("
                 << tm.width.toPixels(dpi) << ", " << tm.height.toPixels(dpi) << ")";
             return err.str();
+        }
+
+        const char *text = "This is some long text that should wrap";
+        auto noWrap = mBitmap->createTextLayout(text, font, Color::kWhite)->metrics();
+        auto wrappedWidth = 0.6f * noWrap.width;
+        auto wrap = mBitmap->createTextLayout(text, font, Color::kWhite,
+                                              wrappedWidth)->metrics();
+        if (wrap.width >= wrappedWidth) {
+            std::stringstream err;
+            err << "Text did not wrap correctly: expected width <= "
+                << wrappedWidth.toPixels(dpi) << " px, but got "
+                << wrap.width.toPixels(dpi) << " px";
+            return err.str();
+        }
+        if (wrap.height <= 1.5f * fontSizePt || wrap.height >= 2.25f * fontSizePt) {
+            std::stringstream err;
+            err << "Wrapped text has poor line spacing: expected height of "
+                << "about " << 2.0f * fontSize << " px but got "
+                << wrap.height.toPixels(dpi) << " px" << std::endl;
+                
+
         }
 
         return "";
@@ -1960,6 +2072,7 @@ int main(int argc, char *argv[])
         std::make_shared<ClipRectTest>(),
         std::make_shared<ClipPathTest>(),
         std::make_shared<SaveRestoreTest>(),
+        std::make_shared<GettersTest>(),
         std::make_shared<FontTest>("Arial", 20),
         std::make_shared<FontTest>("Georgia", 20),
         // std::make_shared<FontTest>("Courier New", 20),

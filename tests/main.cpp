@@ -1211,6 +1211,8 @@ public:
 
     std::string run() override
     {
+        mBitmap->beginDraw();
+
         // Fill the background so that if we have an error at least we get
         // consistent values for the fill, even though they are essentially
         // meaningless.
@@ -1226,8 +1228,6 @@ public:
         auto endCap2 = kEndCapSquare;
         auto join1 = kJoinRound;
         auto join2 = kJoinBevel;
-
-        mBitmap->beginDraw();
 
         mBitmap->setFillColor(fg1);
         mBitmap->setStrokeColor(strokeColor1);
@@ -1257,7 +1257,6 @@ public:
         }
         
         mBitmap->endDraw();
-
         return "";
     }
 

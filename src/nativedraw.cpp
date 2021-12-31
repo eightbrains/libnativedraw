@@ -372,7 +372,7 @@ Point TextLayout::pointAtIndex(long index) const
     // search), since this will be used often in drawing for the cursor
     // and selection.
     bool isFirstIteration = true;
-    int lowerIdx = 0, idx = glyphs.size() / 2, upperIdx = int(glyphs.size() - 1);
+    int lowerIdx = 0, idx = int(glyphs.size() / 2), upperIdx = int(glyphs.size() - 1);
     while ((lowerIdx != idx && upperIdx != idx) || isFirstIteration) {
         if (index < glyphs[idx].index) {
             upperIdx = idx;

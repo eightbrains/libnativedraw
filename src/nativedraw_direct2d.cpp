@@ -634,7 +634,8 @@ class TextObj : public TextLayout
 {
 public:
     TextObj(const char* textUTF8, const Font& font, const Color& fill, const Color& stroke,
-            const PicaPt& strokeWidth, ID2D1StrokeStyle* strokeStyle, float dpi)
+            const PicaPt& strokeWidth, ID2D1StrokeStyle* strokeStyle, float dpi,
+            const PicaPt& width, int alignment)
         : mFont(font)
     {
         mDPI = dpi;
@@ -652,14 +653,28 @@ public:
 
         // Set alignment
         auto* format = gFontMgr.get(font, dpi).format;
-        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        switch (alignment & Alignment::kHorizMask) {
+            case Alignment::kLeft:
+                format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                break;
+            case Alignment::kHCenter:
+                format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                break;
+            case Alignment::kRight:
+                format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                break;
+        }
         format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR); // top
 
         // Create the text layout (don't snap to pixel)
+        float w = 10000.0f;
+        if (width > PicaPt::kZero) {
+            w = toD2D(width);
+        }
         auto textOpts = D2D1_DRAW_TEXT_OPTIONS_NO_SNAP;
         HRESULT err = Direct2D::instance().writeFactory()
                               ->CreateTextLayout(wtext, nCharsNeeded - 1, // don't pass the \0
-                                                 format, 10000.0f, 10000.0f, &mLayout);
+                                                 format, w, 10000.0f, &mLayout);
         delete [] wtext;
 
         // Snapping to pixel sometimes puts the text above the baseline
@@ -851,11 +866,12 @@ public:
 
     std::shared_ptr<TextLayout> createTextLayout(
                          const char *utf8, const Font& font, const Color& color,
-                         const PicaPt& width /*= PicaPt::kZero*/) const override
+                         const PicaPt& width /*= PicaPt::kZero*/,
+                         int alignment /*= Alignment::kLeft*/) const override
     {
         return std::make_shared<TextObj>(utf8, font, color,
                                          Color::kTransparent, PicaPt::kZero, nullptr,
-                                         mDPI /*width,*/);
+                                         mDPI, width, alignment);
     }
 
 private:
@@ -1018,6 +1034,45 @@ public:
         assert(false);
         // TODO: this is not correct!
         deviceContext()->Clear(NULL);
+    }
+
+    Color fillColor() const override
+    {
+        return mStateStack.back().fillColor;
+    }
+
+    Color strokeColor() const override
+    {
+        return mStateStack.back().strokeColor;
+    }
+
+    PicaPt strokeWidth() const override
+    {
+        return mStateStack.back().strokeWidth;
+    }
+
+    EndCapStyle strokeEndCap() const override
+    {
+        switch (mStateStack.back().strokeProperties.endCap) {
+            case D2D1_CAP_STYLE_FLAT:
+                return kEndCapButt;
+            case D2D1_CAP_STYLE_ROUND:
+                return kEndCapRound;
+            case D2D1_CAP_STYLE_SQUARE:
+                return kEndCapSquare;
+        }
+    }
+
+    JoinStyle strokeJoinStyle() const override
+    {
+        switch (mStateStack.back().strokeProperties.lineJoin) {
+            case D2D1_LINE_JOIN_MITER_OR_BEVEL:
+                return kJoinMiter;
+            case D2D1_LINE_JOIN_ROUND:
+                return kJoinRound;
+            case D2D1_LINE_JOIN_BEVEL:
+                return kJoinBevel;
+        }
     }
 
     void setFillColor(const Color& color) override
@@ -1334,7 +1389,8 @@ protected:
             strokeWidth = state.strokeWidth;
             strokeStyle = getStrokeStyle();
         }
-        return TextObj(textUTF8, font, fillColor, strokeColor, strokeWidth, strokeStyle, mDPI);
+        return TextObj(textUTF8, font, fillColor, strokeColor, strokeWidth, strokeStyle, mDPI,
+                       PicaPt::kZero, Alignment::kLeft);
     }
 
     void pushClipLayer(std::shared_ptr<BezierPath> path)

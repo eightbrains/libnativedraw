@@ -333,6 +333,11 @@ struct Alignment {
     static const int kVertMask =  0b11110000;
 };
 
+struct TextWrapMode {
+    static const int kNoWrap = 0;
+    static const int kWordWrap = (1 << 0);
+};
+
 // Design note:
 // Q: Why not use enum classes?
 // A: We want to be able to export to straight C easily. For C++ they are still
@@ -541,7 +546,13 @@ public:
                                                       float dpi = 72.0f) = 0;
 
     virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
-    virtual std::shared_ptr<TextLayout> createTextLayout(const char *utf8, const Font& font, const Color& color, const PicaPt& width = PicaPt::kZero) const = 0;
+    /// Creates a text layout. If width is non-zero, the text will wrap to the
+    /// width, and the horizontal alignment will be applied. A width of zero
+    /// is a non-breaking line of left-aligned text.
+    virtual std::shared_ptr<TextLayout> createTextLayout(
+                const char *utf8, const Font& font, const Color& color,
+                const PicaPt& width = PicaPt::kZero,
+                int alignment = Alignment::kLeft) const = 0;
 
     int width() const { return mWidth; }
     int height() const { return mHeight; }
@@ -563,12 +574,17 @@ public:
     virtual void scale(float sx, float sy) = 0;
 
     virtual void setFillColor(const Color& color) = 0;
-
     virtual void setStrokeColor(const Color& color) = 0;
     virtual void setStrokeWidth(const PicaPt& w) = 0;
     virtual void setStrokeEndCap(EndCapStyle cap) = 0;
     virtual void setStrokeJoinStyle(JoinStyle join) = 0;
     virtual void setStrokeDashes(const std::vector<PicaPt> lengths, const PicaPt& offset) = 0;
+
+    virtual Color fillColor() const = 0;
+    virtual Color strokeColor() const = 0;
+    virtual PicaPt strokeWidth() const = 0;
+    virtual EndCapStyle strokeEndCap() const = 0;
+    virtual JoinStyle strokeJoinStyle() const = 0;
 
     // Sets the entire context to 'color'. For opaque colors this is the
     // same as drawing a filled rectangle the same size as the context
@@ -595,7 +611,7 @@ public:
     // Draws text within the provided rectangle. Use the values from Alignment
     // in the alignment parameter (e.g. Alignment::kLeft | Alignment::kVCenter).
     void drawText(const char *textUTF8, const Rect& r, int alignment,
-                  const Font& font, PaintMode mode);
+                  int textWrapMode, const Font& font, PaintMode mode);
 
     // Draws the text. If you need a layout, you should use this function to
     // draw it, as it avoid the need to re-create the layout inside the other

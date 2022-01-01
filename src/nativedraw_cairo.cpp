@@ -250,7 +250,7 @@ public:
     TextObj(const char *utf8, cairo_t *cairoContext, float dpi, const Font& font,
             const Color& fillColor,
             const Color& strokeColor, const PicaPt& strokeWidth,
-            const PicaPt& width = PicaPt::kZero)
+            const PicaPt& width, int alignment)
     {
         static const int kNullTerminated = -1;
 
@@ -269,6 +269,17 @@ public:
 
         if (width > PicaPt::kZero) {
             pango_layout_set_width(mLayout, int(std::ceil(width.toPixels(dpi) * PANGO_SCALE)));
+        }
+        switch (alignment & Alignment::kHorizMask) {
+            case Alignment::kLeft:
+                pango_layout_set_alignment(mLayout, PANGO_ALIGN_LEFT);
+                break;
+            case Alignment::kHCenter:
+                pango_layout_set_alignment(mLayout, PANGO_ALIGN_CENTER);
+                break;
+            case Alignment::kRight:
+                pango_layout_set_alignment(mLayout, PANGO_ALIGN_RIGHT);
+                break;
         }
     }
 
@@ -430,12 +441,15 @@ public:
         return std::make_shared<CairoPath>();
     }
 
-    std::shared_ptr<TextLayout> createTextLayout(const char *utf8, const Font& font, const Color& color, const PicaPt& width = PicaPt::kZero) const override
+    std::shared_ptr<TextLayout> createTextLayout(
+                const char *utf8, const Font& font, const Color& color,
+                const PicaPt& width = PicaPt::kZero,
+                int alignment = Alignment::kLeft) const override
     {
         auto *gc = cairoContext();
         return std::make_shared<TextObj>(utf8, gc, dpi(), font, color,
                                          Color::kTransparent, PicaPt::kZero,
-                                         width);
+                                         width, alignment);
     }
 
     void beginDraw() override
@@ -492,6 +506,31 @@ public:
         }
     }
 
+    Color fillColor() const
+    {
+        return mStateStack.back().fillColor;
+    }
+
+    Color strokeColor() const
+    {
+        return mStateStack.back().strokeColor;
+    }
+
+    PicaPt strokeWidth() const
+    {
+        return mStateStack.back().strokeWidth;
+    }
+
+    EndCapStyle strokeEndCap() const
+    {
+        return mStateStack.back().endCapStyle;
+    }
+
+    JoinStyle strokeJoinStyle() const
+    {
+        return mStateStack.back().joinStyle;
+    }
+
     void setFillColor(const Color& color) override
     {
         mStateStack.back().fillColor = color;
@@ -510,6 +549,7 @@ public:
 
     void setStrokeEndCap(EndCapStyle cap) override
     {
+        mStateStack.back().endCapStyle = cap;
         switch(cap) {
             case kEndCapButt:
                 cairo_set_line_cap(cairoContext(), CAIRO_LINE_CAP_BUTT);
@@ -525,6 +565,7 @@ public:
 
     void setStrokeJoinStyle(JoinStyle join) override
     {
+        mStateStack.back().joinStyle = join;
         switch(join) {
             case kJoinMiter:
                 cairo_set_line_join(cairoContext(), CAIRO_LINE_JOIN_MITER);
@@ -703,11 +744,13 @@ public:
                 // cap-height is for flat letters (H,I not A,O which may extend
                 // above)
                 TextObj caps("H", gc, mDPI, font, Color::kBlack,
-                             Color::kTransparent, PicaPt::kZero);
+                             Color::kTransparent, PicaPt::kZero,
+                             PicaPt::kZero, Alignment::kLeft);
                 fontInfo->metrics.capHeight = caps.inkExtents().height;
                 // x-height is obviously height of "x"
                 TextObj x("x", gc, mDPI, font, Color::kBlack,
-                          Color::kTransparent, PicaPt::kZero);
+                          Color::kTransparent, PicaPt::kZero,
+                          PicaPt::kZero, Alignment::kLeft);
                 fontInfo->metrics.xHeight = x.inkExtents().height;
             } else {
                 fontInfo->metrics.ascent = PicaPt(0);
@@ -753,13 +796,16 @@ protected:
         switch(mode) {
             case kPaintStroke:
                 return TextObj(textUTF8, gc, dpi(), font, Color::kTransparent,
-                               state.strokeColor, state.strokeWidth);
+                               state.strokeColor, state.strokeWidth,
+                               PicaPt::kZero, Alignment::kLeft);
             case kPaintFill:
                 return TextObj(textUTF8, gc, dpi(), font, state.fillColor,
-                               Color::kTransparent, PicaPt::kZero);
+                               Color::kTransparent, PicaPt::kZero,
+                               PicaPt::kZero, Alignment::kLeft);
             case kPaintStrokeAndFill:
                 return TextObj(textUTF8, gc, dpi(), font, state.fillColor,
-                               state.strokeColor, state.strokeWidth);
+                               state.strokeColor, state.strokeWidth,
+                               PicaPt::kZero, Alignment::kLeft);
         }
     }
 
@@ -802,6 +848,8 @@ private:
         Color fillColor;
         Color strokeColor;
         PicaPt strokeWidth;
+        EndCapStyle endCapStyle;
+        JoinStyle joinStyle;
     };
     std::vector<State> mStateStack;
 };

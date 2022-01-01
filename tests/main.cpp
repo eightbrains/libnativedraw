@@ -1229,12 +1229,16 @@ public:
         auto join1 = kJoinRound;
         auto join2 = kJoinBevel;
 
+        // Verify defaults
+        auto err = verifyGetters(Color::kBlack, Color::kBlack, PicaPt(1),
+                                 kEndCapButt, kJoinMiter);
+
         mBitmap->setFillColor(fg1);
         mBitmap->setStrokeColor(strokeColor1);
         mBitmap->setStrokeWidth(strokeWidth1);
         mBitmap->setStrokeEndCap(endCap1);
         mBitmap->setStrokeJoinStyle(join1);
-        auto err = verifyGetters(fg1, strokeColor1, strokeWidth1, endCap1, join1);
+        err = verifyGetters(fg1, strokeColor1, strokeWidth1, endCap1, join1);
         if (!err.empty()) {
             return err;
         }

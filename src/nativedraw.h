@@ -186,9 +186,12 @@ struct Rect
     PicaPt maxY() const { return y + height; }
 
     void translate(const PicaPt& dx, const PicaPt& dy) { x += dx; y += dy; }
+    void translate(const Point& offset) { x += offset.x; y += offset.y; }
 
     Rect translated(const PicaPt& dx, const PicaPt& dy) const
         { Rect r(*this); r.translate(dx, dy); return r; }
+    Rect translated(const Point& offset) const
+        { Rect r(*this); r.translate(offset); return r; }
 
     void inset(const PicaPt& dx, const PicaPt& dy) {
         x += dx;  y += dy;
@@ -200,6 +203,15 @@ struct Rect
         r.inset(dx, dy);
         return r;
     }
+
+    Rect operator+(const Point& rhs) const
+        { return Rect(x + rhs.x, y + rhs.y, width, height); }
+    Rect& operator+=(const Point& rhs)
+        { x += rhs.x; y += rhs.y; return *this; }
+    Rect operator-(const Point& rhs) const
+        { return Rect(x - rhs.x, y - rhs.y, width, height); }
+    Rect& operator-=(const Point& rhs)
+        { x -= rhs.x; y -= rhs.y; return *this; }
 
     PicaPt x;
     PicaPt y;
@@ -222,6 +234,14 @@ public:
     static const Color kGreen;
     static const Color kBlue;
     static const Color kPurple;
+
+    /// This represents the default text foreground color. It exists
+    /// for higher-level user interface libraries that use Text, since
+    /// you might want to create a Text before you know what the
+    /// default color is, or if the default color changes. Passing this
+    /// color to a drawing function result in an undefined color being
+    /// used.
+    static const Color kTextDefault;
 
 public:
     Color() {
@@ -322,6 +342,13 @@ class DrawContext;
 //    call site, but also permits ORing. The tradeoff is that the type
 //    information at the definition (int) is not very helpful.
 struct Alignment {
+    /// If alignment is exactly kNone, no adjustment will be made to the
+    /// upper-left drawing point, which may result in the top of the glyph not
+    /// aligning with the top of the drawing rectangle, usually due to the font's
+    /// ascent being larger than the cap-height. kNone is used internally by the
+    /// DrawContext::drawText() function that takes no alignment. Generally
+    /// you will get better results with (kLeft | kTop).
+    static const int kNone = 0;
     static const int kLeft = (1 << 0);
     static const int kHCenter = (1 << 1);
     static const int kRight = (1 << 2);
@@ -333,9 +360,9 @@ struct Alignment {
     static const int kVertMask =  0b11110000;
 };
 
-struct TextWrapMode {
-    static const int kNoWrap = 0;
-    static const int kWordWrap = (1 << 0);
+enum TextWrapping {
+    kWrapNone,
+    kWrapWord
 };
 
 // Design note:
@@ -411,6 +438,11 @@ public:
     FontWeight weight() const;
     Font& setWeight(FontWeight w);
 
+    /// Convenience function to set (or unset) bold, leaving italic alone.
+    Font& setBold(bool isBold);
+    /// Convenience function to set (or unset) italic, leaving bold/weight alone.
+    Font& setItalic(bool isItalic);
+
     Metrics metrics(const DrawContext& dc) const;
 
     Font fontWithPointSize(const PicaPt& pointSize) const;
@@ -423,6 +455,110 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> mImpl;
+};
+
+enum UnderlineStyle
+{
+    kUnderlineNone = 0,
+    kUnderlineSingle,
+    kUnderlineDouble,
+    kUnderlineDotted,
+    kUnderlineWavy
+};
+
+template <typename T>
+struct TextAttr
+{
+    T value;     // the value of the attribute, only valid if isSet is true
+    bool isSet;  // true if the user specifically set it, false if it is unset (default value)
+
+    TextAttr() : value(T()), isSet(false) {}
+    explicit TextAttr(const T& val) : value(val), isSet(true) {}
+
+    TextAttr& operator=(const T& newVal) {
+        value = newVal;
+        isSet = true;
+        return *this;
+    }
+    TextAttr& operator=(const TextAttr& rhs) {
+        if (rhs.isSet) {
+            value = rhs.value;
+            isSet = true;
+        } else if (isSet) {
+            /* leave current value (our isSet is true but theirs is false) */
+        } else { /* leave current value (isSet = false) */}
+        return *this;
+    }
+};
+typedef TextAttr<bool> BoolTextAttr;
+typedef TextAttr<PicaPt> PointTextAttr;
+typedef TextAttr<Color> ColorTextAttr;
+typedef TextAttr<Font> FontTextAttr;
+typedef TextAttr<UnderlineStyle> UnderlineStyleTextAttr;
+
+struct TextRun
+{
+    PointTextAttr pointSize;  /// overrides font's point size setting, if set
+    BoolTextAttr bold;        /// overrides font's bold setting, if set
+    BoolTextAttr italic;      /// overrides font's italic setting, if set
+    FontTextAttr font;
+    ColorTextAttr backgroundColor;
+    ColorTextAttr color;
+    ColorTextAttr underlineColor;
+    ColorTextAttr strikethroughColor;
+    ColorTextAttr outlineColor;
+    PointTextAttr outlineStrokeWidth;
+    UnderlineStyleTextAttr underlineStyle;
+    BoolTextAttr strikethrough;
+    PointTextAttr characterSpacing;
+
+    int startIndex = 0;
+    int length = -1;
+};
+
+/// Rich text class, similar to NSAttributedText. The text is not drawable
+/// directly, as text layout may be different depending on the DPI of the
+/// DrawContext (glyphs and kerning may be different, especially at low point
+/// sizes, which sometimes use custom glyphs). To draw text, create a
+/// TextLayout from the DrawContext. Attributes like are unset by default.
+/// Text is assumed to be UTF-8. The start index and length are indices into
+/// the text (NOT characters or code points), and are assumed to be on valid
+/// boundaries.
+class Text
+{
+public:
+    Text();
+    Text(const std::string& utf8, const Font& font, const Color& fgColor);
+
+    const std::string& text() const;
+
+    /// Overrides the point size of the font (convenience)
+    Text& setPointSize(const PicaPt& pointSize, int start = 0, int len = -1);
+    /// Sets bold, overriding the weight of the font (convenience)
+    Text& setBold(int start = 0, int len = -1);
+    /// Sets italic style, override the italicness of the font (convenience)
+    Text& setItalic(int start = 0, int len = -1);
+    Text& setFont(const Font& font, int start = 0, int len = -1);
+    Text& setBackgroundColor(const Color& bg, int start = 0, int len = -1);
+    Text& setColor(const Color& fg, int start = 0, int len = -1);
+    Text& setUnderlineStyle(UnderlineStyle style, int start = 0, int len = -1);
+    Text& setUnderlineColor(const Color& c, int start = 0, int len = -1);
+    Text& setStrikethrough(int start = 0, int len = -1);
+    Text& setStrikethroughColor(const Color& c, int start = 0, int len = -1);
+    //Text& setCharacterSpacing(const PicaPt& spacing, int start = 0, int len = -1);
+    Text& setOutlineStrokeWidth(const PicaPt& width, int start = 0, int len = -1);
+    Text& setOutlineColor(const Color& c, int start = 0, int len = -1);
+    Text& setTextRun(const TextRun& run);
+    Text& setTextRuns(const std::vector<TextRun>& runs);
+
+    const TextRun& runAt(int index) const;
+    const std::vector<TextRun>& runs() const;
+
+private:
+    std::string mText;
+    std::vector<TextRun> mRuns;
+
+    int runIndexFor(int index) const;
 };
 
 struct TextMetrics
@@ -441,11 +577,12 @@ public:
         long index = -1;  // index into the original string
         long indexOfNext = 0;  // where the next glyph starts in string;
                                // this will be str.size() for last glyph
+        int line = 0;
         Rect frame = Rect(PicaPt::kZero, PicaPt::kZero,
                           PicaPt::kZero, PicaPt::kZero);
 
         Glyph() {}
-        Glyph(long i, const Rect& r) : index(i), frame(r) {}
+        Glyph(long i, int ln, const Rect& r) : index(i), line(ln), frame(r) {}
     };
 
     virtual ~TextLayout() {}
@@ -454,6 +591,10 @@ public:
 
     virtual const TextMetrics& metrics() const = 0;
     virtual const std::vector<Glyph>& glyphs() const = 0;
+
+protected:
+    Point calcOffsetForAlignment(int alignment, const Size& size,
+                                 const Font::Metrics& firstLineMetrics);
 };
 
 enum JoinStyle { kJoinMiter = 0, kJoinRound = 1, kJoinBevel = 2 };
@@ -547,12 +688,27 @@ public:
 
     virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
     /// Creates a text layout. If width is non-zero, the text will wrap to the
-    /// width, and the horizontal alignment will be applied. A width of zero
-    /// is a non-breaking line of left-aligned text.
+    /// width, and the horizontal alignment will be applied. If height is non-zero
+    /// the vertical alignment will be applied. Note that, despite the default
+    /// argument (which exists for non-zero size), a zero-component is the same
+    /// as specifying Alignment::kZero for that component.
     virtual std::shared_ptr<TextLayout> createTextLayout(
                 const char *utf8, const Font& font, const Color& color,
-                const PicaPt& width = PicaPt::kZero,
-                int alignment = Alignment::kLeft) const = 0;
+                const Size& size = Size::kZero,
+                int alignment = Alignment::kLeft | Alignment::kTop,
+                TextWrapping wrap = kWrapWord) const = 0;
+    virtual std::shared_ptr<TextLayout> createTextLayout(
+                const Text& t,
+                const Size& size = Size::kZero,
+                int alignment = Alignment::kLeft | Alignment::kTop,
+                TextWrapping wrap = kWrapWord) const = 0;
+    virtual std::shared_ptr<TextLayout> createTextLayout(
+                const Text& t,
+                const Font& defaultReplacementFont,
+                const Color& defaultReplacementColor,
+                const Size& size = Size::kZero,
+                int alignment = Alignment::kLeft | Alignment::kTop,
+                TextWrapping wrap = kWrapWord) const = 0;
 
     int width() const { return mWidth; }
     int height() const { return mHeight; }
@@ -606,15 +762,19 @@ public:
     // be made for readability, and platforms may choose to to place the
     // baseline so that in the above example the ascent actually ends at
     // pixel 16.
+    // Note: this recreates a TextLayout every call, so do not use when drawing
+    //       repeatedly, such as when drawing the contents of a widget.
     virtual void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode) = 0;
 
     // Draws text within the provided rectangle. Use the values from Alignment
     // in the alignment parameter (e.g. Alignment::kLeft | Alignment::kVCenter).
+    // Note: this recreates a TextLayout every call, so do not use when drawing
+    //       repeatedly, such as when drawing the contents of a widget.
     void drawText(const char *textUTF8, const Rect& r, int alignment,
-                  int textWrapMode, const Font& font, PaintMode mode);
+                  TextWrapping wrap, const Font& font, PaintMode mode);
 
     // Draws the text. If you need a layout, you should use this function to
-    // draw it, as it avoid the need to re-create the layout inside the other
+    // draw it, as it avoids the need to re-create the layout inside the other
     // text-drawing functions. Only draw using the same context that created
     // the text, except on macOS/iOS which use transient contexts (however, the
     // DPI should be the same as the original context, which it normally is,

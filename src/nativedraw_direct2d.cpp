@@ -867,7 +867,7 @@ public:
     std::shared_ptr<TextLayout> createTextLayout(
                          const char *utf8, const Font& font, const Color& color,
                          const PicaPt& width /*= PicaPt::kZero*/,
-                         int alignment /*= Alignment::kLeft*/) const override
+                         int alignment /*= Alignment::kLeft | Alignment::kTop*/) const override
     {
         return std::make_shared<TextObj>(utf8, font, color,
                                          Color::kTransparent, PicaPt::kZero, nullptr,

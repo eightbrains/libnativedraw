@@ -1715,7 +1715,9 @@ public:
         // Fill the background so that if we have an error at least we get
         // consistent values for the fill, even though they are essentially
         // meaningless.
+        mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
+        mBitmap->endDraw();
 
         float fontSize = 12.0f;
         float dpi = 72.0f;
@@ -1761,7 +1763,7 @@ public:
         auto noWrap = mBitmap->createTextLayout(text, font, Color::kWhite)->metrics();
         auto wrappedWidth = 0.6f * noWrap.width;
         auto wrap = mBitmap->createTextLayout(text, font, Color::kWhite,
-                                              wrappedWidth)->metrics();
+                                              Size(wrappedWidth, PicaPt::kZero))->metrics();
         if (wrap.width >= wrappedWidth) {
             std::stringstream err;
             err << "Text did not wrap correctly: expected width <= "
@@ -1769,16 +1771,848 @@ public:
                 << wrap.width.toPixels(dpi) << " px";
             return err.str();
         }
-        if (wrap.height <= 1.5f * fontSizePt || wrap.height >= 2.25f * fontSizePt) {
+        if (wrap.height <= 1.5f * fontSizePt || wrap.height >= 2.5f * fontSizePt) {
             std::stringstream err;
             err << "Wrapped text has poor line spacing: expected height of "
                 << "about " << 2.0f * fontSize << " px but got "
                 << wrap.height.toPixels(dpi) << " px" << std::endl;
-                
-
+            return err.str();
         }
 
         return "";
+    }
+};
+
+class TextAlignmentTest : public BitmapTest
+{
+    static constexpr int kPointSize = 13;
+public:
+    TextAlignmentTest() : BitmapTest("text alignment", 1.75 * kPointSize, 1.75 * kPointSize) {}
+
+    std::string run() override
+    {
+        float dpi = mBitmap->dpi();
+        auto fontSizePt = PicaPt::fromPixels(kPointSize, dpi);
+        Font font("Arial", fontSizePt);
+        Color fg = Color::kWhite;
+        auto metrics = mBitmap->fontMetrics(font);
+
+        const char *t = "MgM";
+        PicaPt smallFontSize = PicaPt::fromPixels(std::floor(0.5f * kPointSize), dpi);
+        Font smallFont = font.fontWithPointSize(smallFontSize);
+        auto fm = mBitmap->fontMetrics(smallFont);
+        auto tm = mBitmap->textMetrics(t, smallFont);
+        int minWidthPx = std::ceil((tm.width + smallFontSize).toPixels(dpi));
+        int minHeightPx = std::ceil((tm.height + smallFontSize).toPixels(dpi));
+        if (mBitmap->width() < minWidthPx) {
+            return "bitmap is too narrow, needs " + std::to_string(minWidthPx) + ", got " + std::to_string(mBitmap->width());
+        }
+        if (mBitmap->height() < minHeightPx) {
+            return "bitmap is too narrow, needs " + std::to_string(minHeightPx) + ", got " + std::to_string(mBitmap->height());
+        }
+
+        // Alignment::kNone
+        Rect drawRect(PicaPt::kZero, PicaPt::kZero,
+                      PicaPt::fromPixels(mBitmap->width(), dpi),
+                      PicaPt::fromPixels(mBitmap->height(), dpi));
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->setFillColor(Color::kWhite);
+        mBitmap->drawText(t, drawRect, Alignment::kNone, kWrapWord, smallFont, kPaintFill);
+        mBitmap->endDraw();
+        auto expectedHeight = fm.capHeight + fm.descent;
+        auto maybeErr = verifyTextRect(0.0f, 0.0f, tm.width.toPixels(dpi), expectedHeight.toPixels(dpi),
+                                       "Alignment::kNone");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // Alignment::kLeft | Alignment::kTop
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->setFillColor(Color::kWhite);
+        mBitmap->drawText(t, drawRect, Alignment::kLeft | Alignment::kTop, kWrapWord, smallFont, kPaintFill);
+        mBitmap->endDraw();
+        maybeErr = verifyTextRect(0.0f, 0.0f, tm.width.toPixels(dpi), expectedHeight.toPixels(dpi),
+                                  "Alignment::kLeft | kTop");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // Alignment::kHCenter | Alignment::::kVCenter
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->setFillColor(Color::kWhite);
+        mBitmap->drawText(t, drawRect, Alignment::kHCenter | Alignment::kVCenter, kWrapWord,
+                          smallFont, kPaintFill);
+        mBitmap->endDraw();
+        auto xMargin = 0.5f * (PicaPt::fromPixels(mBitmap->width(), dpi) - tm.width);
+        auto yMargin = 0.5f * (PicaPt::fromPixels(mBitmap->height(), dpi) - expectedHeight);
+        maybeErr = verifyTextRect(xMargin.toPixels(dpi), yMargin.toPixels(dpi),
+                                  tm.width.toPixels(dpi), expectedHeight.toPixels(dpi),
+                                  "Alignment::kHCenter | kVCenter");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // Alignment::kRight | Alignment::kBottom
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->setFillColor(Color::kWhite);
+        mBitmap->drawText(t, drawRect, Alignment::kRight | Alignment::kBottom, kWrapWord,
+                          smallFont, kPaintFill);
+        mBitmap->endDraw();
+        xMargin = PicaPt::fromPixels(mBitmap->width(), dpi) - tm.width;
+        yMargin = PicaPt::fromPixels(mBitmap->height(), dpi) - expectedHeight;
+        maybeErr = verifyTextRect(xMargin.toPixels(dpi), yMargin.toPixels(dpi),
+                                  tm.width.toPixels(dpi), expectedHeight.toPixels(dpi),
+                                  "Alignment::kRight | kBottom");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+        // Double-check if bottom line has some pixel on from the descender
+        float n = 0.0f;
+        for (int xx = 0;  xx < mBitmap->width();  ++xx) {
+            auto c = mBitmap->pixelAt(xx, mBitmap->height() - 1);
+            if (c.red() > 0.0f) {
+                n += c.red();
+            }
+        }
+        if (n <= 0.001f) {
+            return "Alignment::kRight | kBottom: bottom pixel should be the bottom of the descender";
+        }
+
+        return "";
+    }
+
+    std::string verifyTextRect(float x, float y, float width, float height, const std::string& msg)
+    {
+        float minX = 9999.0f, minY = 9999.0f, maxX = 0.0f, maxY = 0.0f;
+        for (int yy = 0;  yy < mBitmap->height();  ++yy) {
+            for (int xx = 0;  xx < mBitmap->width();  ++xx) {
+                auto c = mBitmap->pixelAt(xx, yy);
+                if (c.red() > 0.0f) {
+                    minX = std::min(minX, float(xx + 1) - c.red());
+                    minY = std::min(minY, float(yy + 1) - c.red());
+                    maxX = std::max(maxX, float(xx) + c.red());
+                    maxY = std::max(maxY, float(yy) + c.red());
+                }
+            }
+        }
+        const float maxErr = 1.0f;  // "M" has some space on left and right
+        if (std::abs(minX - x) <= maxErr &&
+            std::abs(minY - y) <= maxErr &&
+            std::abs(maxX - (x + width)) <= maxErr &&
+            std::abs(maxY - (y + height)) <= maxErr) {
+            return "";
+        } else {
+            std::stringstream s;
+            s << msg << ": expected rect(" << x << ", " << y << ", " << width << ", " << height
+              << "), got (" << minX << ", " << minY << ", " << maxX - minX << ", " << maxY - minY << ")";
+            return s.str();
+        }
+    }
+};
+
+class BasicTextLayoutTest : public BitmapTest
+{
+    static constexpr int kPointSize = 13;
+public:
+    BasicTextLayoutTest() : BitmapTest("basic createTextLayout()", 1.75 * kPointSize, 1.75 * kPointSize) {}
+
+    std::string run() override
+    {
+        // Fill the background so that if we have an error at least we get
+        // consistent values for the fill, as some of the tests do not draw.
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->endDraw();
+
+        float dpi = mBitmap->dpi();
+        auto fontSizePt = PicaPt::fromPixels(kPointSize, dpi);
+        Font font("Arial", fontSizePt);
+        Color fg = Color::kWhite;
+        auto metrics = mBitmap->fontMetrics(font);
+
+        auto glyphs = mBitmap->createTextLayout("im", font, fg)->glyphs();
+        if (glyphs.size() != 2) {
+            return std::string("Incorrect number of glyphs for 'im': got ") + std::to_string(glyphs.size()) + ", expected 2";
+        }
+        if (glyphs[0].frame.y != PicaPt::kZero) {
+            return "Glyph frames should start at the top of the line (baseline - ascent); for idx=0, got y=" + std::to_string(glyphs[0].frame.y.toPixels(dpi)) + ", expected 0.0";
+        }
+        if (glyphs[1].frame.y != PicaPt::kZero) {
+            return "Glyph frames should start at the top of the line (baseline - ascent); for idx=1, got y=" + std::to_string(glyphs[1].frame.y.toPixels(dpi)) + ", expected 0.0";
+        }
+
+        // Multiple lines
+        glyphs = mBitmap->createTextLayout("A\nA", font, fg)->glyphs();
+        //if (glyphs.size() != 2) {
+        //    return "Incorrect number of glyphs for 'A\\nA': got " + std::to_string(glyphs.size()) + ", expected 2";
+        //}
+        auto secondLineYPt = metrics.lineHeight;
+        auto epsilon = PicaPt(0.001);
+        if (glyphs[2].frame.y <= glyphs[0].frame.maxY() || glyphs[2].frame.y >= secondLineYPt + epsilon) {
+            return "Top of frame in second line is incorrect: expected " +
+                   std::to_string((glyphs[0].frame.maxY() + metrics.leading).toPixels(dpi)) +
+                   ", got " + std::to_string(glyphs[1].frame.y.toPixels(dpi));
+        }
+        if (glyphs[0].line != 0) {
+            return "glyph[0].line is incorrect: expected 0, got " + std::to_string(glyphs[0].line);
+        }
+        if (glyphs[1].line != 0) {
+            return "glyph[1].line is incorrect: expected 0, got " + std::to_string(glyphs[1].line);
+        }
+        if (glyphs[2].line != 1) {
+            return "glyph[2].line is incorrect: expected 1, got " + std::to_string(glyphs[2].line);
+        }
+
+        // Word-wrap
+        auto w = mBitmap->textMetrics("the", font).width + 0.5f * fontSizePt;
+        glyphs = mBitmap->createTextLayout("the and", font, fg, Size(w, PicaPt::kZero))->glyphs();
+        if (glyphs[5].frame.y <= glyphs[0].frame.maxY() || glyphs[5].frame.y >= secondLineYPt + epsilon) {
+            return "Expected two lines of word wrap";
+        }
+        if (glyphs[2].line != 0) {
+            return "glyph[2].line is incorrect: expected 0, got " + std::to_string(glyphs[2].line);
+        }
+        if (glyphs[3].line != 0) {
+            return "glyph[3].line is incorrect: expected 0, got " + std::to_string(glyphs[3].line);
+        }
+        if (glyphs[4].line != 1) {
+            return "glyph[4].line is incorrect: expected 1, got " + std::to_string(glyphs[4].line);
+        }
+
+        // No word-wrap
+        glyphs = mBitmap->createTextLayout("the and", font, fg, Size(w, PicaPt::kZero),
+                                           Alignment::kNone, kWrapNone)->glyphs();
+        if (std::abs((glyphs[5].frame.y - glyphs[0].frame.y).toPixels(dpi)) > epsilon.toPixels(dpi)) {
+            return "Expected only one line with word-wrapping off";
+        }
+
+        // All glyph frames are ascent + descent in height
+        glyphs = mBitmap->createTextLayout("Ag", font, fg)->glyphs();
+        auto expectedHeightPx = (metrics.ascent + metrics.descent).toPixels(dpi);
+        if (std::abs(glyphs[0].frame.height.toPixels(dpi) - expectedHeightPx) > epsilon.toPixels(dpi)) {
+            return "Frame for glyph 'A' should have height equal to ascent + descent";
+        }
+        if (std::abs(glyphs[1].frame.height.toPixels(dpi) - expectedHeightPx) > epsilon.toPixels(dpi)) {
+            return "Frame for glyph 'g' should have height equal to ascent + descent";
+        }
+
+        // Glyphs should adjust properly for alignment
+        Size layoutSize(4.0f * fontSizePt, 3.0f * fontSizePt);
+        glyphs = mBitmap->createTextLayout("Ag", font, fg, layoutSize,
+                                           Alignment::kRight | Alignment::kBottom)->glyphs();
+        w = glyphs[0].frame.width + glyphs[1].frame.width;
+        auto expectedX = layoutSize.width - w;
+        auto expectedY = layoutSize.height - glyphs[0].frame.height;
+        if (glyphs[0].frame.x < expectedX - epsilon) {
+            return createFloatError("glyph[0].frame.x incorrect Alignment::kRight",
+                                    expectedX.asFloat(), glyphs[0].frame.x.asFloat());
+        }
+        if (glyphs[0].frame.y < expectedY - epsilon) {
+            return createFloatError("glyph[0].frame.y incorrect Alignment::kBottom",
+                                    expectedY.asFloat(), glyphs[0].frame.y.asFloat());
+        }
+
+        return "";
+    }
+};
+
+class RichTextRunsTest : public BitmapTest
+{
+    static constexpr int kPointSize = 13;
+public:
+    RichTextRunsTest() : BitmapTest("rich text (runs)", 1, 1) {}
+
+    std::string run() override
+    {
+        Text t;
+
+        // Sanity checks for Text::setTextRun()
+
+        t = Text("tests", Font(), Color::kBlack);
+        t.setColor(Color::kRed, 0, -1);
+        if (t.runs().size() != 1
+            || t.runs()[0].startIndex != 0 || t.runs()[0].length != 5) {
+            return "setTextRun() failed setting run with same index and size";
+        }
+
+        t = Text("tests", Font(), Color::kBlack);
+        t.setColor(Color::kRed, 0, 1);
+        if (t.runs().size() != 2
+            || t.runs()[0].startIndex != 0 || t.runs()[0].length != 1
+            || t.runs()[1].startIndex != 1 || t.runs()[1].length != 4 ) {
+            return "setTextRun() failed setting run with same index and smaller size";
+        }
+
+        t = Text("tests", Font(), Color::kBlack);
+        t.setColor(Color::kRed, 1, 3);
+        if (t.runs().size() != 3
+            || t.runs()[0].startIndex != 0 || t.runs()[0].length != 1
+            || t.runs()[1].startIndex != 1 || t.runs()[1].length != 3
+            || t.runs()[2].startIndex != 4 || t.runs()[2].length != 1 ) {
+            return "setTextRun() failed setting run with larger index and smaller size";
+        }
+
+        t = Text("tests", Font(), Color::kBlack);
+        t.setColor(Color::kRed, 2, 2);
+        t.setBackgroundColor(Color::kBlue, 1, 3);
+        if (t.runs().size() != 4
+            || t.runs()[0].startIndex != 0 || t.runs()[0].length != 1
+            || t.runs()[1].startIndex != 1 || t.runs()[1].length != 1
+            || t.runs()[2].startIndex != 2 || t.runs()[2].length != 2
+            || t.runs()[3].startIndex != 4 || t.runs()[3].length != 1 ) {
+            return "setTextRun() failed setting run with larger index and larger size";
+        }
+
+        t = Text("abc", Font(), Color::kBlack);
+        t.setBold(0, 1);
+        t.setItalic(1, 1);
+        t.setColor(Color::kRed);
+        auto redRGBA = Color::kRed.toRGBA();
+        if (t.runs().size() != 3
+            || (!t.runs()[0].color.isSet || t.runs()[0].color.value.toRGBA() != redRGBA)
+            || (!t.runs()[1].color.isSet || t.runs()[1].color.value.toRGBA() != redRGBA)
+            || (!t.runs()[2].color.isSet || t.runs()[2].color.value.toRGBA() != redRGBA)) {
+            return "setTextRun() failed setting run that covers more than two runs";
+        }
+
+        t = Text("tests", Font(), Color::kBlack);
+        t.setColor(Color::kOrange, 2, 10);
+        if (t.runs().back().startIndex + t.runs().back().length > int(t.text().size())) {
+            return "setTextRun() should truncate length to text length";
+        }
+
+        return "";
+    }
+};
+
+class RichTextTest : public BitmapTest
+{
+    static constexpr int kPointSize = 13;
+public:
+    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 1.25f * kPointSize) {}
+
+    std::string run() override
+    {
+        const auto dpi = mBitmap->dpi();
+        const Color bg = Color::kRed;
+        const Color fg = Color::kBlue;
+        const Color strikeColor = Color::kGreen;
+        // Use bold so that one of the pixels will be closer to 100% on a whole pixel
+        const Font font("Arial", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
+        const Point upperLeft = Point::kZero;
+
+        // ----
+        Text t("O", font, fg);
+        t.setBackgroundColor(bg);
+        t.setUnderlineStyle(kUnderlineSingle);
+        t.setUnderlineColor(strikeColor);
+        t.setStrikethrough();
+        t.setStrikethroughColor(strikeColor);
+
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+
+        // Verify background color
+        if (mBitmap->pixelAt(0, 0).toRGBA() != bg.toRGBA()) {
+            return createColorError("incorrect background color", bg, mBitmap->pixelAt(0, 0));
+        }
+        if (mBitmap->pixelAt(1, 1).toRGBA() != bg.toRGBA()) {
+            return createColorError("incorrect background color", bg, mBitmap->pixelAt(1, 1));
+        }
+
+        // Verify foreground color
+        // We probably aren't going to get a 100% on pixel for the O, so there will be some
+        // alpha blending from the red background.
+        Color bluest;
+        int y = int(0.2f * float(mBitmap->height()));
+        for (int x = 0;  x < mBitmap->width();  ++x) {
+            auto c = mBitmap->pixelAt(x, y);
+            if (c.blue() > bluest.blue()) {
+                bluest = c;
+            }
+        }
+        if (!(bluest.red() < 0.1f && bluest.green() == 0.0f && bluest.blue() > 0.9f)) {
+            return createColorError("incorrect text color", fg, bluest);
+        }
+
+        // Verify underline drew
+        auto metrics = mBitmap->fontMetrics(font);
+        int x = mBitmap->width() / 2;
+        int baseline = int((upperLeft.y + metrics.ascent).toPixels(dpi));
+        auto maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, baseline, strikeColor,
+                                   "incorrect underline color");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // Verify strikethrough drew
+        int midY = int((upperLeft.y + metrics.ascent - 0.5f * metrics.xHeight).toPixels(dpi));
+        maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, midY, strikeColor,
+                              "incorrect strikethrough color");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // ----
+        // Verify underline and strikethrough take foreground color if specific color not given
+        // ("H" has empty space near underline and 1/2 x-height, important since the lines are
+        // the same color as the glyph)
+        t = Text("H", font, fg);
+        t.setUnderlineStyle(kUnderlineSingle);
+        t.setStrikethrough();
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, baseline, fg,
+                              "incorrect unset underline color");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+        maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, midY, fg,
+                              "incorrect unset strikethrough color");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // ----
+        // Verify double underline
+        t = Text("H", font, fg);
+        t.setUnderlineStyle(kUnderlineDouble);
+        t.setUnderlineColor(strikeColor);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        int n = 0;
+        for (int y = baseline - 1;  y < mBitmap->height();  ++y) {
+            auto c = mBitmap->pixelAt(x, y);
+            if (c.red() == 0.0f && c.green() > 0.66f && c.blue() == 0.0f) {
+                n += 1;
+            }
+        }
+        if (n != 2) {
+            return std::string("expected 2 lines, found ") + std::to_string(n);
+        }
+
+        // ----
+        // Verify dotted underline
+        t = Text("HH", font, fg);
+        t.setUnderlineStyle(kUnderlineDotted);
+        t.setUnderlineColor(strikeColor);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        n = 0;
+        int nBlack = 0;
+        for (int xx = x - mBitmap->width() / 4;  xx <= x + mBitmap->width() / 4;  ++xx) {
+            auto c = mBitmap->pixelAt(xx, baseline + 1);
+            if (c.red() == 0.0f && c.green() > 0.66f && c.blue() == 0.0f) {
+                n += 1;
+            } else if (c.red() == 0.0f && c.green() < 0.33f && c.blue() == 0.0f) {
+                nBlack += 1;
+            }
+        }
+        if (!(n >= 2 && nBlack >= 2)) {
+            return std::string("dotted underlines failed (") + std::to_string(n) + " green, " + std::to_string(nBlack) + " black)";
+        }
+
+        // ----
+        // TODO: wavy underline
+
+        // ----
+        // Verify strikethrough works for one span and multiple rows (macOS and Direct2D must implement
+        // strikethroughs manually)
+        const char *twoLineText = "L\nL";
+        Font smallFont("Arial", PicaPt::fromPixels(kPointSize / 2, dpi), kStyleBold);
+        auto smallMetrics = mBitmap->fontMetrics(smallFont);
+        t = Text(twoLineText, smallFont, fg);
+        t.setStrikethrough();
+        t.setStrikethroughColor(strikeColor);
+        auto layout = mBitmap->createTextLayout(t);
+        auto glyphs = layout->glyphs();
+        if (glyphs[1].frame.y >= glyphs[0].frame.maxY()) {
+            return std::string("text \"") + std::string(twoLineText) + "\" does not have two lines";
+        }
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft);
+        mBitmap->endDraw();
+        midY = int((upperLeft.y + smallMetrics.ascent - 0.5f * smallMetrics.xHeight).toPixels(dpi));
+        maybeErr = verifyLine(smallFont.pointSize().toPixels(dpi) / 2, midY, strikeColor,
+                              "incorrect strikethrough color (two lines)");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // ----
+        // Verify strikethrough is offset correctly
+        t = Text("T", font, fg);
+        t.setStrikethrough();
+        t.setStrikethroughColor(strikeColor);
+        layout = mBitmap->createTextLayout(t);
+        Point strikeOffset(PicaPt::fromPixels(4, dpi), PicaPt::fromPixels(4, dpi));
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, strikeOffset);
+        mBitmap->endDraw();
+        midY = int((strikeOffset.y + metrics.ascent - 0.5f * metrics.xHeight).toPixels(dpi));
+        int offsetXPx = int(strikeOffset.x.toPixels(dpi));
+        for (int x = layout->glyphs()[0].frame.minX().toPixels(dpi) + offsetXPx;
+             x <= layout->glyphs()[0].frame.maxX().toPixels(dpi) + offsetXPx;  ++x) {
+            auto c1 = mBitmap->pixelAt(x, midY);
+            auto c2 = mBitmap->pixelAt(x, midY + 1);
+            if (c1.green() < 0.1f && c2.green() < 0.1f) {
+                std::stringstream s;
+                s << "strikethrough expected at (" << x << ", " << midY << ") or (" << x << ", "
+                  << midY + 1 << ") but not found";
+                return s.str();
+            }
+        }
+
+        // ----
+        // Verify bold override works.  (Note: 'font' is already bold!)
+        Font arialNormal("Arial", PicaPt::fromPixels(kPointSize, dpi));
+        t = Text("I", arialNormal, fg);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        y = (metrics.ascent / 2).toPixels(dpi);
+        auto normalWidth = findLineWidth(y);
+        t = Text("I", arialNormal, fg);
+        t.setBold();
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        auto boldWidth = findLineWidth(y);
+        if (boldWidth < normalWidth + 0.5f) {
+            return "Text::setBold() does not work: expected width >= " + std::to_string(normalWidth) + " + 0.5, got " + std::to_string(boldWidth);
+        }
+
+        // ----
+        // Verify italic override works.  (Note: 'font' is already bold!)
+        t = Text("I", arialNormal, fg);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        int topY = int(std::ceil((metrics.ascent - metrics.capHeight).toPixels(dpi)));
+        int bottomY = int(std::floor(metrics.ascent.toPixels(dpi)) - 1.0f);
+        auto normalTopX = findLineStart(topY);
+        auto normalBottomX = findLineStart(bottomY);
+        assert(normalTopX >= 0.0f && normalBottomX >= 0.0f);
+        if (std::abs(normalTopX - normalBottomX) > 0.01f) {
+            return "Normal font seems to be italic";
+        }
+        t = Text("I", arialNormal, fg);
+        t.setItalic();
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        auto italicTopX = findLineStart(topY);
+        auto italicBottomX = findLineStart(bottomY);
+        assert(italicTopX >= 0.0f && italicBottomX >= 0.0f);
+        if (italicTopX < italicBottomX + 1.0f) {
+            return "Text::setItalic() does not work: expected top pixel to be >= 1.0f pixels farther than bottom, got " + std::to_string(italicTopX - italicBottomX);
+        }
+
+        // ----
+        // Verify UTF-8 / UTF-16 issues work correctly
+        t = Text("⾦βm", smallFont, fg);
+        t.setColor(Color::kRed, 0, 3);    // first glyph (jin1) is 3 bytes in UTF-8
+        t.setColor(Color::kGreen, 3, 2);  // second glyph (beta) is 2 bytes in UTF-8
+        t.setColor(Color::kBlue, 5, 1);   // third glyph (ASCII m) is 1 byte in UTF-8
+        layout = mBitmap->createTextLayout(t);
+        glyphs = layout->glyphs();
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft);
+        mBitmap->endDraw();
+        if (!verifyGlyphColor(glyphs[0].frame, 1.0f, 0.0f, 0.0f)) {
+            return "first glyph is wrong color (expected red)";
+        }
+        if (!verifyGlyphColor(glyphs[1].frame, 0.0f, 1.0f, 0.0f)) {
+            return "second glyph is wrong color (expected green)";
+        }
+        if (!verifyGlyphColor(glyphs[2].frame, 0.0f, 0.0f, 1.0f)) {
+            return "third glyph is wrong color (expected blue)";
+        }
+
+        // ----
+        // Verify multiple font sizes works okay
+        // ... test glyphs here, so that glyph test earlier can pass even if different
+        //     font sizes has not been implemented yet
+        t = Text("TT", smallFont, fg);
+        t.setFont(font, 1, 2);
+        glyphs = mBitmap->createTextLayout(t)->glyphs();
+        auto baselineYPt = metrics.ascent;
+        auto expectedYPt = baselineYPt - smallMetrics.ascent;
+        if (std::abs((glyphs[0].frame.y - expectedYPt).asFloat()) > 0.01f) {
+            return createFloatError("'tT' small font glyph.frame.y is incorrect",
+                                    expectedYPt.asFloat(), glyphs[0].frame.y.asFloat());
+        }
+        if (std::abs((glyphs[1].frame.y - PicaPt::kZero).asFloat()) > 0.01f) {
+            return createFloatError("'tT' large font glyph.frame.y is incorrect",
+                                    PicaPt::kZero.asFloat(), glyphs[1].frame.y.asFloat());
+        }
+        t = Text("TT", smallFont, fg);
+        t.setFont(font, 0, 1);
+        glyphs = mBitmap->createTextLayout(t)->glyphs();
+        baselineYPt = metrics.ascent;
+        expectedYPt = baselineYPt - smallMetrics.ascent;
+        if (std::abs((glyphs[0].frame.y - PicaPt::kZero).asFloat()) > 0.01f) {
+            return createFloatError("'Tt' large font glyph.frame.y is incorrect",
+                                    PicaPt::kZero.asFloat(), glyphs[0].frame.y.asFloat());
+        }
+        if (std::abs((glyphs[1].frame.y - expectedYPt).asFloat()) > 0.01f) {
+            return createFloatError("'Tt' small font glyph.frame.y is incorrect",
+                                    expectedYPt.asFloat(), glyphs[1].frame.y.asFloat());
+        }
+
+        // ... test that drawing works
+        t = Text("T T", Font(), fg);  // need space so kerning won't overlap glyphs
+        t.setFont(smallFont, 0, 1);
+        t.setFont(font, 1, 2);
+        layout = mBitmap->createTextLayout(t);
+        glyphs = layout->glyphs();
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft);
+        mBitmap->endDraw();
+        auto glyphRect = glyphs[0].frame + upperLeft;
+        baselineYPt = upperLeft.y + metrics.ascent;
+        maybeErr = verifyTextRect(glyphRect,
+                                  int((upperLeft.x + glyphRect.x).toPixels(dpi)),
+                                  int((upperLeft.x + glyphRect.maxX()).toPixels(dpi)),
+                                  int(baselineYPt.toPixels(dpi)) + 1,
+                                  (baselineYPt - smallMetrics.capHeight).toPixels(dpi),
+                                  smallMetrics.capHeight.toPixels(dpi),
+                                  "small-font T is wrong height");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+        glyphRect = glyphs[2].frame + upperLeft;
+        maybeErr = verifyTextRect(glyphRect,
+                                  int((upperLeft.x + glyphRect.x).toPixels(dpi)),
+                                  int((upperLeft.x + glyphRect.maxX()).toPixels(dpi)),
+                                  int(baselineYPt.toPixels(dpi)) + 1,
+                                  (baselineYPt - metrics.capHeight).toPixels(dpi),
+                                  metrics.capHeight.toPixels(dpi),
+                                  "big-font T is wrong height");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // ----
+        // TODO: Verify character spacing works
+
+        // ----
+        // Verify default colors
+        t = Text("L", font, Color::kTextDefault);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kRed);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        y = int((upperLeft.y + metrics.ascent).toPixels(dpi));
+        maybeErr = "default text color should be black";
+        for (auto yy = y - 1;  yy <= y + 1;  ++yy) {
+            auto c = mBitmap->pixelAt(4, yy);
+            if (c.red() == 0.0f && c.green() == 0.0f && c.blue() == 0.0f) {
+                maybeErr = "";
+            }
+        }
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+        auto notOverriddenColor = Color::kGreen;
+        t = Text("LL", font, Color::kTextDefault);
+        t.setColor(notOverriddenColor, 1, 1);
+        layout = mBitmap->createTextLayout(t, Font(), Color::kRed);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft);
+        mBitmap->endDraw();
+        y = int((upperLeft.y + metrics.ascent).toPixels(dpi)) - 1;
+        maybeErr = verifyLine(4, y, Color::kRed, "default text color should be override to red");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+        maybeErr = verifyLine(4 + layout->glyphs()[1].frame.x.toPixels(dpi), y, notOverriddenColor,
+                              "default text color should not override a color that is set");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+
+        // ----
+        // Verify font override. This is a little hard, so will just check the point size
+        t = Text("L", Font(), Color::kTextDefault);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t, smallFont, Color::kRed), upperLeft);
+        mBitmap->endDraw();
+        float h = 0.0f;
+        for (int y = 0;  y < mBitmap->height();  ++y) {
+            for (int x = 0;  x < mBitmap->width();  ++x) {
+                auto c = mBitmap->pixelAt(x, y);
+                if (c.red() > 0.0f) {
+                    h = std::max(h, float(y) + c.red());
+                }
+            }
+        }
+        auto expectedCap = smallMetrics.capHeight.toPixels(dpi);
+        if (std::abs(h - expectedCap) > 0.5f) {
+            return "Expected default font overridden with cap-height " + std::to_string(expectedCap) + ", got " + std::to_string(h);
+        }
+
+        // ----
+        // Verify that empty text doesn't crash,
+        t = Text("", smallFont, fg);
+        layout = mBitmap->createTextLayout(t);  // if this fails, it will probably crash here
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft);
+        mBitmap->endDraw();
+
+        // ----
+        // It seems macOS 10.14 (and later?) has a bug where an NSAttributedString will
+        // not reset its background color in the next run if the background color is simply
+        // left out of the attributes, it must specifically be set to NSColor.clearColor.
+        // Or the line can end, that works too...
+        t = Text("cc", font, fg);
+        t.setBackgroundColor(bg, 0, 1);
+        layout = mBitmap->createTextLayout(t);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft);
+        mBitmap->endDraw();
+        auto c = mBitmap->pixelAt(4, 1);
+        if (c.toRGBA() != bg.toRGBA()) {
+            return createColorError("background color is incorrect", bg, c);
+        }
+        c = mBitmap->pixelAt(4 + int(layout->glyphs()[1].frame.x.toPixels(dpi)), 1);
+        if (c.toRGBA() != Color::kBlack.toRGBA()) {
+            return createColorError("background color did not get reset properly", bg, Color::kBlack);
+        }
+
+        return "";
+    }
+
+    std::string verifyLine(int x, int y, const Color& expected, const char* msg)
+    {
+        Color brightest;
+        for (int yy = y - 1;  yy <= y + 1;  ++yy) {
+            auto c = mBitmap->pixelAt(x, yy);
+            if (c.toGrey().red() > brightest.toGrey().red()) {
+                brightest = c;
+            }
+        }
+        const float kErr = 0.025f;
+        if (!(brightest.red() >= expected.red() - kErr && brightest.red() <= expected.red() + kErr &&
+              brightest.green() >= expected.green() - kErr && brightest.green() <= expected.green() + kErr &&
+              brightest.blue() >= expected.blue() - kErr && brightest.blue() <= expected.blue() + kErr)) {
+            return createColorError(msg, expected, brightest);
+        }
+        return "";
+    }
+
+    bool verifyGlyphColor(const Rect& r, float red, float green, float blue)
+    {
+        assert(red == 0.0 || red == 1.0f);
+        assert(green == 0.0 || green == 1.0f);
+        assert(blue == 0.0 || blue == 1.0f);
+        const auto dpi = mBitmap->dpi();
+        int y = (r.y + 0.75f * r.height).toPixels(dpi);
+        assert(y < mBitmap->height());  // glyphs() might have failed in parent
+        int xStart = int(r.x.toPixels(dpi)) + 1;  // add one to avoid possibly getting prev glyph
+        int xEnd = int(r.maxX().toPixels(dpi));
+        int n = 0;
+        for (int yy = y - 1;  yy < y + 1;  ++yy) {
+            for (int xx = xStart;  xx <= xEnd;  ++xx) {
+                auto c = mBitmap->pixelAt(xx, yy);
+                if ((c.red() == 0.0f || (red == 1.0f && c.red() > 0.333f)) &&
+                    (c.green() == 0.0f || (green == 1.0f && c.green() > 0.333f)) &&
+                    (c.blue() == 0.0f || (blue == 1.0f && c.blue() > 0.333f)))
+                {
+                    n += 1;
+                }
+            }
+        }
+        return (n >= 3);
+    }
+
+    float findLineStart(int y)
+    {
+        for (int x = 0;  x < mBitmap->width();  ++x) {
+            auto c = mBitmap->pixelAt(x, y);
+            if (c.blue() > 0.0) {
+                // For the first pixel, the line will be to the right, so advance one
+                // and subtract the percent the pixel is full.
+                return float(x + 1) - c.blue();
+            }
+        }
+        return -1.0f;
+    }
+
+    float findLineWidth(int y)
+    {
+        float start = -1.0f;
+        float end = -1.0f;
+        for (int x = 0;  x < mBitmap->width();  ++x) {
+            auto c = mBitmap->pixelAt(x, y);
+            if (c.blue() > 0.0) {
+                if (start < 0.0f) {
+                    // For the first pixel, the line will be to the right, so advance one
+                    // and subtract the percent the pixel is full.
+                    start = float(x + 1) - c.blue();
+                } else {
+                    end = float(x) + c.blue();
+                }
+            }
+        }
+        return std::max(0.0f, end - start);
+    }
+
+    std::string verifyTextRect(const Rect& glyphRect, int startX, int endX, int endY,
+                               float expectedY,
+                               float expectedHeight, const std::string& msg)
+    {
+        int startY = 0;
+        float minX = 9999.0f, minY = 9999.0f, maxX = 0.0f, maxY = 0.0f;
+        for (int yy = startY;  yy < endY;  ++yy) {
+            for (int xx = startX;  xx < endX;  ++xx) {
+                auto c = mBitmap->pixelAt(xx, yy);
+                if (c.blue() > 0.0f) {
+                    minX = std::min(minX, float(xx + 1) - c.blue());
+                    minY = std::min(minY, float(yy + 1) - c.blue());
+                    maxX = std::max(maxX, float(xx) + c.blue());
+                    // The smaller text may not have a full pixel on, which will artifically
+                    // shorten the bottom, so pretend the pixel was fully on
+                    maxY = std::max(maxY, float(yy + 1));
+                }
+            }
+        }
+        const float maxErr = 1.0f;  // e.g. "M" has some space on left and right
+        if (std::abs(int(minX) - startX) <= maxErr &&
+            std::abs(maxX - float(endX)) <= maxErr &&
+            std::abs(minY - float(expectedY)) <= maxErr &&
+            std::abs((maxY - minY) - expectedHeight) <= maxErr) {
+            return "";
+        } else {
+            std::stringstream s;
+            s << msg << ": expected rect(" << startX << ", " << expectedY << ", " << endX - startX << ", " << expectedHeight
+              << "), got (" << minX << ", " << minY << ", " << maxX - minX << ", " << maxY - minY << ")";
+            return s.str();
+        }
     }
 };
 
@@ -2088,6 +2922,10 @@ int main(int argc, char *argv[])
         std::make_shared<FontStyleTest>(),
         std::make_shared<StrokedTextTest>(),
         std::make_shared<TextMetricsTest>(),
+        std::make_shared<TextAlignmentTest>(),
+        std::make_shared<BasicTextLayoutTest>(),
+        std::make_shared<RichTextRunsTest>(),
+        std::make_shared<RichTextTest>(),
         std::make_shared<ImageTest>(),
         std::make_shared<ImageCopyTest>(),
         std::make_shared<ColorFuncTest>(),

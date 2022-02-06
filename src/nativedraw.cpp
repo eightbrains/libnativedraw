@@ -25,6 +25,8 @@
 
 #include <assert.h>
 
+#include <algorithm>
+
 namespace ND_NAMESPACE {
 
 //---------------------- defines from nativedraw_private.h --------------------
@@ -69,6 +71,27 @@ std::vector<int> utf8IndicesForUTF16Indices(const char *utf8)
     return utf16ToIndex;
 }
 
+std::vector<int> utf16IndicesForUTF8Indices(const char *utf8)
+{
+    auto utf16to8 = utf8IndicesForUTF16Indices(utf8);
+    assert(!utf16to8.empty());  // should always have one past index
+    assert(utf16to8[0] == 0);
+    std::vector<int> utf8to16;
+    utf8to16.reserve(utf16to8.back() + 1);
+
+    size_t idx16 = 1;
+    while (idx16 < utf16to8.size()) {
+        while (utf16to8[idx16] > int(utf8to16.size())) {
+            utf8to16.push_back(idx16 - 1);
+        }
+        ++idx16;
+    }
+    utf8to16.push_back(idx16 - 1);
+    assert(utf8to16.size() == size_t(utf16to8.back() + 1));
+
+    return utf8to16;
+}
+
 //-----------------------------------------------------------------------------
 const PicaPt PicaPt::kZero(0.0f);
 
@@ -95,6 +118,7 @@ const Color Color::kYellow(1.0f, 1.0f, 0.0f, 1.0f);
 const Color Color::kGreen(0.0f, 1.0f, 0.0f, 1.0f);
 const Color Color::kBlue(0.0f, 0.0f, 1.0f, 1.0f);
 const Color Color::kPurple(1.0f, 0.0f, 1.0f, 1.0f);
+const Color Color::kTextDefault(-1.0f, 0.0f, 0.0f, 1.0f);
 
 Color Color::lighter(float amount /*= 0.1f*/) const
 {
@@ -208,6 +232,12 @@ std::size_t Color::hash() const
 }
 
 //-----------------------------------------------------------------------------
+const Font kDefaultReplacementFont("Arial", PicaPt::fromPixels(12.0f, 72.0f));
+const Color kDefaultReplacementColor(0.0f, 0.0f, 0.0f);  // Color::kBlack may not exist yet
+
+bool isFamilyDefault(const Font& f) { return f.family().empty(); }
+bool isPointSizeDefault(const Font& f) { return (f.pointSize() == PicaPt::kZero); }
+
 struct Font::Impl
 {
     std::string family;
@@ -227,7 +257,7 @@ struct Font::Impl
 };
 
 Font::Font()
-    : Font("Arial", PicaPt::fromPixels(12.0f, 72.0f))
+    : Font("", PicaPt::kZero)
 {}
 
 Font::Font(const Font& f)
@@ -301,6 +331,26 @@ Font& Font::setWeight(FontWeight w)
     return *this;
 }
 
+Font& Font::setBold(bool isBold)
+{
+    if (isBold) {
+        setStyle(FontStyle(style() | kStyleBold));
+    } else {
+        setStyle(FontStyle(style() & (~kStyleBold)));
+    }
+    return *this;
+}
+
+Font& Font::setItalic(bool isItalic)
+{
+    if (isItalic) {
+        setStyle(FontStyle(style() | kStyleItalic));
+    } else {
+        setStyle(FontStyle(style() & (~kStyleItalic)));
+    }
+    return *this;
+}
+
 Font::Metrics Font::metrics(const DrawContext& dc) const
 {
     // Q: Why call into DrawContext, why can't Font do it?
@@ -340,6 +390,233 @@ Font Font::fontWithWeight(FontWeight w) const
     }
     return Font(family(), pointSize(), s, w);
 }
+
+//-----------------------------------------------------------------------------
+void setTextRun(Text& t, TextRun *run, int start, int len)
+{
+    run->startIndex = start;
+    if (len == -1) {
+        run->length = int(t.text().size()) - start;
+    } else {
+        run->length = len;
+    }
+    t.setTextRun(*run);
+}
+
+Text::Text()
+: Text("", Font(), Color::kBlack)
+{
+}
+
+Text::Text(const std::string& utf8, const Font& font, const Color& fgColor)
+{
+    mText = utf8;
+    mRuns.emplace_back();
+    mRuns.back().startIndex = 0;
+    mRuns.back().length = int(mText.length());
+    mRuns.back().font = font;
+    mRuns.back().color = fgColor;
+}
+
+const std::string& Text::text() const { return mText; }
+
+Text& Text::setPointSize(const PicaPt& pointSize, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.pointSize = pointSize;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setBold(int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.bold = true;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setItalic(int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.italic = true;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setFont(const Font& font, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.font = font;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setBackgroundColor(const Color& bg, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.backgroundColor = bg;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setColor(const Color& fg, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.color = fg;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setUnderlineStyle(UnderlineStyle style, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.underlineStyle = style;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setUnderlineColor(const Color& c, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.underlineColor = c;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setStrikethrough(int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.strikethrough = true;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setStrikethroughColor(const Color& c, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.strikethroughColor = c;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setOutlineStrokeWidth(const PicaPt &width, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.outlineStrokeWidth = width;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setOutlineColor(const Color &c, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.outlineColor = c;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setCharacterSpacing(const PicaPt& spacing, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.characterSpacing = spacing;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setTextRun(const TextRun& run)
+{
+    if (run.startIndex < 0 || run.startIndex >= mText.size() || run.length == 0) {
+        return *this;
+    }
+    int newRunStart = run.startIndex;
+    int newRunLength = (run.length >= 0) ? std::min(run.length, int(mText.size()) - run.startIndex)
+                                         : (int(mText.size()) - run.startIndex);
+    int idx = runIndexFor(newRunStart);
+    while (newRunLength > 0 && idx >= 0) {
+        auto *r = &mRuns[idx];
+        assert(r->startIndex <= newRunStart);
+
+        // Split the run if we need to
+        if (newRunStart == r->startIndex && newRunLength >= r->length) {
+            // this is the happy path; we do not need to do anything!
+        } else if (newRunStart == r->startIndex) {  // && newRunLength < r->length
+            mRuns.insert(mRuns.begin() + idx, *r);
+            r = &mRuns[idx];  // insert invalidates r (which is essentially an iterator)
+            r->length = newRunLength;
+            mRuns[idx + 1].length -= newRunLength;
+            mRuns[idx + 1].startIndex += newRunLength;
+        } else {  // newRunStart > r->startIndex
+            mRuns.insert(mRuns.begin() + idx + 1, *r);
+            r = &mRuns[idx];  // insert invalidates r (which is essentially an iterator)
+            r->length = newRunStart - r->startIndex;
+            idx += 1;
+            r = &mRuns[idx];
+            r->length -= newRunStart - r->startIndex;
+            r->startIndex = newRunStart;
+            continue;  // loop back around, in case newRunLength < r->length
+        }
+
+        // Copy (TextRun::operator=() handles set properties)
+        int oldStart = r->startIndex;
+        int oldLen = r->length;
+        *r = run;
+        r->startIndex = oldStart;  // if we override Text::operator=(), pretty likely
+        r->length = oldLen;        // to forget a field when we add one at some point.
+
+        newRunLength -= r->length;
+        newRunStart = r->startIndex + r->length;  // may have continued earlier, can't do 'new += len'
+        idx += 1;
+    }
+
+    return *this;
+}
+
+Text& Text::setTextRuns(const std::vector<TextRun>& runs)
+{
+    mRuns = runs;
+}
+
+const TextRun& Text::runAt(int index) const
+{
+    int idx = runIndexFor(index);
+    if (idx < 0) {
+        if (index >= mText.size()) {
+            mRuns.back();
+        }
+        return mRuns[0];
+    }
+    return mRuns[idx];
+
+}
+
+int Text::runIndexFor(int index) const
+{
+    if (index < 0) {
+        return -1;
+    }
+    if (index >= mText.size()) {
+        return -1;
+    }
+
+    auto less = [](const TextRun& lhs, const TextRun& rhs) -> bool {
+        return lhs.startIndex < rhs.startIndex;
+    };
+    TextRun r;
+    r.startIndex = index;
+    auto it = std::upper_bound(mRuns.begin(), mRuns.end(), r, less);
+    // 'it' is the iterator pointing to the run greater than index,
+    // that is, the *next* run. So we need to go backwards one.
+    assert(it != mRuns.begin());  // we did this check first thing
+    it--;
+    return it - mRuns.begin();
+}
+
+const std::vector<TextRun>& Text::runs() const
+{
+    return mRuns;
+}
+
 //-----------------------------------------------------------------------------
 const TextLayout::Glyph* TextLayout::glyphAtPoint(const Point& p) const
 {
@@ -395,6 +672,70 @@ Point TextLayout::pointAtIndex(long index) const
         assert(upperIdx >= idx);
     }
     return glyphs[idx].frame.upperLeft();
+}
+
+Point TextLayout::calcOffsetForAlignment(int alignment, const Size &size,
+                                         const Font::Metrics& firstLineMetrics)
+{
+    if (alignment == Alignment::kNone) {
+        return Point::kZero;
+    }
+
+    Rect r(PicaPt::kZero, PicaPt::kZero, size.width, size.height);
+    auto tm = metrics();
+    bool isOneLine = (tm.height < 1.5f * firstLineMetrics.lineHeight);
+    bool isNoWrap = (size.width <= PicaPt::kZero);
+    Point pt;
+    // Vertical alignment
+    if (isOneLine) {
+        if (alignment & Alignment::kBottom) {
+            pt.y = r.maxY() - (firstLineMetrics.ascent + firstLineMetrics.descent);
+        } else if (alignment & Alignment::kVCenter) {
+            // Visually the descenders (if any) do not feel like they are part
+            // of the block of text, so just the cap-height should be centered.
+            // However, drawing will start from the ascent (which may be above
+            // the cap-height). The descent below acts as the lower margin.
+            pt.y = r.midY() - 0.5f * firstLineMetrics.capHeight - (firstLineMetrics.ascent - firstLineMetrics.capHeight);
+        } else {
+            // The ascent value is kind of arbitrary, and many fonts seem to use
+            // it to put the leading in, so it is taller than necessary (either
+            // that or there are some really tall glyphs somewhere in those
+            // Unicode characters). The cap-height is the visual ascent.
+            pt.y = r.minY() - (firstLineMetrics.ascent - firstLineMetrics.capHeight);
+        }
+    } else {
+        if (alignment & Alignment::kBottom) {
+            pt.y = r.maxY() - tm.height;
+        } else if (alignment & Alignment::kVCenter) {
+            pt.y = r.midY() - 0.5f * tm.height;
+        } else {
+            pt.y = r.minY() - (firstLineMetrics.ascent - firstLineMetrics.capHeight);
+        }
+    }
+
+    // Horizontal alignment
+    if (isNoWrap) {
+        if (alignment & Alignment::kRight) {
+            pt.x = r.maxX() - tm.width;
+        } else if (alignment & Alignment::kHCenter) {
+            pt.x = r.midX() - 0.5f * tm.width;
+        } else {
+            pt.x = r.minX();
+        }
+    } else {
+        pt.x = r.minX();
+    }
+
+    // It's not clear what alignment means if there is no size.
+    // We have defined it to mean that no adjustment is performed.
+    if (size.width == PicaPt::kZero) {
+        pt.x = PicaPt::kZero;
+    }
+    if (size.height == PicaPt::kZero) {
+        pt.y = PicaPt::kZero;
+    }
+
+    return pt;
 }
 
 //-----------------------------------------------------------------------------
@@ -574,62 +915,12 @@ void DrawContext::drawRoundedRect(const Rect& rect, const PicaPt& radius, PaintM
 }
 
 void DrawContext::drawText(const char *textUTF8, const Rect& r, int alignment,
-                           int textWrapMode, const Font& font, PaintMode mode)
+                           TextWrapping wrap, const Font& font, PaintMode mode)
 {
-    bool isNoWrap = (textWrapMode != TextWrapMode::kWordWrap);
     std::shared_ptr<TextLayout> layout;
-    if (isNoWrap) {
-        layout = createTextLayout(textUTF8, font, fillColor(),
-                                  PicaPt(10000), Alignment::kLeft);
-    } else {
-        layout = createTextLayout(textUTF8, font, fillColor(), r.width,
-                                  alignment);
-    }
-    auto tm = layout->metrics();
-    auto metrics = fontMetrics(font);
-    bool isOneLine = (tm.height < 1.5f * metrics.lineHeight);
-    Point pt;
-    // Vertical alignment
-    if (isOneLine) {
-        if (alignment & Alignment::kBottom) {
-            pt.y = r.maxY() - (metrics.ascent + metrics.descent);
-        } else if (alignment & Alignment::kVCenter) {
-            // Visually the descenders (if any) do not feel like they are part
-            // of the block of text, so just the cap-height should be centered.
-            // However, drawing will start from the ascent (which may be above
-            // the cap-height). The descent below acts as the lower margin.
-            pt.y = r.midY() - 0.5f * metrics.capHeight - (metrics.ascent - metrics.capHeight);
-        } else {
-            // The ascent value is kind of arbitrary, and many fonts seem to use
-            // it to put the leading in, so it is taller than necessary (either
-            // that or there are some really tall glyphs somewhere in those
-            // Unicode characters). The cap-height is the visual ascent.
-            pt.y = r.minY() - (metrics.ascent - metrics.capHeight);
-        }
-    } else {
-        if (alignment & Alignment::kBottom) {
-            pt.y = r.maxY() - tm.height;
-        } else if (alignment & Alignment::kVCenter) {
-            pt.y = r.midY() - 0.5f * tm.height;
-        } else {
-            pt.y = r.minY() - (metrics.ascent - metrics.capHeight);
-        }
-    }
-
-    // Horizontal alignment
-    if (isNoWrap) {
-        if (alignment & Alignment::kRight) {
-            pt.x = r.maxX() - tm.width;
-        } else if (alignment & Alignment::kHCenter) {
-            pt.x = r.midX() - 0.5f * tm.width;
-        } else {
-            pt.x = r.minX();
-        }
-    } else {
-        pt.x = r.minX();
-    }
-
-    drawText(*layout, pt);
+    auto size = r.size();
+    layout = createTextLayout(textUTF8, font, fillColor(), size, alignment, wrap);
+    drawText(*layout, r.upperLeft());
 }
 
 } // namespace $ND_NAMESPACE

@@ -216,11 +216,6 @@ public:
             utf8to16 = utf16IndicesForUTF8Indices(text.text().c_str());
         }
 
-        Font::Metrics lastMetrics;
-        lastMetrics.ascent = PicaPt::kZero;
-        lastMetrics.capHeight = PicaPt::kZero;
-        lastMetrics.descent = PicaPt::kZero;
-        int nDifferentFonts = -1;
         std::vector<Font::Metrics> runMetrics;
         runMetrics.reserve(text.runs().size());
 
@@ -333,24 +328,6 @@ public:
                 auto length16 = utf8to16[run.startIndex + run.length] - start16;
                 [nsstring addAttributes:attr range:NSMakeRange(start16, length16)];
             }
-
-            // We need to record some font information to draw correctly.
-            // If we know we only have one font in all the runs (the common case),
-            // we can avoid expensive glyph computations. Since font sizes have a tenuous
-            // relationship with typographic point sizes, check the metrics rather than the
-            // font's point size. (Or if, say, the italic font has long flourishes in the
-            // descender)
-            auto fm = font.metrics(dc);
-            if (nDifferentFonts >= 0) {
-                if (fm.ascent != lastMetrics.ascent || fm.capHeight != lastMetrics.capHeight ||
-                    fm.descent != lastMetrics.descent)
-                {
-                    nDifferentFonts += 1;
-                }
-            } else {
-                nDifferentFonts = 0;
-            }
-            lastMetrics = fm;
         }
 
         auto horizAlign = (alignment & Alignment::kHorizMask);
@@ -385,32 +362,7 @@ public:
 
         // If we have multiple-sized fonts, we need to create the glyphs to see where
         // the line-breaks are.
-        Font::Metrics firstLineMetrics = lastMetrics;
-        if (nDifferentFonts > 0) {
-            glyphs();
-            assert(mGlyphsInitialized); // paranoia: assert in case glyphs() gets optimized out
-
-            assert(text.runs().size() >= 2);
-            assert(runMetrics.size() == text.runs().size());
-            assert(mGlyphs.size() >= 2);
-            int firstLineEndIdx = 0;
-            // we can assume at least two characters (how else can we get two runs?)
-            PicaPt minNewLineY = mGlyphs[0].frame.maxY();
-            while (firstLineEndIdx < int(mGlyphs.size())
-                   && mGlyphs[firstLineEndIdx].line == 0) {
-                ++firstLineEndIdx;
-            }
-            firstLineEndIdx -= 1;
-            assert(firstLineEndIdx >= 0);
-
-            int runIdx = 0;
-            firstLineMetrics = runMetrics[runIdx];
-            while (runIdx < int(runMetrics.size()) && firstLineEndIdx >= text.runs()[runIdx].startIndex) {
-                if (runMetrics[runIdx].ascent > firstLineMetrics.ascent) {
-                    firstLineMetrics = runMetrics[runIdx];
-                }
-                ++runIdx;
-            }
+        auto firstLineMetrics = calcFirstLineMetrics(runMetrics, text.runs());
 
 /*            int lastLineEndIdx = int(text.text().size()) - 1;
             int lastLineNo = mGlyphs.back().line;
@@ -430,7 +382,6 @@ public:
                 }
                 --runIdx;
             } */
-        }
         mFirstLineAscender = firstLineMetrics.ascent;
 
         // Cache here to speed drawing
@@ -612,7 +563,6 @@ public:
 
         // CTFrameDraw() does not handle strikethroughs, so we have to do it ourselves.
         if (!mStrikethroughs.empty()) {
-            assert(mGlyphsInitialized);
             CGContextTranslateCTM(gc, topLeft.x.asFloat(), topLeft.y.asFloat());
             CGContextSetLineCap(gc, kCGLineCapButt);
             CGContextSetLineDash(gc, 0.0, nullptr, 0);
@@ -1005,7 +955,7 @@ public:
         m.xHeight = PicaPt::fromPixels(nsfont.xHeight, mDPI);
         m.capHeight = PicaPt::fromPixels(nsfont.capHeight, mDPI);
         m.lineHeight = m.ascent + m.descent + m.leading;
-        m.underlineOffset = PicaPt::fromPixels(nsfont.underlinePosition, mDPI);
+        m.underlineOffset = PicaPt::fromPixels(-nsfont.underlinePosition, mDPI); // macOS +y is up; we go down
         m.underlineThickness = PicaPt::fromPixels(nsfont.underlineThickness, mDPI);
         return m;
     }

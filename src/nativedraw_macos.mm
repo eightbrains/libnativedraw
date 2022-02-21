@@ -187,13 +187,15 @@ public:
             const Font& defaultReplacementFont = kDefaultReplacementFont,
             const Color& defaultReplacementColor = kDefaultReplacementColor)
     {
-        struct RawStrikethrough {
+        struct RawLine {
             int utf8start;
             int utf8end;
+            Line::Type type;
             Color color;
+            CGFloat width;
             CGFloat dy;
         };
-        std::vector<RawStrikethrough> strikes;
+        std::vector<RawLine> lines;
 
         auto makeNSColor = [](const Color& c) {
             return [NSColor colorWithRed:CGFloat(c.red())
@@ -274,9 +276,17 @@ public:
                     case kUnderlineDotted:
                         attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle | NSUnderlineStylePatternDot);
                         break;
-                    case kUnderlineWavy:
-                        attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle | NSUnderlineStylePatternDot);
+                    case kUnderlineWavy: {
+                        Color c = fg;
+                        if (run.underlineColor.isSet) {
+                            c = run.underlineColor.value;
+                        }
+                        lines.push_back({ run.startIndex, run.startIndex + run.length,
+                                          Line::Type::kUnderlineWavy,
+                                          c, nsfont72.underlineThickness,
+                                          nsfont72.ascender + std::abs(nsfont72.underlinePosition) });
                         break;
+                    }
                 }
                 if (run.underlineColor.isSet) {
                     attr[NSUnderlineColorAttributeName] = makeNSColor(run.underlineColor.value);
@@ -291,9 +301,11 @@ public:
                                 ? run.strikethroughColor.value
                                 : run.color.value);  // run.color should always be set (see assert above)
                 // Strikethough should go through middle of x-height, so <strike>ABCabc</strike>
-                // is nice and continuous.
-                strikes.push_back({ run.startIndex, run.startIndex + run.length,
-                                    c, nsfont72.ascender - 0.5f * nsfont72.xHeight });
+                // is nice and continuous. What thickness should it be? Underline thickness seems to be
+                // as good as any, but truncate to increments of one unit.
+                lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kStrikethrough,
+                                  c, std::max(1.0, nsfont72.underlineThickness),
+                                  nsfont72.ascender - 0.5f * nsfont72.xHeight });
             }
             if (run.characterSpacing.isSet && run.characterSpacing.value != PicaPt::kZero) {
                 attr[NSKernAttributeName] = @(run.characterSpacing.value.toPixels(mDPI));
@@ -389,15 +401,15 @@ public:
         mAlignmentOffsetPx = CGPointMake(alignOffset.x.asFloat(),
                                          alignOffset.y.asFloat());
 
-        if (!strikes.empty()) {
+        if (!lines.empty()) {
             glyphs();
             assert(mGlyphsInitialized); // paranoia: assert in case glyphs() gets optimized out
 
-            mStrikethroughs.reserve(strikes.size());
+            mLines.reserve(lines.size());
 
             int glyphIdx = 0;
-            for (auto &strike : strikes) {
-                while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < strike.utf8start) {
+            for (auto &line : lines) {
+                while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < line.utf8start) {
                     ++glyphIdx;
                 }
                 if (glyphIdx >= mGlyphs.size()) {
@@ -407,23 +419,22 @@ public:
                 auto yPt = mGlyphs[glyphIdx].frame.y;  // this is valid, otherwise we would have exited above
                 auto xStartPt = mGlyphs[glyphIdx].frame.x;
                 auto xEndPt = xStartPt;
-                CGPoint line[2];
-                while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < strike.utf8end) {
+                while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < line.utf8end) {
                     if (mGlyphs[glyphIdx].frame.y > yPt) {
-                        CGFloat y = std::trunc(yPt.asFloat() + strike.dy) + 0.5;  // floor(x) differs for +ve and -ve x!
+                        CGFloat y = std::trunc(yPt.asFloat() + line.dy) + 0.5;  // floor(x) differs for +ve and -ve x!
                         auto p1 = CGPointMake(xStartPt.asFloat(), y);
                         auto p2 = CGPointMake(xEndPt.asFloat(), y);
-                        mStrikethroughs.push_back({ strike.color, { p1, p2 } });
+                        mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
                         yPt = mGlyphs[glyphIdx].frame.y;
                         xStartPt = mGlyphs[glyphIdx].frame.x;
                     }
                     xEndPt = mGlyphs[glyphIdx].frame.maxX();
                     ++glyphIdx;
                 }
-                CGFloat y = std::trunc(yPt.asFloat() + strike.dy) + 0.5;
+                CGFloat y = std::trunc(yPt.asFloat() + line.dy) + 0.5;
                 auto p1 = CGPointMake(xStartPt.asFloat(), y);
                 auto p2 = CGPointMake(xEndPt.asFloat(), y);
-                mStrikethroughs.push_back({ strike.color, { p1, p2 } });
+                mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
             }
         }
         if (mGlyphsInitialized) {
@@ -561,30 +572,45 @@ public:
         CTFrameDraw(mFrame, gc);
         CGContextRestoreGState(gc); // ok, graphics state is sane
 
-        // CTFrameDraw() does not handle strikethroughs, so we have to do it ourselves.
-        if (!mStrikethroughs.empty()) {
+        // CTFrameDraw() does not handle strikethroughs and does not even support wavy underlines,
+        // so we have to do these ourselves. macOS appears to draw underlines on top of the text,
+        // which I think is not great, but at least it is convenient for this.
+        if (!mLines.empty()) {
             CGContextTranslateCTM(gc, topLeft.x.asFloat(), topLeft.y.asFloat());
             CGContextSetLineCap(gc, kCGLineCapButt);
             CGContextSetLineDash(gc, 0.0, nullptr, 0);
             int glyphIdx = 0;
-            for (auto &strike : mStrikethroughs) {
-                CGContextSetRGBStrokeColor(gc, strike.color.red(), strike.color.green(),
-                                           strike.color.blue(), strike.color.alpha());
-                CGContextStrokeLineSegments(gc, strike.line, 2);
+            for (auto &line : mLines) {
+                CGContextSetLineWidth(gc, line.width);
+                CGContextSetRGBStrokeColor(gc, line.color.red(), line.color.green(),
+                                           line.color.blue(), line.color.alpha());
+                if (line.type == Line::Type::kStrikethrough) {
+                    CGContextStrokeLineSegments(gc, line.line, 2);
+                } else {
+                    auto pts = createWavyLinePoints(line.line[0].x, line.line[0].y, line.line[1].x, line.width);
+                    CGContextBeginPath(gc);
+                    CGContextMoveToPoint(gc, pts[0], pts[1]);
+                    for (size_t i = 2;  i < pts.size();  i += 2) {
+                        CGContextAddLineToPoint(gc, pts[i], pts[i + 1]);
+                    }
+                    CGContextStrokePath(gc);
+                }
             }
         }
         CGContextRestoreGState(gc);
     }
 
 private:
-    struct Strikethrough {
+    struct Line {
+        enum class Type { kStrikethrough, kUnderlineWavy } type;
         Color color;
+        CGFloat width;
         CGPoint line[2];
     };
 
     int mLen;
     float mDPI;
-    std::vector<Strikethrough> mStrikethroughs;
+    std::vector<Line> mLines;
     CGPathRef mPath;
     CTFramesetterRef mLayout;
     CTFrameRef mFrame;

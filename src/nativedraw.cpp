@@ -92,6 +92,86 @@ std::vector<int> utf16IndicesForUTF8Indices(const char *utf8)
     return utf8to16;
 }
 
+int nBytesForUtf8Char(const char* utf8)
+{
+    if (((*utf8) & 0b10000000) == 0) {
+        return 1;
+    } else if (((*utf8) & 0b11100000) == 0b11000000) {
+        return 2;
+    } else if (((*utf8) & 0b11110000) == 0b11100000) {
+        return 3;
+    } else {
+        return 4;
+    }
+}
+
+std::vector<float> createWavyLinePoints(float x0, float y0, float x1,
+                                        float width)
+{
+    const float toothHeight = 1.0f * width;
+
+    int nPoints = int(std::ceil((x1 - x0) / (2.0f * toothHeight))) + 1;
+    std::vector<float> xy;
+    xy.reserve(2 * (nPoints + 1));
+
+    // Compute beginning state, so that two wavy lines connected to the same
+    // point always connects smoothly. To do this, we consider a cycle to start
+    // at x=0, y=y0, like a sine wave:
+    //                ____
+    //      /\            y-toothHeight
+    //     .  \  .    ____y0
+    //         \/     ____y+toothHeight
+    //     | |
+    //    -| |--toothHeight
+    // Each tooth is composed of two right triangles, the x and y sides of which
+    // are toothHeight units. Note that +y is down, unlike most mathematical
+    // graphs of sine waves!
+    float x = x0;
+    float y;
+    float phase = x0 / (4.0f * toothHeight);
+    phase = phase - std::floor(phase);  // keep the (float) remainder
+    if (phase <= 0.25f) {
+        y = y0 - toothHeight * phase / 0.25f;
+        xy.push_back(x);  xy.push_back(y);
+        x += y - (y0 - toothHeight);  // we are using triangles with equal bases
+        y = y0 - toothHeight;
+        xy.push_back(x);  xy.push_back(y);
+        phase = 1.0f;
+    } else if (phase >= 0.75) {
+        y = y0 + toothHeight - toothHeight * (phase - 0.75f) / 0.25f;
+        xy.push_back(x);  xy.push_back(y);
+        x += y - (y0 - toothHeight);  // we are using triangles with equal bases
+        y = y0 - toothHeight;
+        xy.push_back(x);  xy.push_back(y);
+        phase = 1.0f;
+    } else {
+        y = y0 - toothHeight + 2.0f * toothHeight * (phase - 0.25f) / 0.5f;
+        xy.push_back(x);  xy.push_back(y);
+        x += (y0 + toothHeight) - y;  // we are using triangles with equal bases
+        y = y0 + toothHeight;
+        xy.push_back(x);  xy.push_back(y);
+        phase = -1.0f;
+    }
+
+    while (x < x1) {
+        if (x + 2.0f * toothHeight <= x1) {
+            x += 2.0f * toothHeight;
+            y += phase * 2.0f * toothHeight;
+            xy.push_back(x);
+            xy.push_back(y);
+        } else {
+            y += phase * (x1 - x);
+            x = x1;
+            xy.push_back(x);
+            xy.push_back(y);
+            x += 0.0001;  // paranoia: force x > x1
+        }
+        phase = -phase;
+    }
+
+    return xy;
+}
+
 //-----------------------------------------------------------------------------
 const PicaPt PicaPt::kZero(0.0f);
 
@@ -335,8 +415,10 @@ Font& Font::setBold(bool isBold)
 {
     if (isBold) {
         setStyle(FontStyle(style() | kStyleBold));
+        setWeight(kWeightBold);
     } else {
         setStyle(FontStyle(style() & (~kStyleBold)));
+        setWeight(kWeightAuto);
     }
     return *this;
 }
@@ -516,13 +598,13 @@ Text& Text::setOutlineColor(const Color &c, int start /*= 0*/, int len /*= -1*/)
     return *this;
 }
 
-Text& Text::setCharacterSpacing(const PicaPt& spacing, int start /*= 0*/, int len /*= -1*/)
-{
-    TextRun r;
-    r.characterSpacing = spacing;
-    ND_NAMESPACE::setTextRun(*this, &r, start, len);
-    return *this;
-}
+//Text& Text::setCharacterSpacing(const PicaPt& spacing, int start /*= 0*/, int len /*= -1*/)
+//{
+//    TextRun r;
+//    r.characterSpacing = spacing;
+//    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+//    return *this;
+//}
 
 Text& Text::setTextRun(const TextRun& run)
 {
@@ -672,6 +754,60 @@ Point TextLayout::pointAtIndex(long index) const
         assert(upperIdx >= idx);
     }
     return glyphs[idx].frame.upperLeft();
+}
+
+Font::Metrics TextLayout::calcFirstLineMetrics(
+            const std::vector<Font::Metrics>& runMetrics,
+            const std::vector<TextRun>& runs) const
+{
+    if (runMetrics.size() == 1) {
+        return runMetrics[0];
+    }
+    assert(runs.size() >= 2);
+    assert(runMetrics.size() == runs.size());
+
+    // Check to see if the metrics are different; we'd rather not generate
+    // the glyphs (which will allocate memory and are likely not to be used
+    // elsewhere) if we do not need to.
+    bool hasDifferentMetrics = false;
+    for (size_t i = 1;  i < runMetrics.size();  ++i) {
+        if (runMetrics[i].ascent != runMetrics[i - 1].ascent ||
+            runMetrics[i].capHeight != runMetrics[i - 1].capHeight ||
+            runMetrics[i].descent != runMetrics[i - 1].descent)
+        {
+            hasDifferentMetrics = true;
+            break;
+        }
+    }
+    if (!hasDifferentMetrics) {
+        return runMetrics[0];
+    }
+
+    // Ok, we have different size fonts, so we need to get the glyphs so that
+    // we know where the line breaks are.
+    Font::Metrics firstLineMetrics = runMetrics[0];
+    auto &glyphs = this->glyphs();
+    // we can assume at least two characters (how else can we get two runs?)
+    assert(glyphs.size() >= 2);
+
+    int firstLineEndIdx = 0;
+    PicaPt minNewLineY = glyphs[0].frame.maxY();
+    while (firstLineEndIdx < int(glyphs.size())
+           && glyphs[firstLineEndIdx].line == 0) {
+        ++firstLineEndIdx;
+    }
+    firstLineEndIdx -= 1;
+    assert(firstLineEndIdx >= 0);
+
+    int runIdx = 0;
+    firstLineMetrics = runMetrics[runIdx];
+    while (runIdx < int(runMetrics.size()) && firstLineEndIdx >= runs[runIdx].startIndex) {
+        if (runMetrics[runIdx].ascent > firstLineMetrics.ascent) {
+            firstLineMetrics = runMetrics[runIdx];
+        }
+        ++runIdx;
+    }
+    return firstLineMetrics;
 }
 
 Point TextLayout::calcOffsetForAlignment(int alignment, const Size &size,

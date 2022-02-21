@@ -119,6 +119,9 @@ struct BezierPath::Impl
     std::vector<Command> commands;
 };
 
+std::vector<float> createWavyLinePoints(float x0, float y0, float x1,
+                                        float width);
+
 // Returns an array such that out[i] where i is an index into a UTF-16 string,
 // gives the index into utf8. Multibyte UTF-16 characters have the same index
 // for each byte, which eliminates the need for error checking in the unfortunate
@@ -127,6 +130,10 @@ std::vector<int> utf8IndicesForUTF16Indices(const char *utf8);
 
 // Returns an array such that out[utf16idx] gives the utf8 index.
 std::vector<int> utf16IndicesForUTF8Indices(const char *utf8);
+
+// Returns the number of bytes in this code point. (Useful for incrementing
+// over characters if you do not need to know the actual value.)
+int nBytesForUtf8Char(const char* utf8);
 
 } // namespace $ND_NAMESPACE
 #endif // _NATIVE_DRAW_PRIVATE_H

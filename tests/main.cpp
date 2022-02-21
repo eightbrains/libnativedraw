@@ -1676,7 +1676,7 @@ public:
         }
         float drawnStrokeWidth = 0.25f * nStroke;  // horiz line crosses O border four times
         if (std::abs(drawnStrokeWidth - strokeWidth.toPixels(dpi)) > acceptableErr) {
-            return createFloatError("bad stroke width", strokeWidth.toPixels(dpi), drawnStrokeWidth);
+            return createFloatError("bad stroke width (stroke only)", strokeWidth.toPixels(dpi), drawnStrokeWidth);
         }
 
         // Test stroke and fill
@@ -1693,7 +1693,7 @@ public:
         }
         drawnStrokeWidth = 0.25f * nStroke;  // horiz line crosses O border four times
         if (std::abs(drawnStrokeWidth - strokeWidth.toPixels(dpi)) > acceptableErr) {
-            return createFloatError("bad stroke width", strokeWidth.toPixels(dpi), drawnStrokeWidth);
+            return createFloatError("bad stroke width (stroke and fill)", strokeWidth.toPixels(dpi), drawnStrokeWidth);
         }
 
         if (nFill < expectedFill) {
@@ -1821,7 +1821,9 @@ public:
         mBitmap->drawText(t, drawRect, Alignment::kNone, kWrapWord, smallFont, kPaintFill);
         mBitmap->endDraw();
         auto expectedHeight = fm.capHeight + fm.descent;
-        auto maybeErr = verifyTextRect(0.0f, 0.0f, tm.width.toPixels(dpi), expectedHeight.toPixels(dpi),
+        auto expectedY = fm.ascent - fm.capHeight;
+        auto maybeErr = verifyTextRect(0.0f, expectedY.toPixels(dpi),
+                                       tm.width.toPixels(dpi), expectedHeight.toPixels(dpi),
                                        "Alignment::kNone");
         if (!maybeErr.empty()) {
             return maybeErr;
@@ -1882,6 +1884,22 @@ public:
             return "Alignment::kRight | kBottom: bottom pixel should be the bottom of the descender";
         }
 
+        // Verify alignment works correctly with no word wrap
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->setFillColor(Color::kWhite);
+        mBitmap->drawText(t, drawRect, Alignment::kRight | Alignment::kBottom, kWrapNone,
+                          smallFont, kPaintFill);
+        mBitmap->endDraw();
+        xMargin = PicaPt::fromPixels(mBitmap->width(), dpi) - tm.width;
+        yMargin = PicaPt::fromPixels(mBitmap->height(), dpi) - expectedHeight;
+        maybeErr = verifyTextRect(xMargin.toPixels(dpi), yMargin.toPixels(dpi),
+                                  tm.width.toPixels(dpi), expectedHeight.toPixels(dpi),
+                                  "Alignment::kRight | kBottom, no word wrap");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
+        
         return "";
     }
 
@@ -1899,7 +1917,7 @@ public:
                 }
             }
         }
-        const float maxErr = 1.0f;  // "M" has some space on left and right
+        const float maxErr = 1.1f;  // "M" has some space on left and right
         if (std::abs(minX - x) <= maxErr &&
             std::abs(minY - y) <= maxErr &&
             std::abs(maxX - (x + width)) <= maxErr &&
@@ -1934,7 +1952,15 @@ public:
         Color fg = Color::kWhite;
         auto metrics = mBitmap->fontMetrics(font);
 
-        auto glyphs = mBitmap->createTextLayout("im", font, fg)->glyphs();
+        // Make sure empty text works. (Failures here are more likely to crash
+        // rather than give the wrong number of glyphs)
+        auto glyphs = mBitmap->createTextLayout("", font, fg)->glyphs();
+        if (glyphs.size() != 0) {
+            return std::string("Incorrect number of glyphs for '': got ") + std::to_string(glyphs.size()) + ", expected 0";
+        }
+
+        // Basic test
+        glyphs = mBitmap->createTextLayout("im", font, fg)->glyphs();
         if (glyphs.size() != 2) {
             return std::string("Incorrect number of glyphs for 'im': got ") + std::to_string(glyphs.size()) + ", expected 2";
         }
@@ -1945,17 +1971,23 @@ public:
             return "Glyph frames should start at the top of the line (baseline - ascent); for idx=1, got y=" + std::to_string(glyphs[1].frame.y.toPixels(dpi)) + ", expected 0.0";
         }
 
+        // Spaces should have glyphs
+        glyphs = mBitmap->createTextLayout("a  z", font, fg)->glyphs();
+        if (glyphs.size() != 4) {
+            return "Incorrect number of glyphs for 'a  z': got " + std::to_string(glyphs.size()) + ", expected 4";
+        }
+
         // Multiple lines
-        glyphs = mBitmap->createTextLayout("A\nA", font, fg)->glyphs();
-        //if (glyphs.size() != 2) {
-        //    return "Incorrect number of glyphs for 'A\\nA': got " + std::to_string(glyphs.size()) + ", expected 2";
-        //}
+        glyphs = mBitmap->createTextLayout("A \nA", font, fg)->glyphs();
+        if (glyphs.size() != 4) {
+            return "Incorrect number of glyphs for 'A \\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
+        }
         auto secondLineYPt = metrics.lineHeight;
         auto epsilon = PicaPt(0.001);
-        if (glyphs[2].frame.y <= glyphs[0].frame.maxY() || glyphs[2].frame.y >= secondLineYPt + epsilon) {
+        if (glyphs[3].frame.y < glyphs[0].frame.maxY() || glyphs[3].frame.y >= secondLineYPt + epsilon) {
             return "Top of frame in second line is incorrect: expected " +
                    std::to_string((glyphs[0].frame.maxY() + metrics.leading).toPixels(dpi)) +
-                   ", got " + std::to_string(glyphs[1].frame.y.toPixels(dpi));
+                   ", got " + std::to_string(glyphs[3].frame.y.toPixels(dpi));
         }
         if (glyphs[0].line != 0) {
             return "glyph[0].line is incorrect: expected 0, got " + std::to_string(glyphs[0].line);
@@ -1963,14 +1995,23 @@ public:
         if (glyphs[1].line != 0) {
             return "glyph[1].line is incorrect: expected 0, got " + std::to_string(glyphs[1].line);
         }
-        if (glyphs[2].line != 1) {
-            return "glyph[2].line is incorrect: expected 1, got " + std::to_string(glyphs[2].line);
+        if (glyphs[2].line != 0) {
+            return "glyph[2].line is incorrect: expected 0, got " + std::to_string(glyphs[2].line);
+        }
+        if (glyphs[3].line != 1) {
+            return "glyph[3].line is incorrect: expected 1, got " + std::to_string(glyphs[3].line);
+        }
+
+        // Multiple lines, one empty
+        glyphs = mBitmap->createTextLayout("A\n\nA", font, fg)->glyphs();
+        if (glyphs.size() != 4) {
+            return "Incorrect number of glyphs for 'A \\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
         }
 
         // Word-wrap
         auto w = mBitmap->textMetrics("the", font).width + 0.5f * fontSizePt;
         glyphs = mBitmap->createTextLayout("the and", font, fg, Size(w, PicaPt::kZero))->glyphs();
-        if (glyphs[5].frame.y <= glyphs[0].frame.maxY() || glyphs[5].frame.y >= secondLineYPt + epsilon) {
+        if (glyphs[5].frame.y < glyphs[0].frame.maxY() || glyphs[5].frame.y >= secondLineYPt + epsilon) {
             return "Expected two lines of word wrap";
         }
         if (glyphs[2].line != 0) {
@@ -2008,13 +2049,15 @@ public:
         auto expectedX = layoutSize.width - w;
         auto expectedY = layoutSize.height - glyphs[0].frame.height;
         if (glyphs[0].frame.x < expectedX - epsilon) {
-            return createFloatError("glyph[0].frame.x incorrect Alignment::kRight",
+            return createFloatError("glyph[0].frame.x incorrect for Alignment::kRight",
                                     expectedX.asFloat(), glyphs[0].frame.x.asFloat());
         }
         if (glyphs[0].frame.y < expectedY - epsilon) {
-            return createFloatError("glyph[0].frame.y incorrect Alignment::kBottom",
+            return createFloatError("glyph[0].frame.y incorrect for Alignment::kBottom",
                                     expectedY.asFloat(), glyphs[0].frame.y.asFloat());
         }
+
+        // TODO: test empty line glyphs in various alignments
 
         return "";
     }
@@ -2093,7 +2136,7 @@ class RichTextTest : public BitmapTest
 {
     static constexpr int kPointSize = 13;
 public:
-    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 1.25f * kPointSize) {}
+    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 1.5f * kPointSize) {}
 
     std::string run() override
     {
@@ -2130,7 +2173,7 @@ public:
         // We probably aren't going to get a 100% on pixel for the O, so there will be some
         // alpha blending from the red background.
         Color bluest;
-        int y = int(0.2f * float(mBitmap->height()));
+        int y = int(0.25f * float(mBitmap->height()));
         for (int x = 0;  x < mBitmap->width();  ++x) {
             auto c = mBitmap->pixelAt(x, y);
             if (c.blue() > bluest.blue()) {
@@ -2145,8 +2188,9 @@ public:
         auto metrics = mBitmap->fontMetrics(font);
         int x = mBitmap->width() / 2;
         int baseline = int((upperLeft.y + metrics.ascent).toPixels(dpi));
-        auto maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, baseline, strikeColor,
-                                   "incorrect underline color");
+        int underlineY = int(std::round((upperLeft.y + metrics.ascent + metrics.underlineOffset).toPixels(dpi)));
+        auto maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, underlineY, strikeColor,
+                                   "incorrect underline color at " + std::to_string(underlineY));
         if (!maybeErr.empty()) {
             return maybeErr;
         }
@@ -2154,7 +2198,7 @@ public:
         // Verify strikethrough drew
         int midY = int((upperLeft.y + metrics.ascent - 0.5f * metrics.xHeight).toPixels(dpi));
         maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, midY, strikeColor,
-                              "incorrect strikethrough color");
+                              "incorrect strikethrough color at " + std::to_string(midY));
         if (!maybeErr.empty()) {
             return maybeErr;
         }
@@ -2170,13 +2214,13 @@ public:
         mBitmap->fill(Color::kBlack);
         mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
         mBitmap->endDraw();
-        maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, baseline, fg,
-                              "incorrect unset underline color");
+        maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, underlineY, fg,
+                              "incorrect unset underline color at " + std::to_string(underlineY));
         if (!maybeErr.empty()) {
             return maybeErr;
         }
         maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, midY, fg,
-                              "incorrect unset strikethrough color");
+                              "incorrect unset strikethrough color at " + std::to_string(midY));
         if (!maybeErr.empty()) {
             return maybeErr;
         }
@@ -2213,7 +2257,7 @@ public:
         n = 0;
         int nBlack = 0;
         for (int xx = x - mBitmap->width() / 4;  xx <= x + mBitmap->width() / 4;  ++xx) {
-            auto c = mBitmap->pixelAt(xx, baseline + 1);
+            auto c = mBitmap->pixelAt(xx, underlineY);
             if (c.red() == 0.0f && c.green() > 0.66f && c.blue() == 0.0f) {
                 n += 1;
             } else if (c.red() == 0.0f && c.green() < 0.33f && c.blue() == 0.0f) {
@@ -2221,15 +2265,15 @@ public:
             }
         }
         if (!(n >= 2 && nBlack >= 2)) {
-            return std::string("dotted underlines failed (") + std::to_string(n) + " green, " + std::to_string(nBlack) + " black)";
+            return std::string("dotted underlines at " + std::to_string(underlineY) + " failed (") + std::to_string(n) + " green, " + std::to_string(nBlack) + " black)";
         }
 
         // ----
         // TODO: wavy underline
 
         // ----
-        // Verify strikethrough works for one span and multiple rows (macOS and Direct2D must implement
-        // strikethroughs manually)
+        // Verify strikethrough works for one span and multiple rows
+        // (macOS and Direct2D must implement strikethroughs manually)
         const char *twoLineText = "L\nL";
         Font smallFont("Arial", PicaPt::fromPixels(kPointSize / 2, dpi), kStyleBold);
         auto smallMetrics = mBitmap->fontMetrics(smallFont);
@@ -2254,7 +2298,7 @@ public:
 
         // ----
         // Verify strikethrough is offset correctly
-        t = Text("T", font, fg);
+        t = Text("Td", font, fg);
         t.setStrikethrough();
         t.setStrikethroughColor(strikeColor);
         layout = mBitmap->createTextLayout(t);
@@ -2310,8 +2354,9 @@ public:
         auto normalTopX = findLineStart(topY);
         auto normalBottomX = findLineStart(bottomY);
         assert(normalTopX >= 0.0f && normalBottomX >= 0.0f);
-        if (std::abs(normalTopX - normalBottomX) > 0.01f) {
-            return "Normal font seems to be italic";
+        auto xDelta = std::abs(normalTopX - normalBottomX);
+        if (xDelta > 0.1f) {  // variance between system fonts, rendering, etc.
+            return "Normal font seems to be italic (x coord delta: " + std::to_string(xDelta) + ")";
         }
         t = Text("I", arialNormal, fg);
         t.setItalic();
@@ -2460,15 +2505,18 @@ public:
         mBitmap->fill(Color::kBlack);
         mBitmap->drawText(*mBitmap->createTextLayout(t, smallFont, Color::kRed), upperLeft);
         mBitmap->endDraw();
-        float h = 0.0f;
+        float yMin = 10000.0f;
+        float yMax = 0.0f;
         for (int y = 0;  y < mBitmap->height();  ++y) {
             for (int x = 0;  x < mBitmap->width();  ++x) {
                 auto c = mBitmap->pixelAt(x, y);
                 if (c.red() > 0.0f) {
-                    h = std::max(h, float(y) + c.red());
+                    yMin = std::min(yMin, float(y) + 1.0f - c.red());
+                    yMax = std::max(yMax, float(y) + c.red());
                 }
             }
         }
+        float h = yMax - yMin;
         auto expectedCap = smallMetrics.capHeight.toPixels(dpi);
         if (std::abs(h - expectedCap) > 0.5f) {
             return "Expected default font overridden with cap-height " + std::to_string(expectedCap) + ", got " + std::to_string(h);
@@ -2507,7 +2555,7 @@ public:
         return "";
     }
 
-    std::string verifyLine(int x, int y, const Color& expected, const char* msg)
+    std::string verifyLine(int x, int y, const Color& expected, const std::string msg)
     {
         Color brightest;
         for (int yy = y - 1;  yy <= y + 1;  ++yy) {

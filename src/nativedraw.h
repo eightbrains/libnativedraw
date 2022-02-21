@@ -420,6 +420,8 @@ public:
         PicaPt xHeight;
         PicaPt capHeight;
         PicaPt lineHeight;  // ascent + descent + leading
+        PicaPt underlineOffset;
+        PicaPt underlineThickness;
     };
 
     Font();
@@ -593,6 +595,20 @@ public:
     virtual const std::vector<Glyph>& glyphs() const = 0;
 
 protected:
+    // This *may* call glyphs(). Note that if glyphs are cached, which is wise
+    // from a performance standpoint, implementations of this class should the
+    // cached glyphs at the end of the constructor. This is because the glyphs
+    // are only needed by user code, and usually just for determing which
+    // glyph a mouse click hit. Since most text is used for display, it is not
+    // helpful to keep the glyphs in memory. Note that if using a vector,
+    // vector::clear() does NOT release memory! Use vector::shrink_to_fit()
+    // after clearing. Unfortunately I cannot think of a way to enforce this,
+    // as some platforms may need the glyphs after this for calculations of
+    // some things (for example, macOS does not draw strikethroughs) and there
+    // is no point calculating them twice.
+    Font::Metrics calcFirstLineMetrics(
+                const std::vector<Font::Metrics>& runMetrics,
+                const std::vector<TextRun>& runs) const;
     Point calcOffsetForAlignment(int alignment, const Size& size,
                                  const Font::Metrics& firstLineMetrics);
 };

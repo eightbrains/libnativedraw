@@ -475,6 +475,11 @@ public:
                 mStrikethroughs.push_back({ strike.color, { p1, p2 } });
             }
         }
+        if (mGlyphsInitialized) {
+            mGlyphs.clear();
+            mGlyphs.shrink_to_fit();  // clear() does not release memory
+            mGlyphsInitialized = false;
+        }
     }
 
     ~TextObj()
@@ -1000,6 +1005,8 @@ public:
         m.xHeight = PicaPt::fromPixels(nsfont.xHeight, mDPI);
         m.capHeight = PicaPt::fromPixels(nsfont.capHeight, mDPI);
         m.lineHeight = m.ascent + m.descent + m.leading;
+        m.underlineOffset = PicaPt::fromPixels(nsfont.underlinePosition, mDPI);
+        m.underlineThickness = PicaPt::fromPixels(nsfont.underlineThickness, mDPI);
         return m;
     }
 

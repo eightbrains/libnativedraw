@@ -608,7 +608,8 @@ protected:
     // is no point calculating them twice.
     Font::Metrics calcFirstLineMetrics(
                 const std::vector<Font::Metrics>& runMetrics,
-                const std::vector<TextRun>& runs) const;
+                const std::vector<TextRun>& runs,
+                int firstLineLength = -1) const;
     Point calcOffsetForAlignment(int alignment, const Size& size,
                                  const Font::Metrics& firstLineMetrics);
 };

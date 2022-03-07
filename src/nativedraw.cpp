@@ -27,6 +27,10 @@
 
 #include <algorithm>
 
+#if __APPLE__
+#include <TargetConditionals.h>
+#endif
+
 namespace ND_NAMESPACE {
 
 //---------------------- defines from nativedraw_private.h --------------------
@@ -35,7 +39,7 @@ std::vector<int> utf8IndicesForUTF16Indices(const char *utf8)
     std::vector<int> utf16ToIndex;
     const uint8_t *c = (const uint8_t*)utf8;
     while (*c != '\0') {
-        int utf8idx = c - (const uint8_t*)utf8;
+        int utf8idx = int(c - (const uint8_t*)utf8);
         uint32_t utf32 = 0;
         int nMoreBytes = 0;
         if (((*c) & 0b10000000) == 0) {
@@ -65,7 +69,7 @@ std::vector<int> utf8IndicesForUTF16Indices(const char *utf8)
 
     // Add in the index to the end, too, it comes in handy for finding the
     // location of the caret positioned at the end of the string.
-    int utf8idx = c - (const uint8_t*)utf8;
+    int utf8idx = int(c - (const uint8_t*)utf8);
     utf16ToIndex.push_back(utf8idx);
 
     return utf16ToIndex;
@@ -77,17 +81,17 @@ std::vector<int> utf16IndicesForUTF8Indices(const char *utf8)
     assert(!utf16to8.empty());  // should always have one past index
     assert(utf16to8[0] == 0);
     std::vector<int> utf8to16;
-    utf8to16.reserve(utf16to8.back() + 1);
+    utf8to16.reserve(int(utf16to8.back()) + 1);
 
     size_t idx16 = 1;
     while (idx16 < utf16to8.size()) {
         while (utf16to8[idx16] > int(utf8to16.size())) {
-            utf8to16.push_back(idx16 - 1);
+            utf8to16.push_back(int(idx16 - 1));
         }
         ++idx16;
     }
-    utf8to16.push_back(idx16 - 1);
-    assert(utf8to16.size() == size_t(utf16to8.back() + 1));
+    utf8to16.push_back(int(idx16 - 1));
+    assert(utf8to16.size() == size_t(int(utf16to8.back()) + 1));
 
     return utf8to16;
 }
@@ -164,7 +168,7 @@ std::vector<float> createWavyLinePoints(float x0, float y0, float x1,
             x = x1;
             xy.push_back(x);
             xy.push_back(y);
-            x += 0.0001;  // paranoia: force x > x1
+            x += 0.0001f;  // paranoia: force x > x1
         }
         phase = -phase;
     }
@@ -312,7 +316,17 @@ std::size_t Color::hash() const
 }
 
 //-----------------------------------------------------------------------------
-const Font kDefaultReplacementFont("Arial", PicaPt::fromPixels(12.0f, 72.0f));
+#if defined(__APPLE__)
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR || TARGET_OS_MACCATALYST
+const Font kDefaultReplacementFont("SFUI", PicaPt(12.0f)); // San Francisco since iOS 9
+#elif
+const Font kDefaultReplacementFont("SFNS", PicaPt(12.0f)); // San Francisco since macOS 10.11
+#endif
+#elif defined(_WIN32) || defined(_WIN64)  // _WIN32 covers everything except 64-bit ARM
+const Font kDefaultReplacementFont("Segoe UI", PicaPt(12.0f));  // Segoe UI has shipped since Windows 7
+#else
+const Font kDefaultReplacementFont("Arial", PicaPt(12.0f));  // Arial is available everywhere with msttfonts
+#endif
 const Color kDefaultReplacementColor(0.0f, 0.0f, 0.0f);  // Color::kBlack may not exist yet
 
 bool isFamilyDefault(const Font& f) { return f.family().empty(); }
@@ -324,7 +338,7 @@ struct Font::Impl
     PicaPt pointSize;
     FontStyle style;
     FontWeight weight;
-    std::size_t hash;
+    std::size_t hash = 0;
 
     void computeHash()
     {
@@ -657,6 +671,7 @@ Text& Text::setTextRun(const TextRun& run)
 Text& Text::setTextRuns(const std::vector<TextRun>& runs)
 {
     mRuns = runs;
+    return *this;
 }
 
 const TextRun& Text::runAt(int index) const
@@ -664,12 +679,11 @@ const TextRun& Text::runAt(int index) const
     int idx = runIndexFor(index);
     if (idx < 0) {
         if (index >= mText.size()) {
-            mRuns.back();
+            return mRuns.back();
         }
         return mRuns[0];
     }
     return mRuns[idx];
-
 }
 
 int Text::runIndexFor(int index) const
@@ -691,7 +705,7 @@ int Text::runIndexFor(int index) const
     // that is, the *next* run. So we need to go backwards one.
     assert(it != mRuns.begin());  // we did this check first thing
     it--;
-    return it - mRuns.begin();
+    return int(it - mRuns.begin());
 }
 
 const std::vector<TextRun>& Text::runs() const
@@ -757,8 +771,9 @@ Point TextLayout::pointAtIndex(long index) const
 }
 
 Font::Metrics TextLayout::calcFirstLineMetrics(
-            const std::vector<Font::Metrics>& runMetrics,
-            const std::vector<TextRun>& runs) const
+                            const std::vector<Font::Metrics>& runMetrics,
+                            const std::vector<TextRun>& runs,
+                            int firstLineLength /*= -1*/) const
 {
     if (runMetrics.size() == 1) {
         return runMetrics[0];
@@ -790,13 +805,18 @@ Font::Metrics TextLayout::calcFirstLineMetrics(
     // we can assume at least two characters (how else can we get two runs?)
     assert(glyphs.size() >= 2);
 
-    int firstLineEndIdx = 0;
-    PicaPt minNewLineY = glyphs[0].frame.maxY();
-    while (firstLineEndIdx < int(glyphs.size())
-           && glyphs[firstLineEndIdx].line == 0) {
-        ++firstLineEndIdx;
+    int firstLineEndIdx;
+    if (firstLineLength >= 0) {
+        firstLineEndIdx = firstLineLength - 1;
+    } else {
+        firstLineEndIdx = 0;
+        PicaPt minNewLineY = glyphs[0].frame.maxY();
+        while (firstLineEndIdx < int(glyphs.size())
+                && glyphs[firstLineEndIdx].line == 0) {
+            ++firstLineEndIdx;
+        }
+        firstLineEndIdx -= 1;
     }
-    firstLineEndIdx -= 1;
     assert(firstLineEndIdx >= 0);
 
     int runIdx = 0;

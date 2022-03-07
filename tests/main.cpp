@@ -1964,10 +1964,10 @@ public:
         if (glyphs.size() != 2) {
             return std::string("Incorrect number of glyphs for 'im': got ") + std::to_string(glyphs.size()) + ", expected 2";
         }
-        if (glyphs[0].frame.y != PicaPt::kZero) {
+        if (std::abs(glyphs[0].frame.y.toPixels(dpi)) > 0.001f) {
             return "Glyph frames should start at the top of the line (baseline - ascent); for idx=0, got y=" + std::to_string(glyphs[0].frame.y.toPixels(dpi)) + ", expected 0.0";
         }
-        if (glyphs[1].frame.y != PicaPt::kZero) {
+        if (std::abs(glyphs[1].frame.y.toPixels(dpi)) > 0.001f) {
             return "Glyph frames should start at the top of the line (baseline - ascent); for idx=1, got y=" + std::to_string(glyphs[1].frame.y.toPixels(dpi)) + ", expected 0.0";
         }
 
@@ -2257,10 +2257,9 @@ public:
         n = 0;
         int nBlack = 0;
         for (int xx = x - mBitmap->width() / 4;  xx <= x + mBitmap->width() / 4;  ++xx) {
-            auto c = mBitmap->pixelAt(xx, underlineY);
-            if (c.red() == 0.0f && c.green() > 0.66f && c.blue() == 0.0f) {
+            if (verifyLine(xx, underlineY, strikeColor, "") == "") {
                 n += 1;
-            } else if (c.red() == 0.0f && c.green() < 0.33f && c.blue() == 0.0f) {
+            } else {
                 nBlack += 1;
             }
         }
@@ -2282,7 +2281,7 @@ public:
         t.setStrikethroughColor(strikeColor);
         auto layout = mBitmap->createTextLayout(t);
         auto glyphs = layout->glyphs();
-        if (glyphs[1].frame.y >= glyphs[0].frame.maxY()) {
+        if (glyphs[2].frame.y < glyphs[0].frame.maxY()) {
             return std::string("text \"") + std::string(twoLineText) + "\" does not have two lines";
         }
         mBitmap->beginDraw();
@@ -2290,7 +2289,7 @@ public:
         mBitmap->drawText(*layout, upperLeft);
         mBitmap->endDraw();
         midY = int((upperLeft.y + smallMetrics.ascent - 0.5f * smallMetrics.xHeight).toPixels(dpi));
-        maybeErr = verifyLine(smallFont.pointSize().toPixels(dpi) / 2, midY, strikeColor,
+        maybeErr = verifyLine(smallFont.pointSize().toPixels(dpi) / 2 - 1, midY, strikeColor,
                               "incorrect strikethrough color (two lines)");
         if (!maybeErr.empty()) {
             return maybeErr;
@@ -2500,7 +2499,7 @@ public:
 
         // ----
         // Verify font override. This is a little hard, so will just check the point size
-        t = Text("L", Font(), Color::kTextDefault);
+        t = Text("E", Font(), Color::kTextDefault);
         mBitmap->beginDraw();
         mBitmap->fill(Color::kBlack);
         mBitmap->drawText(*mBitmap->createTextLayout(t, smallFont, Color::kRed), upperLeft);
@@ -2518,7 +2517,7 @@ public:
         }
         float h = yMax - yMin;
         auto expectedCap = smallMetrics.capHeight.toPixels(dpi);
-        if (std::abs(h - expectedCap) > 0.5f) {
+        if (std::abs(h - expectedCap) > 0.666f) {
             return "Expected default font overridden with cap-height " + std::to_string(expectedCap) + ", got " + std::to_string(h);
         }
 
@@ -2568,7 +2567,8 @@ public:
         if (!(brightest.red() >= expected.red() - kErr && brightest.red() <= expected.red() + kErr &&
               brightest.green() >= expected.green() - kErr && brightest.green() <= expected.green() + kErr &&
               brightest.blue() >= expected.blue() - kErr && brightest.blue() <= expected.blue() + kErr)) {
-            return createColorError(msg, expected, brightest);
+            return createColorError(msg + " at (" + std::to_string(x) + ", " + std::to_string(y) + ")",
+                                    expected, brightest);
         }
         return "";
     }

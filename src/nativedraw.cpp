@@ -319,9 +319,9 @@ std::size_t Color::hash() const
 #if defined(__APPLE__)
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR || TARGET_OS_MACCATALYST
 const Font kDefaultReplacementFont("SFUI", PicaPt(12.0f)); // San Francisco since iOS 9
-#elif
+#else
 const Font kDefaultReplacementFont("SFNS", PicaPt(12.0f)); // San Francisco since macOS 10.11
-#endif
+#endif  // is iPhone
 #elif defined(_WIN32) || defined(_WIN64)  // _WIN32 covers everything except 64-bit ARM
 const Font kDefaultReplacementFont("Segoe UI", PicaPt(12.0f));  // Segoe UI has shipped since Windows 7
 #else

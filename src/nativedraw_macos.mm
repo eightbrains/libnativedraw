@@ -229,6 +229,7 @@ public:
             assert(run.color.isSet);
             bool hasSuperscript = (run.superscript.isSet && run.superscript.value);
             bool hasSubscript = (run.subscript.isSet && run.subscript.value);
+            CGFloat baselineOffset = 0.0;
             NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
             Font font = run.font.value;
             if (!run.font.isSet || isFamilyDefault(font)) {
@@ -244,12 +245,14 @@ public:
             // San Francisco font, and is not available on iOS (although @"NSSuperScript"
             // apparently works). So we need to do it ourselves.
             NSFont *nsfont72 = gFontMgr.get(font, mDPI);
+            // The metrics, for purposes of determining the height of the first line
+            // is the original font size.
+            runMetrics.push_back(font.metrics(dc));
             if (hasSuperscript || hasSubscript) {
                 font = font.fontWithScaledPointSize(0.666f);  // Adobe, OpenOffice
                 NSFont *nssmall72 = gFontMgr.get(font, mDPI);
                 // We do the super/sub-scripting by setting the baseline offset.
                 // Note that macOS' origin is lower-left, instead of our upper-right
-                CGFloat baselineOffset;
                 if (hasSuperscript) {  // align top of super caps with top of regular caps
                     baselineOffset = nsfont72.capHeight - nssmall72.capHeight;
                 } else {
@@ -260,7 +263,6 @@ public:
             }
             // Now we can actually set the font
             attr[NSFontAttributeName] = nsfont72;
-            runMetrics.push_back(font.metrics(dc));
 
             Color fg = run.color.value;
             if ((run.color.value.red() == Color::kTextDefault.red() &&
@@ -285,31 +287,54 @@ public:
             if (run.underlineStyle.isSet && run.underlineStyle.value != kUnderlineNone
                 && !(run.underlineColor.isSet && run.underlineColor.value.alpha() == 0.0f))
             {
-                switch (run.underlineStyle.value) {
-                    case kUnderlineNone:  break;
-                    case kUnderlineSingle:
-                        attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
-                        break;
-                    case kUnderlineDouble:
-                        attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleDouble);
-                        break;
-                    case kUnderlineDotted:
-                        attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle | NSUnderlineStylePatternDot);
-                        break;
-                    case kUnderlineWavy: {
-                        Color c = fg;
-                        if (run.underlineColor.isSet) {
-                            c = run.underlineColor.value;
+                if (baselineOffset == 0.0) {
+                    switch (run.underlineStyle.value) {
+                        case kUnderlineNone:  break;
+                        case kUnderlineSingle:
+                            attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
+                            break;
+                        case kUnderlineDouble:
+                            attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleDouble);
+                            break;
+                        case kUnderlineDotted:
+                            attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle | NSUnderlineStylePatternDot);
+                            break;
+                        case kUnderlineWavy: {
+                            Color c = fg;
+                            if (run.underlineColor.isSet) {
+                                c = run.underlineColor.value;
+                            }
+                            lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kWavy,
+                                              c, nsfont72.underlineThickness,
+                                              nsfont72.ascender - baselineOffset + std::abs(nsfont72.underlinePosition) });
+                            break;
                         }
-                        lines.push_back({ run.startIndex, run.startIndex + run.length,
-                                          Line::Type::kUnderlineWavy,
-                                          c, nsfont72.underlineThickness,
-                                          nsfont72.ascender + std::abs(nsfont72.underlinePosition) });
-                        break;
                     }
-                }
-                if (run.underlineColor.isSet) {
-                    attr[NSUnderlineColorAttributeName] = makeNSColor(run.underlineColor.value);
+                    if (run.underlineColor.isSet) {
+                        attr[NSUnderlineColorAttributeName] = makeNSColor(run.underlineColor.value);
+                    }
+                } else {
+                    Color c = fg;
+                    if (run.underlineColor.isSet) {
+                        c = run.underlineColor.value;
+                    }
+                    CGFloat thickness = std::max(CGFloat(1.0), nsfont72.underlineThickness);
+                    Line::Type lineType = Line::Type::kSingle;
+                    switch (run.underlineStyle.value) {
+                        case kUnderlineNone:  break;
+                        case kUnderlineSingle:
+                            lineType = Line::Type::kSingle;  break;
+                        case kUnderlineDouble:
+                            lineType = Line::Type::kDouble;  break;
+                        case kUnderlineDotted:
+                            lineType = Line::Type::kDotted;  break;
+                        case kUnderlineWavy: {
+                            lineType = Line::Type::kWavy;  break;
+                        }
+                    }
+                    lines.push_back({ run.startIndex, run.startIndex + run.length,
+                                      lineType, c, thickness,
+                                      nsfont72.ascender - baselineOffset + std::abs(nsfont72.underlinePosition) });
                 }
             }
             if (run.strikethrough.isSet && run.strikethrough.value
@@ -319,13 +344,13 @@ public:
 
                 auto c = (run.strikethroughColor.isSet
                                 ? run.strikethroughColor.value
-                                : run.color.value);  // run.color should always be set (see assert above)
+                                : fg);
                 // Strikethough should go through middle of x-height, so <strike>ABCabc</strike>
                 // is nice and continuous. What thickness should it be? Underline thickness seems to be
                 // as good as any, but truncate to increments of one unit.
-                lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kStrikethrough,
+                lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kSingle,
                                   c, std::max(1.0, nsfont72.underlineThickness),
-                                  nsfont72.ascender - 0.5f * nsfont72.xHeight });
+                                  nsfont72.ascender - baselineOffset - 0.5f * nsfont72.xHeight });
             }
             if (run.characterSpacing.isSet && run.characterSpacing.value != PicaPt::kZero) {
                 attr[NSKernAttributeName] = @(run.characterSpacing.value.toPixels(mDPI));
@@ -604,16 +629,33 @@ public:
                 CGContextSetLineWidth(gc, line.width);
                 CGContextSetRGBStrokeColor(gc, line.color.red(), line.color.green(),
                                            line.color.blue(), line.color.alpha());
-                if (line.type == Line::Type::kStrikethrough) {
-                    CGContextStrokeLineSegments(gc, line.line, 2);
-                } else {
-                    auto pts = createWavyLinePoints(line.line[0].x, line.line[0].y, line.line[1].x, line.width);
-                    CGContextBeginPath(gc);
-                    CGContextMoveToPoint(gc, pts[0], pts[1]);
-                    for (size_t i = 2;  i < pts.size();  i += 2) {
-                        CGContextAddLineToPoint(gc, pts[i], pts[i + 1]);
+                switch (line.type) {
+                    case Line::Type::kSingle:
+                        CGContextStrokeLineSegments(gc, line.line, 2);
+                        break;
+                    case Line::Type::kDouble:
+                        CGContextStrokeLineSegments(gc, line.line, 2);
+                        CGContextTranslateCTM(gc, 0.0, 2.0 * line.width);
+                        CGContextStrokeLineSegments(gc, line.line, 2);
+                        CGContextTranslateCTM(gc, 0.0, -2.0 * line.width);
+                        break;
+                    case Line::Type::kDotted: {
+                        CGFloat dash = PicaPt(3).toPixels(mDPI);
+                        CGContextSetLineDash(gc, 0.0, &dash, 1);
+                        CGContextStrokeLineSegments(gc, line.line, 2);
+                        CGContextSetLineDash(gc, 0.0, nullptr, 0);
+                        break;
                     }
-                    CGContextStrokePath(gc);
+                    case Line::Type::kWavy: {
+                        auto pts = createWavyLinePoints(line.line[0].x, line.line[0].y, line.line[1].x, line.width);
+                        CGContextBeginPath(gc);
+                        CGContextMoveToPoint(gc, pts[0], pts[1]);
+                        for (size_t i = 2;  i < pts.size();  i += 2) {
+                            CGContextAddLineToPoint(gc, pts[i], pts[i + 1]);
+                        }
+                        CGContextStrokePath(gc);
+                        break;
+                    }
                 }
             }
         }
@@ -622,7 +664,7 @@ public:
 
 private:
     struct Line {
-        enum class Type { kStrikethrough, kUnderlineWavy } type;
+        enum class Type { kSingle, kDouble, kDotted, kWavy } type;
         Color color;
         CGFloat width;
         CGPoint line[2];

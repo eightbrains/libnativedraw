@@ -227,6 +227,8 @@ public:
         for (auto &run : text.runs()) {
             assert(run.font.isSet);
             assert(run.color.isSet);
+            bool hasSuperscript = (run.superscript.isSet && run.superscript.value);
+            bool hasSubscript = (run.subscript.isSet && run.subscript.value);
             NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
             Font font = run.font.value;
             if (!run.font.isSet || isFamilyDefault(font)) {
@@ -238,7 +240,25 @@ public:
             if (run.pointSize.isSet) { font.setPointSize(run.pointSize.value); }
             if (run.bold.isSet) { font.setBold(run.bold.value); }
             if (run.italic.isSet) { font.setItalic(run.italic.value); }
+            // Although there is NSSuperscriptAttributeName, it appears to only work for the
+            // San Francisco font, and is not available on iOS (although @"NSSuperScript"
+            // apparently works). So we need to do it ourselves.
             NSFont *nsfont72 = gFontMgr.get(font, mDPI);
+            if (hasSuperscript || hasSubscript) {
+                font = font.fontWithScaledPointSize(0.666f);  // Adobe, OpenOffice
+                NSFont *nssmall72 = gFontMgr.get(font, mDPI);
+                // We do the super/sub-scripting by setting the baseline offset.
+                // Note that macOS' origin is lower-left, instead of our upper-right
+                CGFloat baselineOffset;
+                if (hasSuperscript) {  // align top of super caps with top of regular caps
+                    baselineOffset = nsfont72.capHeight - nssmall72.capHeight;
+                } else {
+                    baselineOffset = nsfont72.descender - nssmall72.descender;
+                }
+                attr[NSBaselineOffsetAttributeName] = @(baselineOffset);
+                nsfont72 = nssmall72;
+            }
+            // Now we can actually set the font
             attr[NSFontAttributeName] = nsfont72;
             runMetrics.push_back(font.metrics(dc));
 

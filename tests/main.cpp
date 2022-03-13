@@ -2435,8 +2435,7 @@ public:
         mBitmap->endDraw();
         auto glyphRect = glyphs[0].frame + upperLeft;
         baselineYPt = upperLeft.y + metrics.ascent;
-        maybeErr = verifyTextRect(glyphRect,
-                                  int((upperLeft.x + glyphRect.x).toPixels(dpi)),
+        maybeErr = verifyTextRect(int((upperLeft.x + glyphRect.x).toPixels(dpi)),
                                   int((upperLeft.x + glyphRect.maxX()).toPixels(dpi)),
                                   int(baselineYPt.toPixels(dpi)) + 1,
                                   (baselineYPt - smallMetrics.capHeight).toPixels(dpi),
@@ -2446,8 +2445,7 @@ public:
             return maybeErr;
         }
         glyphRect = glyphs[2].frame + upperLeft;
-        maybeErr = verifyTextRect(glyphRect,
-                                  int((upperLeft.x + glyphRect.x).toPixels(dpi)),
+        maybeErr = verifyTextRect(int((upperLeft.x + glyphRect.x).toPixels(dpi)),
                                   int((upperLeft.x + glyphRect.maxX()).toPixels(dpi)),
                                   int(baselineYPt.toPixels(dpi)) + 1,
                                   (baselineYPt - metrics.capHeight).toPixels(dpi),
@@ -2456,6 +2454,41 @@ public:
         if (!maybeErr.empty()) {
             return maybeErr;
         }
+
+        // ----
+        // Verify superscript
+        Point upperLeft4(PicaPt::fromPixels(4, dpi), PicaPt::fromPixels(4, dpi));
+        t = Text("EE", font, Color::kRed);
+        t.setSuperscript(1, 1);
+        layout = mBitmap->createTextLayout(t);
+        glyphs = layout->glyphs();
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft4);
+        mBitmap->endDraw();
+        // ceil to next pixel on left to prevent previous (normal) glyph from bleeding over
+        x = int(std::ceil(glyphs[1].frame.x.toPixels(dpi)));
+        auto w = int(glyphs[1].frame.width.toPixels(dpi));
+        auto expectedY = (upperLeft4.y + metrics.ascent - metrics.capHeight).toPixels(dpi);
+        auto expectedHeight = (0.666f * metrics.capHeight.toPixels(dpi));  // sub/super-script is 66% high
+        maybeErr = verifyTextRect(x, x + w, mBitmap->height(), expectedY, expectedHeight,
+                                  "superscript incorrectly located");
+
+        // ----
+        // Verify subscript
+        t = Text("yy", font, Color::kRed);
+        t.setSubscript(1, 1);
+        layout = mBitmap->createTextLayout(t);
+        glyphs = layout->glyphs();
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft4);
+        mBitmap->endDraw();
+        x = int(std::ceil(glyphs[1].frame.x.toPixels(dpi)));
+        w = int(glyphs[1].frame.width.toPixels(dpi));
+        expectedY = (upperLeft4.y + metrics.ascent + metrics.descent).toPixels(dpi) - expectedHeight;
+        maybeErr = verifyTextRect(x, x + w, mBitmap->height(), expectedY, expectedHeight,
+                                  "subscript incorrectly located");
 
         // ----
         // TODO: Verify character spacing works
@@ -2504,18 +2537,8 @@ public:
         mBitmap->fill(Color::kBlack);
         mBitmap->drawText(*mBitmap->createTextLayout(t, smallFont, Color::kRed), upperLeft);
         mBitmap->endDraw();
-        float yMin = 10000.0f;
-        float yMax = 0.0f;
-        for (int y = 0;  y < mBitmap->height();  ++y) {
-            for (int x = 0;  x < mBitmap->width();  ++x) {
-                auto c = mBitmap->pixelAt(x, y);
-                if (c.red() > 0.0f) {
-                    yMin = std::min(yMin, float(y) + 1.0f - c.red());
-                    yMax = std::max(yMax, float(y) + c.red());
-                }
-            }
-        }
-        float h = yMax - yMin;
+        auto yExt = findRedYExtents(0, 0, mBitmap->width(), mBitmap->height());
+        float h = yExt.yMax - yExt.yMin;
         auto expectedCap = smallMetrics.capHeight.toPixels(dpi);
         if (std::abs(h - expectedCap) > 0.666f) {
             return "Expected default font overridden with cap-height " + std::to_string(expectedCap) + ", got " + std::to_string(h);
@@ -2598,39 +2621,7 @@ public:
         return (n >= 3);
     }
 
-    float findLineStart(int y)
-    {
-        for (int x = 0;  x < mBitmap->width();  ++x) {
-            auto c = mBitmap->pixelAt(x, y);
-            if (c.blue() > 0.0) {
-                // For the first pixel, the line will be to the right, so advance one
-                // and subtract the percent the pixel is full.
-                return float(x + 1) - c.blue();
-            }
-        }
-        return -1.0f;
-    }
-
-    float findLineWidth(int y)
-    {
-        float start = -1.0f;
-        float end = -1.0f;
-        for (int x = 0;  x < mBitmap->width();  ++x) {
-            auto c = mBitmap->pixelAt(x, y);
-            if (c.blue() > 0.0) {
-                if (start < 0.0f) {
-                    // For the first pixel, the line will be to the right, so advance one
-                    // and subtract the percent the pixel is full.
-                    start = float(x + 1) - c.blue();
-                } else {
-                    end = float(x) + c.blue();
-                }
-            }
-        }
-        return std::max(0.0f, end - start);
-    }
-
-    std::string verifyTextRect(const Rect& glyphRect, int startX, int endX, int endY,
+    std::string verifyTextRect(int startX, int endX, int endY,
                                float expectedY,
                                float expectedHeight, const std::string& msg)
     {
@@ -2661,6 +2652,55 @@ public:
               << "), got (" << minX << ", " << minY << ", " << maxX - minX << ", " << maxY - minY << ")";
             return s.str();
         }
+    }
+
+    struct YExtents { float yMin; float yMax; };
+    YExtents findRedYExtents(int x0, int y0, int width, int height)
+    {
+        float yMin = 10000.0f;
+        float yMax = 0.0f;
+        for (int y = y0;  y < y0 + height;  ++y) {
+            for (int x = x0;  x < x0 + width;  ++x) {
+                auto c = mBitmap->pixelAt(x, y);
+                if (c.red() > 0.0f) {
+                    yMin = std::min(yMin, float(y) + 1.0f - c.red());
+                    yMax = std::max(yMax, float(y) + c.red());
+                }
+            }
+        }
+        return { yMin, yMax };
+    }
+
+    float findLineStart(int y)
+    {
+        for (int x = 0;  x < mBitmap->width();  ++x) {
+            auto c = mBitmap->pixelAt(x, y);
+            if (c.blue() > 0.0) {
+                // For the first pixel, the line will be to the right, so advance one
+                // and subtract the percent the pixel is full.
+                return float(x + 1) - c.blue();
+            }
+        }
+        return -1.0f;
+    }
+
+    float findLineWidth(int y)
+    {
+        float start = -1.0f;
+        float end = -1.0f;
+        for (int x = 0;  x < mBitmap->width();  ++x) {
+            auto c = mBitmap->pixelAt(x, y);
+            if (c.blue() > 0.0) {
+                if (start < 0.0f) {
+                    // For the first pixel, the line will be to the right, so advance one
+                    // and subtract the percent the pixel is full.
+                    start = float(x + 1) - c.blue();
+                } else {
+                    end = float(x) + c.blue();
+                }
+            }
+        }
+        return std::max(0.0f, end - start);
     }
 };
 

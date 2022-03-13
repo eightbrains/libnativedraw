@@ -612,6 +612,24 @@ Text& Text::setOutlineColor(const Color &c, int start /*= 0*/, int len /*= -1*/)
     return *this;
 }
 
+Text& Text::setSuperscript(int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.superscript = true;
+    r.subscript = false;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
+Text& Text::setSubscript(int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.superscript = false;
+    r.subscript = true;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
+
 //Text& Text::setCharacterSpacing(const PicaPt& spacing, int start /*= 0*/, int len /*= -1*/)
 //{
 //    TextRun r;

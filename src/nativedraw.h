@@ -512,6 +512,8 @@ struct TextRun
     PointTextAttr outlineStrokeWidth;
     UnderlineStyleTextAttr underlineStyle;
     BoolTextAttr strikethrough;
+    BoolTextAttr superscript;
+    BoolTextAttr subscript;
     PointTextAttr characterSpacing;
 
     int startIndex = 0;
@@ -547,6 +549,8 @@ public:
     Text& setUnderlineColor(const Color& c, int start = 0, int len = -1);
     Text& setStrikethrough(int start = 0, int len = -1);
     Text& setStrikethroughColor(const Color& c, int start = 0, int len = -1);
+    Text& setSuperscript(int start = 0, int len = -1);
+    Text& setSubscript(int start = 0, int len = -1);
     //Text& setCharacterSpacing(const PicaPt& spacing, int start = 0, int len = -1);
     Text& setOutlineStrokeWidth(const PicaPt& width, int start = 0, int len = -1);
     Text& setOutlineColor(const Color& c, int start = 0, int len = -1);

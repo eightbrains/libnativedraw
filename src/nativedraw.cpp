@@ -331,6 +331,13 @@ const Color kDefaultReplacementColor(0.0f, 0.0f, 0.0f);  // Color::kBlack may no
 
 bool isFamilyDefault(const Font& f) { return f.family().empty(); }
 bool isPointSizeDefault(const Font& f) { return (f.pointSize() == PicaPt::kZero); }
+Font fontSizedForSuperSubscript(const Font& f)
+{
+    // OpenOffice and Adobe use 58% and 58.3%, respectively, which implies a
+    // baseline offset of 33% and 33.3%. This seems small, so I am trying out
+    // 66%.
+    return f.fontWithScaledPointSize(0.666f);
+}
 
 struct Font::Impl
 {

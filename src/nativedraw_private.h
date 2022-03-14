@@ -83,6 +83,7 @@ extern const Font kDefaultReplacementFont;
 extern const Color kDefaultReplacementColor;
 bool isFamilyDefault(const Font& f);
 bool isPointSizeDefault(const Font& f);
+Font fontSizedForSuperSubscript(const Font& f);
 
 struct BezierPath::Impl
 {

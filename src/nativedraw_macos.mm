@@ -249,7 +249,7 @@ public:
             // is the original font size.
             runMetrics.push_back(font.metrics(dc));
             if (hasSuperscript || hasSubscript) {
-                font = font.fontWithScaledPointSize(0.666f);  // Adobe, OpenOffice
+                font = fontSizedForSuperSubscript(font);
                 NSFont *nssmall72 = gFontMgr.get(font, mDPI);
                 // We do the super/sub-scripting by setting the baseline offset.
                 // Note that macOS' origin is lower-left, instead of our upper-right

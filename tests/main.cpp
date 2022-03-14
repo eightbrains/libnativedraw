@@ -2136,7 +2136,7 @@ class RichTextTest : public BitmapTest
 {
     static constexpr int kPointSize = 13;
 public:
-    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 1.5f * kPointSize) {}
+    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 1.666f * kPointSize) {}
 
     std::string run() override
     {
@@ -2457,38 +2457,44 @@ public:
 
         // ----
         // Verify superscript
-        Point upperLeft4(PicaPt::fromPixels(4, dpi), PicaPt::fromPixels(4, dpi));
-        t = Text("EE", font, Color::kRed);
+        Point upperLeft4y(PicaPt::fromPixels(0, dpi), PicaPt::fromPixels(4, dpi));
+        t = Text("EE", font, fg);
         t.setSuperscript(1, 1);
         layout = mBitmap->createTextLayout(t);
         glyphs = layout->glyphs();
         mBitmap->beginDraw();
         mBitmap->fill(Color::kBlack);
-        mBitmap->drawText(*layout, upperLeft4);
+        mBitmap->drawText(*layout, upperLeft4y);
         mBitmap->endDraw();
         // ceil to next pixel on left to prevent previous (normal) glyph from bleeding over
         x = int(std::ceil(glyphs[1].frame.x.toPixels(dpi)));
         auto w = int(glyphs[1].frame.width.toPixels(dpi));
-        auto expectedY = (upperLeft4.y + metrics.ascent - metrics.capHeight).toPixels(dpi);
+        auto expectedY = (upperLeft4y.y + metrics.ascent - metrics.capHeight).toPixels(dpi);
         auto expectedHeight = (0.666f * metrics.capHeight.toPixels(dpi));  // sub/super-script is 66% high
         maybeErr = verifyTextRect(x, x + w, mBitmap->height(), expectedY, expectedHeight,
                                   "superscript incorrectly located");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
 
         // ----
         // Verify subscript
-        t = Text("yy", font, Color::kRed);
-        t.setSubscript(1, 1);
+        t = Text("y y", font, fg);  // the space avoids the subscript y being kerned too close
+        t.setSubscript(2, 1);
         layout = mBitmap->createTextLayout(t);
         glyphs = layout->glyphs();
         mBitmap->beginDraw();
         mBitmap->fill(Color::kBlack);
-        mBitmap->drawText(*layout, upperLeft4);
+        mBitmap->drawText(*layout, upperLeft4y);
         mBitmap->endDraw();
-        x = int(std::ceil(glyphs[1].frame.x.toPixels(dpi)));
-        w = int(glyphs[1].frame.width.toPixels(dpi));
-        expectedY = (upperLeft4.y + metrics.ascent + metrics.descent).toPixels(dpi) - expectedHeight;
+        x = int(glyphs[2].frame.x.toPixels(dpi));
+        w = int(glyphs[2].frame.width.toPixels(dpi));
+        expectedY = (upperLeft4y.y + metrics.ascent + metrics.descent).toPixels(dpi) - expectedHeight;
         maybeErr = verifyTextRect(x, x + w, mBitmap->height(), expectedY, expectedHeight,
                                   "subscript incorrectly located");
+        if (!maybeErr.empty()) {
+            return maybeErr;
+        }
 
         // ----
         // TODO: Verify character spacing works

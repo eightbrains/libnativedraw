@@ -611,43 +611,59 @@ public:
         // letter spacing), and then assign a "color" value that is an index
         // into the array of TextRuns, for later.
         std::vector<Font::Metrics> runMetrics;
+        std::vector<int> runBaselinePangoOffsets;
         runMetrics.reserve(text.runs().size());
+        runBaselinePangoOffsets.reserve(text.runs().size());
         std::vector<PangoAttribute*> attrs;
         attrs.reserve(2 * text.runs().size());
         for (size_t i = 0;  i < text.runs().size();  ++i) {
             auto &run = text.runs()[i];
             assert(run.font.isSet);
             assert(run.color.isSet);
-            bool isFontDefault = false;
+            bool hasSuperscript = (run.superscript.isSet && run.superscript.value);
+            bool hasSubscript = (run.subscript.isSet && run.subscript.value);
+            int baselineOffsetPango = 0;  // up is positive
             Font font = run.font.value;
             if (!run.font.isSet || isFamilyDefault(font)) {
                 font.setFamily(defaultReplacementFont.family());
-                isFontDefault = true;
                 if (isPointSizeDefault(font)) {
                     font.setPointSize(defaultReplacementFont.pointSize());
-                    isFontDefault = false;
                 }
             }
             if (run.pointSize.isSet) {
                 font.setPointSize(run.pointSize.value);
-                isFontDefault = false;
             }
             if (run.bold.isSet) {
                 font.setBold(run.bold.value);
-                isFontDefault = false;
             }
             if (run.italic.isSet) {
                 font.setItalic(run.italic.value);
-                isFontDefault = false;
             }
-            if (!isFontDefault) {
-                PangoFontInfo* pf = gFontMgr.get(font, mDPI);
+            // For purposes of calculating the first line ascent, we want
+            // the font metrics before changing the size for super/subscript.
+            runMetrics.push_back(font.metrics(dc));
+            {
+                PangoFontInfo *pf = gFontMgr.get(font, mDPI);
+                if (hasSuperscript || hasSubscript) {
+                    font = fontSizedForSuperSubscript(font);
+                    PangoFontInfo *pfSmall = gFontMgr.get(font, mDPI);
+                    if (hasSuperscript) {
+                        baselineOffsetPango = int(std::round((pf->metrics.capHeight - pfSmall->metrics.capHeight).toPixels(mDPI) * float(PANGO_SCALE)));
+                    } else if (hasSubscript) {
+                        baselineOffsetPango = -int(std::round((pf->metrics.descent- pfSmall->metrics.descent).toPixels(mDPI) * float(PANGO_SCALE)));
+                    }
+                    pf = pfSmall;
+                    auto *a = pango_attr_rise_new(baselineOffsetPango);
+                    a->start_index = run.startIndex;
+                    a->end_index = run.startIndex + run.length;
+                    attrs.push_back(a);
+                }
                 auto *a = pango_attr_font_desc_new(pf->fontDescription);
                 a->start_index = run.startIndex;
                 a->end_index = run.startIndex + run.length;
                 attrs.push_back(a);
             }
-            runMetrics.push_back(font.metrics(dc));
+            runBaselinePangoOffsets.push_back(baselineOffsetPango);
 
             if (run.characterSpacing.isSet && run.characterSpacing.value != PicaPt::kZero) {
                 // TODO: maybe Pango assumes 96 DPI (see Font above)?
@@ -667,6 +683,7 @@ public:
             attrs.push_back(a);
             }
         }
+        assert(runMetrics.size() == runBaselinePangoOffsets.size());
 
         if (!attrs.empty()) {
             auto *attrList = pango_attr_list_new();
@@ -790,7 +807,7 @@ public:
                     PangoFontMetrics *pgmetrics = pango_font_get_metrics(pgfont, pglang);
                     // Note that underline position is *above* the baseline
                     // (so usually negative).
-                    auto pgY = pgBaseline - pango_font_metrics_get_underline_position(pgmetrics);
+                    auto pgY = pgBaseline - runBaselinePangoOffsets[runIdx] - pango_font_metrics_get_underline_position(pgmetrics);
                     auto pgWidth = pango_font_metrics_get_underline_thickness(pgmetrics);
                     DrawPangoText::Cmd cmd = DrawPangoText::kStroke;
                     switch (textRun.underlineStyle.value) {
@@ -819,7 +836,8 @@ public:
                 }
                 int pgTextY = pgBaseline;
                 if (fg.alpha() > 0.0f) {
-                    mDraw.addText(run, extents.x, pgBaseline);
+                    mDraw.addText(run, extents.x,
+                                  pgBaseline - runBaselinePangoOffsets[runIdx]);
                 }
 
                 // Draw outlined text
@@ -843,8 +861,9 @@ public:
                     } else {
                         thickness = strokeWidth.toPixels(mDPI);
                     }
-                    mDraw.addStrokedText(run, extents.x, pgBaseline,
-                                         thickness / kInvPangoScale);
+                    mDraw.addStrokedText(run, extents.x,
+                                   pgBaseline - runBaselinePangoOffsets[runIdx],
+                                   thickness / kInvPangoScale);
                 }
 
                 // Draw strikethroughs *after* text
@@ -859,7 +878,7 @@ public:
                     PangoFont *pgfont = run->item->analysis.font;
                     PangoLanguage *pglang = run->item->analysis.language;
                     PangoFontMetrics *pgmetrics = pango_font_get_metrics(pgfont, pglang);
-                    auto pgY = pgBaseline - pango_font_metrics_get_strikethrough_position(pgmetrics);
+                    auto pgY = pgBaseline - runBaselinePangoOffsets[runIdx] - pango_font_metrics_get_strikethrough_position(pgmetrics);
                     auto pgWidth = pango_font_metrics_get_strikethrough_thickness(pgmetrics);
                     mDraw.addLine(DrawPangoText::kStroke,
                                   extents.x, pgY,

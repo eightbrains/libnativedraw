@@ -519,6 +519,9 @@ public:
                 float dy;  // change from baseline
                 float w;
             } stroke;
+            struct {
+                float baselineOffset;  // +ve is down
+            } text;
         } arg;
     };
 
@@ -541,19 +544,21 @@ public:
         mCmds.back().arg.rect.descent = d2dDescent;
     }
 
-    void addText()
+    void addText(float d2dBaselineOffset)
     {
         mCmds.emplace_back();
         mCmds.back().cmd = kDrawText;
+        mCmds.back().arg.text.baselineOffset = d2dBaselineOffset;
     }
 
-    void addStrokedText(float d2dThickness)
+    void addStrokedText(float d2dThickness, float d2dBaselineOffset)
     {
         mCmds.emplace_back();
         mCmds.back().cmd = kStrokedText;
         mCmds.back().arg.stroke.w = d2dThickness;
         mCmds.emplace_back();
         mCmds.back().cmd = kDrawText;
+        mCmds.back().arg.text.baselineOffset = d2dBaselineOffset;
     }
 
     void addLine(Cmd type, float d2dDeltaY, float d2dStrokeWidth)
@@ -571,7 +576,8 @@ public:
         mCmds.back().cmd = kDone;
     }
 
-    void drawRun(ID2D1RenderTarget *gc, ID2D1PathGeometry *glyphs, ID2D1SolidColorBrush *brush,
+    void drawRun(ID2D1RenderTarget *gc, D2D1::Matrix3x2F &matrix,
+                 ID2D1PathGeometry *glyphs, ID2D1SolidColorBrush *brush,
                  float width, int startIdx) const
     {
         // Note that (0, 0) is at left of baseline
@@ -665,8 +671,7 @@ public:
                     }
                 }
                 gc->DrawGeometry((ID2D1PathGeometry*)path->nativePathForDPI(mDPI, false),
-                                 brush, cmd.arg.stroke.w,
-                                 strokeStyle);
+                                 brush, cmd.arg.stroke.w, strokeStyle);
                 if (strokeStyle) {
                     strokeStyle->Release();
                 }
@@ -692,7 +697,15 @@ public:
                 break;
             }
             case kDrawText: {
-                gc->FillGeometry(glyphs, brush);
+                if (cmd.arg.text.baselineOffset == 0.0f) {
+                    gc->FillGeometry(glyphs, brush);
+                } else {
+                    D2D1::Matrix3x2F newM;
+                    newM.SetProduct(D2D1::Matrix3x2F::Translation(D2D1::SizeF(0.0f, cmd.arg.text.baselineOffset)), matrix);
+                    gc->SetTransform(newM);
+                    gc->FillGeometry(glyphs, brush);
+                    gc->SetTransform(matrix);
+                }
 #if kDebugDraw
                 std::cout << "[debug]   draw text" << std::endl;
 #endif
@@ -700,7 +713,16 @@ public:
             }
             case kStrokedText: {
                 auto text = mCmds[i++];
-                gc->DrawGeometry(glyphs, brush, cmd.arg.stroke.w, nullptr /*= solid stroke*/);
+                if (cmd.arg.text.baselineOffset == 0.0f) {
+                    gc->DrawGeometry(glyphs, brush, cmd.arg.stroke.w, nullptr /*= solid stroke*/);
+                }
+                else {
+                    D2D1::Matrix3x2F newM;
+                    newM.SetProduct(D2D1::Matrix3x2F::Translation(D2D1::SizeF(0.0f, cmd.arg.text.baselineOffset)), matrix);
+                    gc->SetTransform(newM);
+                    gc->DrawGeometry(glyphs, brush, cmd.arg.stroke.w, nullptr /*= solid stroke*/);
+                    gc->SetTransform(matrix);
+                }
 #if kDebugDraw
                 std::cout << "[debug]   stroke text: " << std::endl;
 #endif
@@ -879,7 +901,7 @@ public:
         for (int i = 0;  i < nGlyphs;  ++i) {
             width += dir * glyphRun->glyphAdvances[i];
         }
-        mDrawCmds.drawRun(gc, geometry, mSolid, width, startIndex);
+        mDrawCmds.drawRun(gc, runMatrix, geometry, mSolid, width, startIndex);
 
         gc->SetTransform(mMatrix);
 
@@ -1082,6 +1104,10 @@ public:
                 utf8to16[run.startIndex],
                 utf8to16[run.startIndex + run.length] - utf8to16[run.startIndex]  };
 
+            bool hasSuperscript = (run.superscript.isSet && run.superscript.value);
+            bool hasSubscript = (run.subscript.isSet && run.subscript.value);
+            FLOAT d2dBaselineOffset = 0.0f;  // positive is down
+
             // DirectWrite does not allow us to store enough information in the runs,
             // so we encode drawing information ourselves. The drawing effect is an
             // application-defined pointer, and we define it to be the starting index
@@ -1091,39 +1117,46 @@ public:
             }
             mLayout->SetDrawingEffect(new COMifiedIndex(int(mDraw.size())), range);
 
-            bool isFontDefault = false;
             Font font = run.font.value;
             if (!run.font.isSet || isFamilyDefault(font)) {
                 font.setFamily(defaultReplacementFont.family());
-                isFontDefault = true;
                 if (isPointSizeDefault(font)) {
                     font.setPointSize(defaultReplacementFont.pointSize());
-                    isFontDefault = false;
                 }
             }
             if (run.pointSize.isSet) {
                 font.setPointSize(run.pointSize.value);
-                isFontDefault = false;
             }
             if (run.bold.isSet) {
                 font.setBold(run.bold.value);
-                isFontDefault = false;
             }
             if (run.italic.isSet) {
                 font.setItalic(run.italic.value);
-                isFontDefault = false;
-            }
-            if (!isFontDefault) {
-                auto &fontInfo = gFontMgr.get(font, mDPI);
-                WCHAR* utf16Family = gUTF16Cache.get(font.family());
-                mLayout->SetFontFamilyName(utf16Family, range);
-                mLayout->SetFontSize(fontInfo.d2dSize, range);
-                mLayout->SetFontStyle(fontInfo.d2dStyle, range);
-                mLayout->SetFontWeight(fontInfo.d2dWeight, range);
             }
 
+            // For the purposes of determining the first line ascent we want
+            // the normal font, not the super-/sub-scripted size.
             currentMetrics = font.metrics(dc);
             runMetrics.push_back(currentMetrics);
+            {
+                auto *fontInfo = &gFontMgr.get(font, mDPI);
+                if (hasSuperscript || hasSubscript) {
+                    font = fontSizedForSuperSubscript(font);
+                    auto* smallFontInfo = &gFontMgr.get(font, mDPI);
+                    if (hasSuperscript) {
+                        d2dBaselineOffset = -toD2D(fontInfo->metrics.capHeight - smallFontInfo->metrics.capHeight);
+                    } else if (hasSubscript) {
+                        d2dBaselineOffset = toD2D(fontInfo->metrics.descent - smallFontInfo->metrics.descent);
+                    }
+                    fontInfo = smallFontInfo;
+                    currentMetrics = font.metrics(dc);
+                }
+                WCHAR* utf16Family = gUTF16Cache.get(font.family());
+                mLayout->SetFontFamilyName(utf16Family, range);
+                mLayout->SetFontSize(fontInfo->d2dSize, range);
+                mLayout->SetFontStyle(fontInfo->d2dStyle, range);
+                mLayout->SetFontWeight(fontInfo->d2dWeight, range);
+            }
 
             bool bgSet = (run.backgroundColor.isSet && run.backgroundColor.value.alpha() > 0.0f);
             bool underlineSet = (run.underlineStyle.isSet
@@ -1187,7 +1220,7 @@ public:
                     cmd = DrawRunCommands::kWavyStroke;
                     break;
                 }
-                mDraw.addLine(cmd, d2dDeltaY, d2dWidth);
+                mDraw.addLine(cmd, d2dDeltaY + d2dBaselineOffset, d2dWidth);
             }
 
             // Draw the actual text (unless transparent)
@@ -1196,7 +1229,7 @@ public:
                 currentColor = fgRGBA;
             }
             if (fg.alpha() > 0.0f) {
-                mDraw.addText();
+                mDraw.addText(d2dBaselineOffset);
             }
 
             // Draw outlined text
@@ -1220,7 +1253,7 @@ public:
                 } else {
                     thickness = PicaPt(1.0f);
                 }
-                mDraw.addStrokedText(toD2D(thickness));
+                mDraw.addStrokedText(toD2D(thickness), d2dBaselineOffset);
             }
 
             // Draw strikethroughs *after* text
@@ -1233,7 +1266,7 @@ public:
             }
             if (strikethroughSet) {
                 mDraw.addLine(DrawRunCommands::kStroke,
-                              toD2D(-0.5f * currentMetrics.xHeight),
+                              toD2D(-0.5f * currentMetrics.xHeight) + d2dBaselineOffset,
                               toD2D(currentMetrics.underlineThickness));
             }
 

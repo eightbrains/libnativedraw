@@ -181,6 +181,8 @@ static ResourceManager<Font, NSFont*> gFontMgr(createFont, destroyFont);
 //----------------------------- Text Obj --------------------------------------
 class TextObj : public TextLayout
 {
+    static constexpr CGFloat kTextFrameHeight = 10000.0;
+
 public:
     TextObj(const DrawContext& dc, const Text& text, const Size& size, int alignment,
             TextWrapping wrap = kWrapWord,
@@ -206,6 +208,7 @@ public:
 
         mLen = int(text.text().size());
         mDPI = 72.0f;
+        mFirstLineOffsetForGlyphs = PicaPt::kZero;
 
         assert(!text.runs().empty());
         assert(text.runs()[0].startIndex == 0);
@@ -387,11 +390,12 @@ public:
             }
         }
 
-        auto horizAlign = (alignment & Alignment::kHorizMask);
-        if ((horizAlign != Alignment::kLeft && horizAlign != Alignment::kNone) || wrap != kWrapWord) {
-            NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
-            NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
 
+        NSMutableParagraphStyle *paragraphStyle = nil;
+        auto horizAlign = (alignment & Alignment::kHorizMask);
+        auto vertAlign = (alignment & Alignment::kVertMask);
+        if ((horizAlign != Alignment::kLeft && horizAlign != Alignment::kNone) || wrap != kWrapWord) {
+            paragraphStyle = [[NSMutableParagraphStyle alloc] init];
             if ((alignment & Alignment::kHorizMask) == Alignment::kRight) {
                 [paragraphStyle setAlignment:NSTextAlignmentRight];
             } else if ((alignment & Alignment::kHorizMask) == Alignment::kHCenter) {
@@ -400,13 +404,25 @@ public:
             if (wrap == kWrapNone) {
                 [paragraphStyle setLineBreakMode:NSLineBreakByClipping];
             }
+        }
+        if (text.lineHeightMultiple() > 0.0) {
+            if (paragraphStyle == nil) {
+                NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
+                paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+                attr[NSParagraphStyleAttributeName] = paragraphStyle;
+                [nsstring addAttributes:attr range:NSMakeRange(0, nsstring.length)];
+            }
+            [paragraphStyle setLineHeightMultiple:text.lineHeightMultiple()];
+        }
+        if (paragraphStyle != nil) {
+            NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
             attr[NSParagraphStyleAttributeName] = paragraphStyle;
             [nsstring addAttributes:attr range:NSMakeRange(0, nsstring.length)];
         }
 
         mLayout = CTFramesetterCreateWithAttributedString((CFAttributedStringRef)nsstring);
         CGFloat w = (size.width == PicaPt::kZero ? 10000 : size.width.asFloat());
-        auto r = CGRectMake(0, 0, w, 10000);
+        auto r = CGRectMake(0, 0, w, kTextFrameHeight);
         mPath = CGPathCreateWithRect(r, nullptr);
         mFrame = CTFramesetterCreateFrame(mLayout,
                                           CFRangeMake(0, 0), // entire string
@@ -446,6 +462,17 @@ public:
         mAlignmentOffsetPx = CGPointMake(alignOffset.x.asFloat(),
                                          alignOffset.y.asFloat());
 
+        // As far as I can tell, if -setLineHeightMultiple: is set on the paragraph style,
+        // CTFrameGetLineOrigins() returns everything offset as if there were another line
+        // above the first line. However, CTFrameDraw() does not include the top offset.
+        // This looks like a bug in CoreText :( The documentation is ... minimal, so this
+        // is an attempt to reverse-engineer what the calculation is. Save this here, so that
+        // we can reduce the (already-excessive) number of space-eating member variables in
+        // this class.
+        if (text.lineHeightMultiple() > 0.0) {
+            mFirstLineOffsetForGlyphs = -firstLineMetrics.lineHeight * (text.lineHeightMultiple() - 1.0f);
+        }
+
         if (!lines.empty()) {
             glyphs();
             assert(mGlyphsInitialized); // paranoia: assert in case glyphs() gets optimized out
@@ -466,7 +493,7 @@ public:
                 auto xEndPt = xStartPt;
                 while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < line.utf8end) {
                     if (mGlyphs[glyphIdx].frame.y > yPt) {
-                        CGFloat y = std::trunc(yPt.asFloat() + line.dy) + 0.5;  // floor(x) differs for +ve and -ve x!
+                        CGFloat y = std::trunc(yPt.asFloat() + line.dy) - 0.5;  // floor(x) differs for +ve and -ve x!
                         auto p1 = CGPointMake(xStartPt.asFloat(), y);
                         auto p2 = CGPointMake(xEndPt.asFloat(), y);
                         mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
@@ -476,7 +503,7 @@ public:
                     xEndPt = mGlyphs[glyphIdx].frame.maxX();
                     ++glyphIdx;
                 }
-                CGFloat y = std::trunc(yPt.asFloat() + line.dy) + 0.5;
+                CGFloat y = std::trunc(yPt.asFloat() + line.dy) - 0.5;
                 auto p1 = CGPointMake(xStartPt.asFloat(), y);
                 auto p2 = CGPointMake(xEndPt.asFloat(), y);
                 mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
@@ -510,25 +537,34 @@ public:
         mMetrics.advanceY = PicaPt(0);
 
         NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
+        if (lines.count == 0) {  // early return here so we can assume lines > 0 later
+            return mMetrics;
+        }
+
         double width;
         CGFloat ascent, descent, leading;
         for (int i = 0;  i < lines.count;  ++i) {
             width = CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
                                                &ascent, &descent, &leading);
             mMetrics.width = std::max(mMetrics.width, PicaPt::fromPixels(width, mDPI));
-            mMetrics.height += PicaPt::fromPixels(ascent + descent, mDPI);
-            if (i < lines.count - 1) {
-                mMetrics.height += PicaPt::fromPixels(leading, mDPI);
-            } else {
-                mMetrics.advanceY += PicaPt::fromPixels(leading, mDPI);
-            }
         }
         mMetrics.advanceX = mMetrics.width;
-        if (lines.count > 1) {
-            mMetrics.advanceY += mMetrics.height;  // height, plus leading from above
+        CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:0], &ascent, &descent, &leading);
+        if (lines.count == 1) {
+            mMetrics.height = PicaPt::fromPixels(ascent + descent, mDPI);
         } else {
-            mMetrics.advanceY = PicaPt(0);
+            std::vector<CGPoint> lineOrigins;
+            lineOrigins.resize(lines.count);
+            CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 0 /* 0=all */), &lineOrigins[0]);  // copies, grr
+            CGFloat startY = lineOrigins[0].y + ascent;
+            CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:lines.count - 1],
+                                       &ascent, &descent, &leading);
+            CGFloat endY = lineOrigins.back().y - descent;
+            // These are OS text coordinates which are flipped: the top of the text is at mFrame.size.height
+            // and the bottom of the text is mFrame.size.height - height. So endY < startY.
+            mMetrics.height = PicaPt::fromPixels(startY - endY, mDPI);
         }
+        mMetrics.advanceY = PicaPt::fromPixels(leading, mDPI);
 
         return mMetrics;
     }
@@ -545,17 +581,16 @@ public:
                 nGlyphs += CTLineGetGlyphCount((CTLineRef)[lines objectAtIndex:i]);
             }
             mGlyphs.reserve(nGlyphs);
+
             CGFloat x = 0.0;
-            PicaPt lineYPt = PicaPt::kZero;
             for (int i = 0;  i < lines.count;  ++i) {
                 CGFloat lineAscent, lineDescent, lineLeading;
                 CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
                                            &lineAscent, &lineDescent, &lineLeading);
-                PicaPt baselinePt = lineYPt + PicaPt::fromPixels(lineAscent, mDPI);
+                PicaPt baselinePt = PicaPt::fromPixels(kTextFrameHeight - lineOrigins[i].y, mDPI) + mFirstLineOffsetForGlyphs;
                 x = lineOrigins[i].x;
                 NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:i]);
                 int nRuns = runs.count;
-                CGFloat maxLineHeight = 0.0;
                 for (int r = 0;  r < nRuns;  ++r) {
                     CTRunRef run = (__bridge CTRunRef)[runs objectAtIndex:r];
                     int n = CTRunGetGlyphCount(run);
@@ -579,9 +614,7 @@ public:
                                  hPt),
                             });
                     }
-                    maxLineHeight = std::max(maxLineHeight, ascent + descent + leading);
                 }
-                lineYPt += PicaPt::fromPixels(maxLineHeight, mDPI);
             }
             if (!mGlyphs.empty()) {
                 mGlyphs.back().indexOfNext = mLen;
@@ -597,7 +630,6 @@ public:
         // You'd think that adding the ascent to the upper left y would give the
         // baseline, but it can be off by a pixel (notably between Arial and Helvetica).
         // Use the line origin for more consistent results.
-        NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
         CGPoint origin;
         CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 1), &origin);
 
@@ -678,6 +710,7 @@ private:
     CTFrameRef mFrame;
     CGPoint mAlignmentOffsetPx;
     PicaPt mFirstLineAscender;
+    PicaPt mFirstLineOffsetForGlyphs;
     mutable std::vector<Glyph> mGlyphs;
     mutable bool mGlyphsInitialized = false;
     mutable TextMetrics mMetrics;

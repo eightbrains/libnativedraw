@@ -317,11 +317,7 @@ std::size_t Color::hash() const
 
 //-----------------------------------------------------------------------------
 #if defined(__APPLE__)
-#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR || TARGET_OS_MACCATALYST
-const Font kDefaultReplacementFont("SFUI", PicaPt(12.0f)); // San Francisco since iOS 9
-#else
-const Font kDefaultReplacementFont("SFNS", PicaPt(12.0f)); // San Francisco since macOS 10.11
-#endif  // is iPhone
+const Font kDefaultReplacementFont(".AppleSystemUIFont", PicaPt(12.0f)); // San Francisco since iOS9 / macOS 10.11
 #elif defined(_WIN32) || defined(_WIN64)  // _WIN32 covers everything except 64-bit ARM
 const Font kDefaultReplacementFont("Segoe UI", PicaPt(12.0f));  // Segoe UI has shipped since Windows 7
 #else
@@ -514,6 +510,7 @@ Text::Text()
 Text::Text(const std::string& utf8, const Font& font, const Color& fgColor)
 {
     mText = utf8;
+    mParagraph.lineHeightMultiple = 0.0f;  // platform default
     mRuns.emplace_back();
     mRuns.back().startIndex = 0;
     mRuns.back().length = int(mText.length());
@@ -637,13 +634,13 @@ Text& Text::setSubscript(int start /*= 0*/, int len /*= -1*/)
     return *this;
 }
 
-//Text& Text::setCharacterSpacing(const PicaPt& spacing, int start /*= 0*/, int len /*= -1*/)
-//{
-//    TextRun r;
-//    r.characterSpacing = spacing;
-//    ND_NAMESPACE::setTextRun(*this, &r, start, len);
-//    return *this;
-//}
+Text& Text::setCharacterSpacing(const PicaPt& extraSpacing, int start /*= 0*/, int len /*= -1*/)
+{
+    TextRun r;
+    r.characterSpacing = extraSpacing;
+    ND_NAMESPACE::setTextRun(*this, &r, start, len);
+    return *this;
+}
 
 Text& Text::setTextRun(const TextRun& run)
 {
@@ -737,6 +734,14 @@ const std::vector<TextRun>& Text::runs() const
 {
     return mRuns;
 }
+
+Text& Text::setLineHeightMultiple(float factor)
+{
+    mParagraph.lineHeightMultiple = factor;
+    return *this;
+}
+
+float Text::lineHeightMultiple() const { return mParagraph.lineHeightMultiple; }
 
 //-----------------------------------------------------------------------------
 const TextLayout::Glyph* TextLayout::glyphAtPoint(const Point& p) const

@@ -551,18 +551,28 @@ public:
     Text& setStrikethroughColor(const Color& c, int start = 0, int len = -1);
     Text& setSuperscript(int start = 0, int len = -1);
     Text& setSubscript(int start = 0, int len = -1);
-    //Text& setCharacterSpacing(const PicaPt& spacing, int start = 0, int len = -1);
+    Text& setCharacterSpacing(const PicaPt& extraSpacing, int start = 0, int len = -1);
     Text& setOutlineStrokeWidth(const PicaPt& width, int start = 0, int len = -1);
     Text& setOutlineColor(const Color& c, int start = 0, int len = -1);
     Text& setTextRun(const TextRun& run);
     Text& setTextRuns(const std::vector<TextRun>& runs);
 
+    // Sets the line height as a multiple of the natural font line height.
+    // Default: 0.0 (unset: platform default)
+    Text& setLineHeightMultiple(float factor);
+    float lineHeightMultiple() const;
+
     const TextRun& runAt(int index) const;
     const std::vector<TextRun>& runs() const;
 
 private:
+    struct ParagraphStyle {
+        float lineHeightMultiple;
+    };
+
     std::string mText;
     std::vector<TextRun> mRuns;
+    ParagraphStyle mParagraph;
 
     int runIndexFor(int index) const;
 };

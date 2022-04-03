@@ -1936,7 +1936,7 @@ class BasicTextLayoutTest : public BitmapTest
 {
     static constexpr int kPointSize = 13;
 public:
-    BasicTextLayoutTest() : BitmapTest("basic createTextLayout()", 1.75 * kPointSize, 1.75 * kPointSize) {}
+    BasicTextLayoutTest() : BitmapTest("basic createTextLayout()", 1, 1) {}
 
     std::string run() override
     {
@@ -1964,11 +1964,11 @@ public:
         if (glyphs.size() != 2) {
             return std::string("Incorrect number of glyphs for 'im': got ") + std::to_string(glyphs.size()) + ", expected 2";
         }
-        if (std::abs(glyphs[0].frame.y.toPixels(dpi)) > 0.001f) {
-            return "Glyph frames should start at the top of the line (baseline - ascent); for idx=0, got y=" + std::to_string(glyphs[0].frame.y.toPixels(dpi)) + ", expected 0.0";
+        if (glyphs[0].frame.y.toPixels(dpi) < -0.001f || glyphs[0].frame.y.toPixels(dpi) >= 1.0f) {
+            return "Glyph frames should start at the top of the line (baseline - ascent); for idx=0, got y=" + std::to_string(glyphs[0].frame.y.toPixels(dpi)) + ", expected in [0.0, 1.0)";
         }
-        if (std::abs(glyphs[1].frame.y.toPixels(dpi)) > 0.001f) {
-            return "Glyph frames should start at the top of the line (baseline - ascent); for idx=1, got y=" + std::to_string(glyphs[1].frame.y.toPixels(dpi)) + ", expected 0.0";
+        if (glyphs[1].frame.y.toPixels(dpi) < -0.001f || glyphs[1].frame.y.toPixels(dpi) >= 1.0f) {
+            return "Glyph frames should start at the top of the line (baseline - ascent); for idx=1, got y=" + std::to_string(glyphs[1].frame.y.toPixels(dpi)) + ", expected in [0.0, 1.0)";
         }
 
         // Spaces should have glyphs
@@ -1983,11 +1983,11 @@ public:
             return "Incorrect number of glyphs for 'A \\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
         }
         auto secondLineYPt = metrics.lineHeight;
-        auto epsilon = PicaPt(0.001);
+        auto epsilon = PicaPt::fromPixels(.5, dpi); // spacing may vary due to baseline pixel snapping
         if (glyphs[3].frame.y < glyphs[0].frame.maxY() || glyphs[3].frame.y >= secondLineYPt + epsilon) {
             return "Top of frame in second line is incorrect: expected " +
                    std::to_string((glyphs[0].frame.maxY() + metrics.leading).toPixels(dpi)) +
-                   ", got " + std::to_string(glyphs[3].frame.y.toPixels(dpi));
+                   " px, got " + std::to_string(glyphs[3].frame.y.toPixels(dpi)) + " px";
         }
         if (glyphs[0].line != 0) {
             return "glyph[0].line is incorrect: expected 0, got " + std::to_string(glyphs[0].line);
@@ -2136,7 +2136,7 @@ class RichTextTest : public BitmapTest
 {
     static constexpr int kPointSize = 13;
 public:
-    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 1.666f * kPointSize) {}
+    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 2.5f * kPointSize) {}
 
     std::string run() override
     {
@@ -2173,7 +2173,7 @@ public:
         // We probably aren't going to get a 100% on pixel for the O, so there will be some
         // alpha blending from the red background.
         Color bluest;
-        int y = int(0.25f * float(mBitmap->height()));
+        int y = int(0.4f * float(kPointSize));
         for (int x = 0;  x < mBitmap->width();  ++x) {
             auto c = mBitmap->pixelAt(x, y);
             if (c.blue() > bluest.blue()) {
@@ -2281,7 +2281,12 @@ public:
         t.setStrikethroughColor(strikeColor);
         auto layout = mBitmap->createTextLayout(t);
         auto glyphs = layout->glyphs();
+#ifdef __APPLE__
+        // For small fonts Apple's rendering will place lines closer together than ascent + descent
+        if (glyphs[2].line != glyphs[0].line + 1) {
+#else
         if (glyphs[2].frame.y < glyphs[0].frame.maxY()) {
+#endif // __APPLE__
             return std::string("text \"") + std::string(twoLineText) + "\" does not have two lines";
         }
         mBitmap->beginDraw();
@@ -2394,27 +2399,27 @@ public:
 
         // ----
         // Verify multiple font sizes works okay
-        // ... test glyphs here, so that glyph test earlier can pass even if different
-        //     font sizes has not been implemented yet
+        // ... test glyphs here rather than in previous layout text, so that glyph test
+        //     earlier can pass even if different font sizes has not been implemented yet
         t = Text("TT", smallFont, fg);
         t.setFont(font, 1, 2);
         glyphs = mBitmap->createTextLayout(t)->glyphs();
-        auto baselineYPt = metrics.ascent;
+        auto baselineYPt = metrics.ascent + glyphs[1].frame.y;
         auto expectedYPt = baselineYPt - smallMetrics.ascent;
         if (std::abs((glyphs[0].frame.y - expectedYPt).asFloat()) > 0.01f) {
             return createFloatError("'tT' small font glyph.frame.y is incorrect",
                                     expectedYPt.asFloat(), glyphs[0].frame.y.asFloat());
         }
-        if (std::abs((glyphs[1].frame.y - PicaPt::kZero).asFloat()) > 0.01f) {
+        if (glyphs[1].frame.y.asFloat() <= -0.01f && glyphs[1].frame.y.toPixels(dpi) >= 1.0f) {
             return createFloatError("'tT' large font glyph.frame.y is incorrect",
                                     PicaPt::kZero.asFloat(), glyphs[1].frame.y.asFloat());
         }
         t = Text("TT", smallFont, fg);
         t.setFont(font, 0, 1);
         glyphs = mBitmap->createTextLayout(t)->glyphs();
-        baselineYPt = metrics.ascent;
+        baselineYPt = metrics.ascent + glyphs[0].frame.y;
         expectedYPt = baselineYPt - smallMetrics.ascent;
-        if (std::abs((glyphs[0].frame.y - PicaPt::kZero).asFloat()) > 0.01f) {
+        if (glyphs[0].frame.y.asFloat() <= -0.01f && glyphs[0].frame.y.toPixels(dpi) >= 1.0f) {
             return createFloatError("'Tt' large font glyph.frame.y is incorrect",
                                     PicaPt::kZero.asFloat(), glyphs[0].frame.y.asFloat());
         }
@@ -2497,7 +2502,86 @@ public:
         }
 
         // ----
-        // TODO: Verify character spacing works
+        // Verify character spacing
+        t = Text("HH", smallFont, Color::kRed);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft4y);
+        mBitmap->endDraw();
+        auto normalExtents = findRedExtents(0, 0, mBitmap->width(), mBitmap->height());
+        float extraSpacingPx = 3.0f;
+        t = Text("HH", smallFont, Color::kRed);
+        t.setCharacterSpacing(PicaPt::fromPixels(extraSpacingPx, dpi));
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft4y);
+        mBitmap->endDraw();
+        auto extraExtents = findRedExtents(0, 0, mBitmap->width(), mBitmap->height());
+        normalWidth = normalExtents.xMax - normalExtents.xMin;
+        float extraWidth = extraExtents.xMax - extraExtents.xMin;
+        if (std::abs((extraWidth - normalWidth) - extraSpacingPx) > 0.75f) {
+            std::stringstream s;
+            s << "expected " << extraSpacingPx << " px of character spacing" << ", got " << (extraWidth - normalWidth) << " px (normal width: " << normalWidth << ", width with spacing: " << extraWidth;
+            return s.str();
+        }
+
+        // ----
+        // Verify line height multiple
+        // (Use regular size font because macOS uses lineHeight < 100% for small font,
+        // leading to overlapping glyph frames)
+        t = Text("E\nE", font, Color::kRed);
+        t.setLineHeightMultiple(1.0f);
+        layout = mBitmap->createTextLayout(t);
+        auto normalGlyphs = layout->glyphs();  // local var is not reference: copies
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, upperLeft);
+        mBitmap->endDraw();
+        normalExtents = findRedExtents(0, 0, mBitmap->width(), mBitmap->height());
+        extraSpacingPx = 3.0f;
+        t = Text("E\nE", font, Color::kRed);
+        t.setLineHeightMultiple((metrics.lineHeight.toPixels(dpi) + extraSpacingPx) / metrics.lineHeight.toPixels(dpi));
+        layout = mBitmap->createTextLayout(t);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
+        mBitmap->endDraw();
+        extraExtents = findRedExtents(0, 0, mBitmap->width(), mBitmap->height());
+        auto normalHeight = normalExtents.yMax - normalExtents.yMin;
+        auto extraHeight = extraExtents.yMax - extraExtents.yMin;
+        if (std::abs((extraHeight - normalHeight) - extraSpacingPx) > 0.75f) {
+            std::stringstream s;
+            s << "expected " << extraSpacingPx << " px of line spacing" << ", got " << (extraHeight - normalHeight) << " px (normal height: " << normalHeight << ", height with spacing: " << extraHeight;
+            return s.str();
+        }
+        auto normalGlyphLineHeight = normalGlyphs[2].frame.y - normalGlyphs[0].frame.y;
+        auto extraGlyphLineHeight = layout->glyphs()[2].frame.y - layout->glyphs()[0].frame.y;
+        if (std::abs((extraGlyphLineHeight - normalGlyphLineHeight).toPixels(dpi) - extraSpacingPx) > 0.1f) {
+            std::stringstream s;
+            s << "expected glyph line height of "
+              << (normalGlyphLineHeight + PicaPt::fromPixels(extraSpacingPx, dpi)).toPixels(72.0f)
+              << " pt, got " << extraGlyphLineHeight.toPixels(72.0f) << " pt";
+            return s.str();
+        }
+        // Check that the line height doesn't cause the glyph tops to move
+        t = Text("E\nE", font, Color::kRed);
+        t.setLineHeightMultiple(2.0f);
+        glyphs = mBitmap->createTextLayout(t)->glyphs();
+        if (std::abs((glyphs[0].frame.y - normalGlyphs[0].frame.y).toPixels(dpi)) > 0.5f) {
+            return "first line frame.y is not correct with lineHeight = 200%: expected " +
+                    std::to_string(normalGlyphs[0].frame.y.asFloat()) + " pt, got " +
+                    std::to_string(glyphs[0].frame.y.asFloat()) + " pt";
+        }
+        // Check that glyphs with line height and bottom alignment works
+        auto glyphsHeight = glyphs.back().frame.maxY() - glyphs.front().frame.y;
+        Size size(PicaPt(1000), PicaPt(1000));
+        glyphs = mBitmap->createTextLayout(t, size, Alignment::kLeft | Alignment::kBottom)->glyphs();
+        if (std::abs(size.height.asFloat() - glyphs.back().frame.maxY().asFloat()) < 0.001) {
+            return "expected bottom of last glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string(size.height.asFloat()) + ", got " + std::to_string(glyphs.back().frame.maxY().asFloat());
+        }
+        if (std::abs((size.height - glyphsHeight - glyphs.front().frame.maxY()).asFloat()) < 0.001) {
+            return "expected bottom of first glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string((size.height - glyphsHeight).asFloat()) + ", got " + std::to_string(glyphs.front().frame.maxY().asFloat());
+        }
 
         // ----
         // Verify default colors
@@ -2543,8 +2627,8 @@ public:
         mBitmap->fill(Color::kBlack);
         mBitmap->drawText(*mBitmap->createTextLayout(t, smallFont, Color::kRed), upperLeft);
         mBitmap->endDraw();
-        auto yExt = findRedYExtents(0, 0, mBitmap->width(), mBitmap->height());
-        float h = yExt.yMax - yExt.yMin;
+        auto ext = findRedExtents(0, 0, mBitmap->width(), mBitmap->height());
+        float h = ext.yMax - ext.yMin;
         auto expectedCap = smallMetrics.capHeight.toPixels(dpi);
         if (std::abs(h - expectedCap) > 0.666f) {
             return "Expected default font overridden with cap-height " + std::to_string(expectedCap) + ", got " + std::to_string(h);
@@ -2660,21 +2744,25 @@ public:
         }
     }
 
-    struct YExtents { float yMin; float yMax; };
-    YExtents findRedYExtents(int x0, int y0, int width, int height)
+    struct Extents { float xMin; float xMax; float yMin; float yMax; };
+    Extents findRedExtents(int x0, int y0, int width, int height)
     {
+        float xMin = 10000.0f;
+        float xMax = 0.0f;
         float yMin = 10000.0f;
         float yMax = 0.0f;
         for (int y = y0;  y < y0 + height;  ++y) {
             for (int x = x0;  x < x0 + width;  ++x) {
                 auto c = mBitmap->pixelAt(x, y);
                 if (c.red() > 0.0f) {
+                    xMin = std::min(xMin, float(x) + 1.0f - c.red());
+                    xMax = std::max(xMax, float(x) + c.red());
                     yMin = std::min(yMin, float(y) + 1.0f - c.red());
                     yMax = std::max(yMax, float(y) + c.red());
                 }
             }
         }
-        return { yMin, yMax };
+        return { xMin, xMax, yMin, yMax };
     }
 
     float findLineStart(int y)
@@ -2792,8 +2880,6 @@ public:
         Color bgColor(255, 255, 255, 255);
         Color rectColor(0, 255, 0, 255);
         auto src = makeImage(rectColor);  // returns copy of the temp context
-        auto destDPI = mBitmap->dpi();
-        auto srcDPI = src->dpi();
 
         mBitmap->beginDraw();
         mBitmap->drawImage(src, Rect::fromPixels(0, 0, mBitmap->width(), mBitmap->height(), mBitmap->dpi()));

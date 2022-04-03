@@ -566,6 +566,11 @@ public:
         }
         mMetrics.advanceY = PicaPt::fromPixels(leading, mDPI);
 
+        // Note: This does not produce the same result as NSAttributedString -size, at least for
+        // the height value. I am not sure what the difference is, or if it is important.
+        // In practice, the only problem would be aligning with kBottom, possibly even only
+        // with Text::lineHeightMultiple() set.
+
         return mMetrics;
     }
 

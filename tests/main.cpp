@@ -2576,11 +2576,11 @@ public:
         auto glyphsHeight = glyphs.back().frame.maxY() - glyphs.front().frame.y;
         Size size(PicaPt(1000), PicaPt(1000));
         glyphs = mBitmap->createTextLayout(t, size, Alignment::kLeft | Alignment::kBottom)->glyphs();
-        if (std::abs(size.height.asFloat() - glyphs.back().frame.maxY().asFloat()) < 0.001) {
+        if (std::abs(size.height.asFloat() - glyphs.back().frame.maxY().asFloat()) > 0.001) {
             return "expected bottom of last glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string(size.height.asFloat()) + ", got " + std::to_string(glyphs.back().frame.maxY().asFloat());
         }
-        if (std::abs((size.height - glyphsHeight - glyphs.front().frame.maxY()).asFloat()) < 0.001) {
-            return "expected bottom of first glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string((size.height - glyphsHeight).asFloat()) + ", got " + std::to_string(glyphs.front().frame.maxY().asFloat());
+        if (std::abs((size.height - glyphsHeight - glyphs.front().frame.y).asFloat()) > 0.001) {
+            return "expected top of first glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string((size.height - glyphsHeight).asFloat()) + ", got " + std::to_string(glyphs.front().frame.y.asFloat());
         }
 
         // ----

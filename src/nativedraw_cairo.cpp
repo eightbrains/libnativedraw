@@ -685,6 +685,22 @@ public:
         }
         assert(runMetrics.size() == runBaselinePangoOffsets.size());
 
+        if (text.lineHeightMultiple() > 0.0f) {
+#if PANGO_VERSION_CHECK(1, 44, 0)
+            // This takes into account the line height (given by the largest
+            // font in the line).
+            pango_layout_set_line_spacing(mLayout, text.lineHeightMultiple());
+#else
+            // This is just a constant space between the lines. It will only
+            // be correct if the fonts are the same height in all the runs,
+            // (which at least is the common case).
+            if (!runMetrics.empty()) {
+                float spacing = (text.lineHeightMultiple() - 1.0f) * runMetrics[0].lineHeight.toPixels(mDPI) * float(PANGO_SCALE);
+                pango_layout_set_spacing(mLayout, spacing);
+            }
+#endif
+        }
+
         if (!attrs.empty()) {
             auto *attrList = pango_attr_list_new();
             for (auto *a : attrs) {

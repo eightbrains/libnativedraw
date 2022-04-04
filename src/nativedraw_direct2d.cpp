@@ -42,6 +42,7 @@
 #include <dxgi1_2.h>
 #include <dwrite.h>
 #include <dwrite_1.h>
+#include <dwrite_3.h>
 #include <stringapiset.h>
 
 namespace ND_NAMESPACE {
@@ -1090,6 +1091,21 @@ public:
                                                  format, w, 10000.0f, &mLayout);
         delete [] wtext;
 
+        if (text.lineHeightMultiple() > 0.0f) {
+            IDWriteTextLayout3* layout3 = nullptr;
+            err = mLayout->QueryInterface(IID_PPV_ARGS(&layout3));
+            if (err == S_OK) {
+                DWRITE_LINE_SPACING opts;
+                opts.method = DWRITE_LINE_SPACING_METHOD_PROPORTIONAL;
+                opts.height = text.lineHeightMultiple();
+                opts.baseline = text.lineHeightMultiple();
+                opts.leadingBefore = 0.0f;
+                opts.fontLineGapUsage = DWRITE_FONT_LINE_GAP_USAGE_ENABLED;  // use font's leading
+                layout3->SetLineSpacing(&opts);
+                layout3->Release();
+            }
+        }
+
         // Set the text runs
         int currentColor = 0;  // transparent: pretty much guaranteed to force fg to be set
         Font::Metrics currentMetrics;
@@ -1276,10 +1292,12 @@ public:
                 err = mLayout->QueryInterface(IID_PPV_ARGS(&layout));
                 if (err == S_OK) {
                     // *sigh* We'd like to specify the space in-between characters,
-                    // but Microsoft only lets us specify the leading and trailing spacing.
+                    // but Microsoft only lets us specify the leading and trailing spacing,
+                    // which will lead to extra space at the beginning and end.
                     float d2dSpacing = toD2D(run.characterSpacing.value);
                     layout->SetCharacterSpacing(0.5f * d2dSpacing, 0.5f * d2dSpacing, 0.0f,
                         range);
+                    layout->Release();
                 }
             }
 
@@ -1316,6 +1334,13 @@ public:
         mFirstLineAscent = firstLineMetrics.ascent;
         mFirstLineLeading = firstLineMetrics.leading;
         mAlignmentOffset = calcOffsetForAlignment(alignment, size, firstLineMetrics);
+        if (text.lineHeightMultiple() > 0.0f) {
+            if (alignment & Alignment::kBottom) {
+                mAlignmentOffset.y += (text.lineHeightMultiple() - 1.0f) * (firstLineMetrics.lineHeight + firstLineMetrics.leading);
+            } else if (alignment & Alignment::kVCenter) {
+                mAlignmentOffset.y += 0.5f * (text.lineHeightMultiple() - 1.0f) * (firstLineMetrics.lineHeight + firstLineMetrics.leading);
+            }
+        }
 
         // So this is kind of hacky: calcFirstLineMetrics *might* have created
         // the glyphs in order to find line boundaries. We need to deallocate
@@ -1365,11 +1390,9 @@ public:
             lineMetrics = new DWRITE_LINE_METRICS[nLines];
             mLayout->GetLineMetrics(lineMetrics, nLines, &nLines);
 
-            // I'm not sure why I need to subtract the leading here. The actual drawing
-            // seems to work fine.
-            auto offsetY = mAlignmentOffset.y - mFirstLineLeading;
-            auto *glyphGetter = new GlyphGetter(mDPI, toD2D(offsetY), mUTF16To8,
-                                                lineMetrics, &mGlyphs);
+            // Same calculation as draw() does, except for the pixel-snapping.
+            auto offsetY = toD2D(mAlignmentOffset.y - (mBaseline - mFirstLineAscent));
+            auto* glyphGetter = new GlyphGetter(mDPI, offsetY, mUTF16To8, lineMetrics, &mGlyphs);
             mLayout->Draw(nullptr, glyphGetter, 0.0f, 0.0f);
             glyphGetter->Release();
 
@@ -1400,6 +1423,7 @@ public:
         // the ascending pixels stop exactly at the mathematical baseline.
         PicaPt actualBaseline = topLeft.y + mAlignmentOffset.y + mBaseline;
         PicaPt expectedBaseline = topLeft.y + mAlignmentOffset.y + mFirstLineAscent;
+
         // The GC uses units of DIPs (96-dpi) which may or may not correspond to actual
         // pixels. Since we need to snap to actual pixels, we need toPixels(), not toD2D().
         // Q: Should we take into account the scale factor?

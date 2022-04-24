@@ -31,7 +31,6 @@
 #include "nativedraw_private.h"
 
 #include <string>
-
 #include <unordered_map>
 
 #include <CoreGraphics/CoreGraphics.h>
@@ -182,70 +181,248 @@ static ResourceManager<Font, NSFont*> gFontMgr(createFont, destroyFont);
 //----------------------------- Text Obj --------------------------------------
 class TextObj : public TextLayout
 {
-public:
-    TextObj(const DrawContext& dc, const char *utf8, const PicaPt& width,
-            const Font& font, const Color& color, const Color& outlineColor,
-            const PicaPt& strokeWidthPica, int alignment, PaintMode mode)
-    {
-        mLen = strlen(utf8);
-        mDPI = 72.0f;
-        mFont = font;
+    static constexpr CGFloat kTextFrameHeight = 10000.0;
 
-        Color fillColor;
-        if (mode & kPaintFill) {
-            fillColor = color;
+public:
+    TextObj(const DrawContext& dc, const Text& text, const Size& size, int alignment,
+            TextWrapping wrap = kWrapWord,
+            const Font& defaultReplacementFont = kDefaultReplacementFont,
+            const Color& defaultReplacementColor = kDefaultReplacementColor)
+    {
+        struct RawLine {
+            int utf8start;
+            int utf8end;
+            Line::Type type;
+            Color color;
+            CGFloat width;
+            CGFloat dy;
+        };
+        std::vector<RawLine> lines;
+
+        auto makeNSColor = [](const Color& c) {
+            return [NSColor colorWithRed:CGFloat(c.red())
+                                   green:CGFloat(c.green())
+                                    blue:CGFloat(c.blue())
+                                   alpha:CGFloat(c.alpha())];
+        };
+
+        mLen = int(text.text().size());
+        mDPI = 72.0f;
+        mFirstLineOffsetForGlyphs = PicaPt::kZero;
+
+        assert(!text.runs().empty());
+        assert(text.runs()[0].startIndex == 0);
+        assert(text.runs().back().startIndex + text.runs().back().length == int(text.text().size()));
+
+        std::vector<int> utf8to16;
+        if (text.runs().size() == 1) {  // if we only have one run, it should be the entire text
+            assert(text.runs()[0].startIndex == 0 && text.runs()[0].length == int(text.text().size()));
         } else {
-            fillColor = Color::kTransparent;
+            utf8to16 = utf16IndicesForUTF8Indices(text.text().c_str());
         }
-        NSFont *nsfont72 = gFontMgr.get(font, mDPI);
-        NSColor *nsfill = [NSColor colorWithRed:CGFloat(fillColor.red())
-                                          green:CGFloat(fillColor.green())
-                                           blue:CGFloat(fillColor.blue())
-                                          alpha:CGFloat(fillColor.alpha())];
-        NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
-        attr[NSFontAttributeName] = nsfont72;
-        attr[NSForegroundColorAttributeName] = nsfill;
-        if ((alignment & Alignment::kHorizMask) != Alignment::kLeft) {
-            NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
-            
+
+        std::vector<Font::Metrics> runMetrics;
+        runMetrics.reserve(text.runs().size());
+
+        auto *nsstring = [[NSMutableAttributedString alloc]
+                          initWithString: [NSString stringWithUTF8String: text.text().c_str() ]];
+        bool lastRunSetBackground = false;
+        for (auto &run : text.runs()) {
+            assert(run.font.isSet);
+            assert(run.color.isSet);
+            bool hasSuperscript = (run.superscript.isSet && run.superscript.value);
+            bool hasSubscript = (run.subscript.isSet && run.subscript.value);
+            CGFloat baselineOffset = 0.0;
+            NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
+            Font font = run.font.value;
+            if (!run.font.isSet || isFamilyDefault(font)) {
+                font.setFamily(defaultReplacementFont.family());
+                if (isPointSizeDefault(font)) {
+                    font.setPointSize(defaultReplacementFont.pointSize());
+                }
+            }
+            if (run.pointSize.isSet) { font.setPointSize(run.pointSize.value); }
+            if (run.bold.isSet) { font.setBold(run.bold.value); }
+            if (run.italic.isSet) { font.setItalic(run.italic.value); }
+            // Although there is NSSuperscriptAttributeName, it appears to only work for the
+            // San Francisco font, and is not available on iOS (although @"NSSuperScript"
+            // apparently works). So we need to do it ourselves.
+            NSFont *nsfont72 = gFontMgr.get(font, mDPI);
+            // The metrics, for purposes of determining the height of the first line
+            // is the original font size.
+            runMetrics.push_back(font.metrics(dc));
+            if (hasSuperscript || hasSubscript) {
+                font = fontSizedForSuperSubscript(font);
+                NSFont *nssmall72 = gFontMgr.get(font, mDPI);
+                // We do the super/sub-scripting by setting the baseline offset.
+                // Note that macOS' origin is lower-left, instead of our upper-right
+                if (hasSuperscript) {  // align top of super caps with top of regular caps
+                    baselineOffset = nsfont72.capHeight - nssmall72.capHeight;
+                } else {
+                    baselineOffset = nsfont72.descender - nssmall72.descender;
+                }
+                attr[NSBaselineOffsetAttributeName] = @(baselineOffset);
+                nsfont72 = nssmall72;
+            }
+            // Now we can actually set the font
+            attr[NSFontAttributeName] = nsfont72;
+
+            Color fg = run.color.value;
+            if ((run.color.value.red() == Color::kTextDefault.red() &&
+                 run.color.value.green() == Color::kTextDefault.green() &&
+                 run.color.value.blue() == Color::kTextDefault.blue())) {
+                fg = defaultReplacementColor;
+                fg.setAlpha(run.color.value.alpha());
+            }
+            attr[NSForegroundColorAttributeName] = makeNSColor(fg);
+            if (run.backgroundColor.isSet && run.backgroundColor.value.alpha() > 0.0f) {
+                attr[NSBackgroundColorAttributeName] = makeNSColor(run.backgroundColor.value);
+                lastRunSetBackground = true;
+            } else {
+                if (lastRunSetBackground) {
+                    // This seems to be a bug in macOS? Setting background color will not unset
+                    // the next run unless specifically set to clear (and not nil), although
+                    // a line break resets it.
+                    attr[NSBackgroundColorAttributeName] = NSColor.clearColor;
+                    lastRunSetBackground = false;
+                }
+            }
+            if (run.underlineStyle.isSet && run.underlineStyle.value != kUnderlineNone
+                && !(run.underlineColor.isSet && run.underlineColor.value.alpha() == 0.0f))
+            {
+                if (baselineOffset == 0.0) {
+                    switch (run.underlineStyle.value) {
+                        case kUnderlineNone:  break;
+                        case kUnderlineSingle:
+                            attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle);
+                            break;
+                        case kUnderlineDouble:
+                            attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleDouble);
+                            break;
+                        case kUnderlineDotted:
+                            attr[NSUnderlineStyleAttributeName] = @(NSUnderlineStyleSingle | NSUnderlineStylePatternDot);
+                            break;
+                        case kUnderlineWavy: {
+                            Color c = fg;
+                            if (run.underlineColor.isSet) {
+                                c = run.underlineColor.value;
+                            }
+                            lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kWavy,
+                                              c, nsfont72.underlineThickness,
+                                              nsfont72.ascender - baselineOffset + std::abs(nsfont72.underlinePosition) });
+                            break;
+                        }
+                    }
+                    if (run.underlineColor.isSet) {
+                        attr[NSUnderlineColorAttributeName] = makeNSColor(run.underlineColor.value);
+                    }
+                } else {
+                    Color c = fg;
+                    if (run.underlineColor.isSet) {
+                        c = run.underlineColor.value;
+                    }
+                    CGFloat thickness = std::max(CGFloat(1.0), nsfont72.underlineThickness);
+                    Line::Type lineType = Line::Type::kSingle;
+                    switch (run.underlineStyle.value) {
+                        case kUnderlineNone:  break;
+                        case kUnderlineSingle:
+                            lineType = Line::Type::kSingle;  break;
+                        case kUnderlineDouble:
+                            lineType = Line::Type::kDouble;  break;
+                        case kUnderlineDotted:
+                            lineType = Line::Type::kDotted;  break;
+                        case kUnderlineWavy: {
+                            lineType = Line::Type::kWavy;  break;
+                        }
+                    }
+                    lines.push_back({ run.startIndex, run.startIndex + run.length,
+                                      lineType, c, thickness,
+                                      nsfont72.ascender - baselineOffset + std::abs(nsfont72.underlinePosition) });
+                }
+            }
+            if (run.strikethrough.isSet && run.strikethrough.value
+                && !(run.strikethroughColor.isSet && run.strikethroughColor.value.alpha() == 0.0f))
+            {
+                // CTFrameDraw() does not handle strikethrough attributes, argh
+
+                auto c = (run.strikethroughColor.isSet
+                                ? run.strikethroughColor.value
+                                : fg);
+                // Strikethough should go through middle of x-height, so <strike>ABCabc</strike>
+                // is nice and continuous. What thickness should it be? Underline thickness seems to be
+                // as good as any, but truncate to increments of one unit.
+                lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kSingle,
+                                  c, std::max(1.0, nsfont72.underlineThickness),
+                                  nsfont72.ascender - baselineOffset - 0.5f * nsfont72.xHeight });
+            }
+            if (run.characterSpacing.isSet && run.characterSpacing.value != PicaPt::kZero) {
+                attr[NSKernAttributeName] = @(run.characterSpacing.value.toPixels(mDPI));
+            }
+
+            if (run.outlineStrokeWidth.isSet && run.outlineStrokeWidth.value > PicaPt::kZero
+                && !(run.outlineColor.isSet && run.outlineColor.value.alpha() == 0.0f))
+            {
+                // Apple's documentation says that NSStrokeWidthAttributeName is a
+                // percentage of the font height (NOT the raw stroke width). Since
+                // the DPI is being handled by the transform, stroke width is
+                // already in the correct units (namely PicaPt), just like
+                // nsfont72.pointSize is (since we got the 72 dpi version of the
+                // font).
+                float strokeWidth = run.outlineStrokeWidth.value.asFloat();
+                strokeWidth = strokeWidth / nsfont72.pointSize * 100.0f;
+                if (run.outlineColor.isSet) {
+                    attr[NSStrokeColorAttributeName] = makeNSColor(run.outlineColor.value);
+                }
+                if (run.color.isSet && run.color.value.alpha() > 0.0f) {
+                    // Negative width signals to both stroke and fill
+                    attr[NSStrokeWidthAttributeName] = @(-strokeWidth);
+                } else {
+                    attr[NSStrokeWidthAttributeName] = @(strokeWidth);
+                }
+            }
+
+            if (utf8to16.empty()) {  // common case: only one run
+                [nsstring addAttributes:attr range:NSMakeRange(0, nsstring.length)];
+            } else {
+                auto start16 = utf8to16[run.startIndex];
+                auto length16 = utf8to16[run.startIndex + run.length] - start16;
+                [nsstring addAttributes:attr range:NSMakeRange(start16, length16)];
+            }
+        }
+
+
+        NSMutableParagraphStyle *paragraphStyle = nil;
+        auto horizAlign = (alignment & Alignment::kHorizMask);
+        auto vertAlign = (alignment & Alignment::kVertMask);
+        if ((horizAlign != Alignment::kLeft && horizAlign != Alignment::kNone) || wrap != kWrapWord) {
+            paragraphStyle = [[NSMutableParagraphStyle alloc] init];
             if ((alignment & Alignment::kHorizMask) == Alignment::kRight) {
                 [paragraphStyle setAlignment:NSTextAlignmentRight];
-            } else {
+            } else if ((alignment & Alignment::kHorizMask) == Alignment::kHCenter) {
                 [paragraphStyle setAlignment:NSTextAlignmentCenter];
             }
-            attr[NSParagraphStyleAttributeName] = paragraphStyle;
-        }
-
-        if (mode & kPaintStroke) {
-            Color strokeColor = outlineColor;
-            // Apple's documentation says that NSStrokeWidthAttributeName is a
-            // percentage of the font height (NOT the raw stroke width). Since
-            // the DPI is being handled by the transform, stroke width is
-            // already in the correct units (namely PicaPt), just like
-            // nsfont72.pointSize is (since we got the 72 dpi version of the
-            // font).
-            float strokeWidth = strokeWidthPica.asFloat();
-            strokeWidth = strokeWidth / nsfont72.pointSize * 100.0f;
-            NSColor *nsstroke = [NSColor colorWithRed:CGFloat(strokeColor.red())
-                                                green:CGFloat(strokeColor.green())
-                                                 blue:CGFloat(strokeColor.blue())
-                                                alpha:CGFloat(strokeColor.alpha())];
-            attr[NSStrokeColorAttributeName] = nsstroke;
-            if (mode & kPaintFill) {
-                // Negative width signals to both stroke and fill
-                attr[NSStrokeWidthAttributeName] = @(-strokeWidth);
-            } else {
-                attr[NSStrokeWidthAttributeName] = @(strokeWidth);
+            if (wrap == kWrapNone) {
+                [paragraphStyle setLineBreakMode:NSLineBreakByClipping];
             }
         }
-
-        auto *nsstring = [[NSAttributedString alloc]
-                          initWithString:[NSString stringWithUTF8String:utf8]
-                              attributes:attr];  // auto-releases on return
+        if (text.lineHeightMultiple() > 0.0) {
+            if (paragraphStyle == nil) {
+                NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
+                paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+                attr[NSParagraphStyleAttributeName] = paragraphStyle;
+                [nsstring addAttributes:attr range:NSMakeRange(0, nsstring.length)];
+            }
+            [paragraphStyle setLineHeightMultiple:text.lineHeightMultiple()];
+        }
+        if (paragraphStyle != nil) {
+            NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
+            attr[NSParagraphStyleAttributeName] = paragraphStyle;
+            [nsstring addAttributes:attr range:NSMakeRange(0, nsstring.length)];
+        }
 
         mLayout = CTFramesetterCreateWithAttributedString((CFAttributedStringRef)nsstring);
-        CGFloat w = (width == PicaPt::kZero ? 10000 : width.asFloat());
-        auto r = CGRectMake(0, 0, w, 10000);
+        CGFloat w = (size.width == PicaPt::kZero ? 10000 : size.width.asFloat());
+        auto r = CGRectMake(0, 0, w, kTextFrameHeight);
         mPath = CGPathCreateWithRect(r, nullptr);
         mFrame = CTFramesetterCreateFrame(mLayout,
                                           CFRangeMake(0, 0), // entire string
@@ -255,6 +432,88 @@ public:
         mMetrics.height = PicaPt(-1);
         mMetrics.advanceX = PicaPt(0);
         mMetrics.advanceY = PicaPt(0);
+
+        // If we have multiple-sized fonts, we need to create the glyphs to see where
+        // the line-breaks are.
+        auto firstLineMetrics = calcFirstLineMetrics(runMetrics, text.runs());
+
+/*            int lastLineEndIdx = int(text.text().size()) - 1;
+            int lastLineNo = mGlyphs.back().line;
+            PicaPt maxNewLineY = mGlyphs.back().frame.y;
+            while (lastLineEndIdx >= 0 && mGlyphs[lastLineEndIdx].line == lastLineNo) {
+                --lastLineEndIdx;
+            }
+            lastLineEndIdx += 1;
+            assert(lastLineEndIdx >= 0);
+
+            runIdx = int(runMetrics.size()) - 1;
+            lastLineMetrics = runMetrics[runIdx];
+            while (runIdx >= 0
+                   && lastLineEndIdx >= text.runs()[runIdx].startIndex + text.runs()[runIdx].length) {
+                if (runMetrics[runIdx].ascent > lastLineMetrics.ascent) {
+                    lastLineMetrics = runMetrics[runIdx];
+                }
+                --runIdx;
+            } */
+        mFirstLineAscender = firstLineMetrics.ascent;
+
+        // Cache here to speed drawing
+        auto alignOffset = calcOffsetForAlignment(alignment, size, firstLineMetrics);
+        mAlignmentOffsetPx = CGPointMake(alignOffset.x.asFloat(),
+                                         alignOffset.y.asFloat());
+
+        // As far as I can tell, if -setLineHeightMultiple: is set on the paragraph style,
+        // CTFrameGetLineOrigins() returns everything offset as if there were another line
+        // above the first line. However, CTFrameDraw() does not include the top offset.
+        // This looks like a bug in CoreText :( The documentation is ... minimal, so this
+        // is an attempt to reverse-engineer what the calculation is. Save this here, so that
+        // we can reduce the (already-excessive) number of space-eating member variables in
+        // this class.
+        if (text.lineHeightMultiple() > 0.0) {
+            mFirstLineOffsetForGlyphs = -firstLineMetrics.lineHeight * (text.lineHeightMultiple() - 1.0f);
+        }
+
+        if (!lines.empty()) {
+            glyphs();
+            assert(mGlyphsInitialized); // paranoia: assert in case glyphs() gets optimized out
+
+            mLines.reserve(lines.size());
+
+            int glyphIdx = 0;
+            for (auto &line : lines) {
+                while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < line.utf8start) {
+                    ++glyphIdx;
+                }
+                if (glyphIdx >= mGlyphs.size()) {
+                    break;
+                }
+
+                auto yPt = mGlyphs[glyphIdx].frame.y;  // this is valid, otherwise we would have exited above
+                auto xStartPt = mGlyphs[glyphIdx].frame.x;
+                auto xEndPt = xStartPt;
+                while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < line.utf8end) {
+                    if (mGlyphs[glyphIdx].frame.y > yPt) {
+                        CGFloat y = std::trunc(yPt.asFloat() + line.dy) - 0.5;  // floor(x) differs for +ve and -ve x!
+                        auto p1 = CGPointMake(xStartPt.asFloat(), y);
+                        auto p2 = CGPointMake(xEndPt.asFloat(), y);
+                        mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
+                        yPt = mGlyphs[glyphIdx].frame.y;
+                        xStartPt = mGlyphs[glyphIdx].frame.x;
+                    }
+                    xEndPt = mGlyphs[glyphIdx].frame.maxX();
+                    ++glyphIdx;
+                }
+                CGFloat y = std::trunc(yPt.asFloat() + line.dy) - 0.5;
+                auto p1 = CGPointMake(xStartPt.asFloat(), y);
+                auto p2 = CGPointMake(xEndPt.asFloat(), y);
+                mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
+            }
+        }
+        if (mGlyphsInitialized) {
+            mGlyphs.clear();
+            mGlyphs.shrink_to_fit();  // clear() does not release memory
+            mGlyphsInitialized = false;
+        }
     }
 
     ~TextObj()
@@ -278,25 +537,39 @@ public:
         mMetrics.advanceY = PicaPt(0);
 
         NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
+        if (lines.count == 0) {  // early return here so we can assume lines > 0 later
+            return mMetrics;
+        }
+
         double width;
         CGFloat ascent, descent, leading;
         for (int i = 0;  i < lines.count;  ++i) {
             width = CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
                                                &ascent, &descent, &leading);
             mMetrics.width = std::max(mMetrics.width, PicaPt::fromPixels(width, mDPI));
-            mMetrics.height += PicaPt::fromPixels(ascent + descent, mDPI);
-            if (i < lines.count - 1) {
-                mMetrics.height += PicaPt::fromPixels(leading, mDPI);
-            } else {
-                mMetrics.advanceY += PicaPt::fromPixels(leading, mDPI);
-            }
         }
         mMetrics.advanceX = mMetrics.width;
-        if (lines.count > 1) {
-            mMetrics.advanceY += mMetrics.height;  // height, plus leading from above
+        CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:0], &ascent, &descent, &leading);
+        if (lines.count == 1) {
+            mMetrics.height = PicaPt::fromPixels(ascent + descent, mDPI);
         } else {
-            mMetrics.advanceY = PicaPt(0);
+            std::vector<CGPoint> lineOrigins;
+            lineOrigins.resize(lines.count);
+            CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 0 /* 0=all */), &lineOrigins[0]);  // copies, grr
+            CGFloat startY = lineOrigins[0].y + ascent;
+            CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:lines.count - 1],
+                                       &ascent, &descent, &leading);
+            CGFloat endY = lineOrigins.back().y - descent;
+            // These are OS text coordinates which are flipped: the top of the text is at mFrame.size.height
+            // and the bottom of the text is mFrame.size.height - height. So endY < startY.
+            mMetrics.height = PicaPt::fromPixels(startY - endY, mDPI);
         }
+        mMetrics.advanceY = PicaPt::fromPixels(leading, mDPI);
+
+        // Note: This does not produce the same result as NSAttributedString -size, at least for
+        // the height value. I am not sure what the difference is, or if it is important.
+        // In practice, the only problem would be aligning with kBottom, possibly even only
+        // with Text::lineHeightMultiple() set.
 
         return mMetrics;
     }
@@ -305,14 +578,22 @@ public:
     {
         if (!mGlyphsInitialized) {
             NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
+            std::vector<CGPoint> lineOrigins;
+            lineOrigins.resize(lines.count);
+            CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 0 /* 0=all */), &lineOrigins[0]);  // copies, grr
             int nGlyphs = 0;
             for (int i = 0;  i < lines.count;  ++i) {
                 nGlyphs += CTLineGetGlyphCount((CTLineRef)[lines objectAtIndex:i]);
             }
             mGlyphs.reserve(nGlyphs);
+
             CGFloat x = 0.0;
-            PicaPt yPt = PicaPt::kZero;
             for (int i = 0;  i < lines.count;  ++i) {
+                CGFloat lineAscent, lineDescent, lineLeading;
+                CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
+                                           &lineAscent, &lineDescent, &lineLeading);
+                PicaPt baselinePt = PicaPt::fromPixels(kTextFrameHeight - lineOrigins[i].y, mDPI) + mFirstLineOffsetForGlyphs;
+                x = lineOrigins[i].x;
                 NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:i]);
                 int nRuns = runs.count;
                 for (int r = 0;  r < nRuns;  ++r) {
@@ -324,20 +605,20 @@ public:
                     CGFloat ascent, descent, leading;
                     CTRunGetTypographicBounds(run, CFRangeMake(0, 0),
                                               &ascent, &descent, &leading);
+                    PicaPt yPt = baselinePt - PicaPt::fromPixels(ascent, mDPI);
                     PicaPt hPt = PicaPt::fromPixels(ascent + descent, mDPI);
                     for (int g = 0;  g < n;  ++g) {
                         if (!mGlyphs.empty()) {
                             mGlyphs.back().indexOfNext = indices[g];
                         }
                         mGlyphs.push_back({
-                            indices[g],
-                            Rect(PicaPt::fromPixels(x + positions[g].x, mDPI),
-                                 yPt,
+                            indices[g], i,
+                            Rect(mAlignmentOffsetPx.x + PicaPt::fromPixels(x + positions[g].x, mDPI),
+                                 mAlignmentOffsetPx.y + yPt,
                                  PicaPt::fromPixels(advances[g].width, mDPI),
                                  hPt),
                             });
                     }
-                    yPt += PicaPt::fromPixels(ascent + descent + leading, mDPI);
                 }
             }
             if (!mGlyphs.empty()) {
@@ -354,33 +635,87 @@ public:
         // You'd think that adding the ascent to the upper left y would give the
         // baseline, but it can be off by a pixel (notably between Arial and Helvetica).
         // Use the line origin for more consistent results.
-        NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
         CGPoint origin;
         CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 1), &origin);
 
         CGContextRef gc = (CGContextRef)dc.nativeDC();
+        CGContextSaveGState(gc);
+        // CTFrameDraw does not reset graphics state, also text needs y-axis inverted
         CGContextSaveGState(gc);
         CGContextSetTextMatrix(gc, CGAffineTransformIdentity);
         // (Note that macOS will properly align the text to the pixel boundary; we don't need to.)
         // Note that we've scaled the coordinates so that one unit is one PicaPt, not one pixel.
         // TopLeft *is* in PicaPt; origin and nsfont.ascender are in text-bitmap units which apparently
         // take into account the scale factor.
-        NSFont *nsfont72 = gFontMgr.get(mFont, 72.0f);
         CGContextTranslateCTM(gc,
-                              topLeft.x.asFloat(),
-                              topLeft.y.asFloat() + origin.y + nsfont72.ascender - PicaPt::fromPixels(1, dc.dpi()).asFloat());
+                              mAlignmentOffsetPx.x + topLeft.x.asFloat(),
+                              mAlignmentOffsetPx.y + topLeft.y.asFloat() + origin.y + mFirstLineAscender.asFloat() - PicaPt::fromPixels(1, dc.dpi()).asFloat());
         CGContextScaleCTM(gc, 1, -1);
         CTFrameDraw(mFrame, gc);
+        CGContextRestoreGState(gc); // ok, graphics state is sane
+
+        // CTFrameDraw() does not handle strikethroughs and does not even support wavy underlines,
+        // so we have to do these ourselves. macOS appears to draw underlines on top of the text,
+        // which I think is not great, but at least it is convenient for this.
+        if (!mLines.empty()) {
+            CGContextTranslateCTM(gc, topLeft.x.asFloat(), topLeft.y.asFloat());
+            CGContextSetLineCap(gc, kCGLineCapButt);
+            CGContextSetLineDash(gc, 0.0, nullptr, 0);
+            int glyphIdx = 0;
+            for (auto &line : mLines) {
+                CGContextSetLineWidth(gc, line.width);
+                CGContextSetRGBStrokeColor(gc, line.color.red(), line.color.green(),
+                                           line.color.blue(), line.color.alpha());
+                switch (line.type) {
+                    case Line::Type::kSingle:
+                        CGContextStrokeLineSegments(gc, line.line, 2);
+                        break;
+                    case Line::Type::kDouble:
+                        CGContextStrokeLineSegments(gc, line.line, 2);
+                        CGContextTranslateCTM(gc, 0.0, 2.0 * line.width);
+                        CGContextStrokeLineSegments(gc, line.line, 2);
+                        CGContextTranslateCTM(gc, 0.0, -2.0 * line.width);
+                        break;
+                    case Line::Type::kDotted: {
+                        CGFloat dash = PicaPt(3).toPixels(mDPI);
+                        CGContextSetLineDash(gc, 0.0, &dash, 1);
+                        CGContextStrokeLineSegments(gc, line.line, 2);
+                        CGContextSetLineDash(gc, 0.0, nullptr, 0);
+                        break;
+                    }
+                    case Line::Type::kWavy: {
+                        auto pts = createWavyLinePoints(line.line[0].x, line.line[0].y, line.line[1].x, line.width);
+                        CGContextBeginPath(gc);
+                        CGContextMoveToPoint(gc, pts[0], pts[1]);
+                        for (size_t i = 2;  i < pts.size();  i += 2) {
+                            CGContextAddLineToPoint(gc, pts[i], pts[i + 1]);
+                        }
+                        CGContextStrokePath(gc);
+                        break;
+                    }
+                }
+            }
+        }
         CGContextRestoreGState(gc);
     }
 
 private:
+    struct Line {
+        enum class Type { kSingle, kDouble, kDotted, kWavy } type;
+        Color color;
+        CGFloat width;
+        CGPoint line[2];
+    };
+
     int mLen;
     float mDPI;
-    Font mFont;
+    std::vector<Line> mLines;
     CGPathRef mPath;
     CTFramesetterRef mLayout;
     CTFrameRef mFrame;
+    CGPoint mAlignmentOffsetPx;
+    PicaPt mFirstLineAscender;
+    PicaPt mFirstLineOffsetForGlyphs;
     mutable std::vector<Glyph> mGlyphs;
     mutable bool mGlyphsInitialized = false;
     mutable TextMetrics mMetrics;
@@ -446,14 +781,36 @@ public:
 
     std::shared_ptr<TextLayout> createTextLayout(
                          const char *utf8, const Font& font, const Color& color,
-                         const PicaPt& width /*= PicaPt::kZero*/,
-                         int alignment /*= Alignment::kAlign*/) const override
+                         const Size& size /*= Size::kZero*/,
+                         int alignment /*= Alignment::kAlign | Alignment::kTop*/,
+                         TextWrapping wrap /*= kWrapWord*/) const override
     {
-        return std::make_shared<TextObj>(*this, utf8, width, font, color,
-                                         Color::kTransparent, PicaPt::kZero,
-                                         alignment, kPaintFill);
+        return std::make_shared<TextObj>(*this, Text(utf8, font, color),
+                                         size, alignment, wrap);
     }
-    
+
+    std::shared_ptr<TextLayout> createTextLayout(
+                const Text& t,
+                const Size& size = Size::kZero,
+                int alignment = Alignment::kLeft | Alignment::kTop,
+                TextWrapping wrap = kWrapWord) const override
+    {
+        return std::make_shared<TextObj>(*this, t, size, alignment, wrap);
+    }
+
+    std::shared_ptr<TextLayout> createTextLayout(
+                        const Text& t,
+                        const Font& defaultReplacementFont,
+                        const Color& defaultReplacementColor,
+                        const Size& size /*= Size::kZero*/,
+                        int alignment /*= Alignment::kLeft | Alignment::kTop*/,
+                        TextWrapping wrap /*= kWrapWord*/) const override
+    {
+        return std::make_shared<TextObj>(*this, t, size, alignment, wrap,
+                                         defaultReplacementFont, defaultReplacementColor);
+
+    }
+
     void setNativeDC(void *nativeDC)
     {
         mNativeDC = nativeDC;
@@ -724,6 +1081,8 @@ public:
         m.xHeight = PicaPt::fromPixels(nsfont.xHeight, mDPI);
         m.capHeight = PicaPt::fromPixels(nsfont.capHeight, mDPI);
         m.lineHeight = m.ascent + m.descent + m.leading;
+        m.underlineOffset = PicaPt::fromPixels(-nsfont.underlinePosition, mDPI); // macOS +y is up; we go down
+        m.underlineThickness = PicaPt::fromPixels(nsfont.underlineThickness, mDPI);
         return m;
     }
 
@@ -765,9 +1124,17 @@ public:
     TextObj textLayoutForCurrent(const char *textUTF8, const Font& font,
                                  PaintMode mode) const
     {
-        return TextObj(*this, textUTF8, PicaPt::kZero, font,
-                       fillColor(), strokeColor(), strokeWidth(),
-                       Alignment::kLeft, mode);
+        Text t(textUTF8, font, Color::kBlack);
+        if (mode & kPaintFill) {
+            t.setColor(fillColor());
+        } else {
+            t.setColor(Color::kTransparent);
+        }
+        if (mode & kPaintStroke) {
+            t.setOutlineColor(strokeColor());
+            t.setOutlineStrokeWidth(strokeWidth());
+        }
+        return TextObj(*this, t, Size::kZero, Alignment::kNone);
     }
 
     Color pixelAt(int x, int y) override

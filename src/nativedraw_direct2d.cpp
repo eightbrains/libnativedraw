@@ -25,10 +25,14 @@
 
 #include "nativedraw_private.h"
 
+#include <map>
 #include <iostream>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+// @#$! Windows!
+#undef min
+#undef max
 #undef DrawText
 #include <comdef.h>
 #include <d2d1.h>
@@ -37,10 +41,13 @@
 #include <d3d11.h>
 #include <dxgi1_2.h>
 #include <dwrite.h>
+#include <dwrite_1.h>
+#include <dwrite_3.h>
 #include <stringapiset.h>
 
 namespace ND_NAMESPACE {
 namespace {
+
 void printError(const std::string& msg, HRESULT err)
 {
     std::cerr << "[ERROR] " << msg << ": " << _com_error(err).ErrorMessage() << std::endl;
@@ -53,10 +60,24 @@ void printError(const std::string& msg)
     assert(false);
 }
 
-// Direct2D uses device-independent pixels equal to 1/96 inch.
+// By default Direct2D graphics contexts use device-independent pixels equal to 1/96 inch.
 inline FLOAT toD2D(const PicaPt& p) { return p.toPixels(96.0f); }
 inline D2D1_POINT_2F toD2DPoint(const PicaPt& x, const PicaPt& y) {
     return { toD2D(x), toD2D(y) };
+}
+inline PicaPt fromD2D(float d2d) { return PicaPt::fromPixels(d2d, 96.0f); }
+
+WCHAR* newBrackets_Utf16FromUtf8(const std::string& utf8, int *length = nullptr)
+{
+    const int kNullTerminated = -1;
+    int nCharsNeeded = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), kNullTerminated, NULL, 0);
+    WCHAR* wtext = new WCHAR[nCharsNeeded + 1];  // nCharsNeeded includes \0, but +1 just in case
+    wtext[0] = '\0';  // in case conversion fails
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), kNullTerminated, wtext, nCharsNeeded);
+    if (length) {
+        *length = nCharsNeeded;
+    }
+    return wtext;
 }
 
 class Direct2D
@@ -111,7 +132,7 @@ public:
         err = D3D11CreateDevice(NULL,                                 // first adapter
                                 D3D_DRIVER_TYPE_HARDWARE,
                                 NULL,                                 // software rasterizer DLL handle
-                                D3D11_CREATE_DEVICE_SINGLETHREADED    // beter performance
+                                D3D11_CREATE_DEVICE_SINGLETHREADED    // better performance
                                   | D3D11_CREATE_DEVICE_BGRA_SUPPORT, // required for Direct2D
                                 featureLevels,
                                 sizeof(featureLevels) / sizeof(D3D_FEATURE_LEVEL),
@@ -283,14 +304,54 @@ std::unordered_map<DWRITE_FONT_WEIGHT, FontWeight> gD2DToWeight = {
     { DWRITE_FONT_WEIGHT_EXTRA_BOLD, kWeightHeavy },
     { DWRITE_FONT_WEIGHT_BLACK, kWeightBlack } };
 
+// DirectWrite makes us set the font in a run by name, so to avoid converting
+// all the time, cache the UTF16 family name. Make this a class, so it will
+// self-destruct on exit and not show up as leak-noise in leak-checkers.
+class UTF16Cache
+{
+public:
+    ~UTF16Cache()
+    {
+        for (auto& kv : m8to16) {
+            delete [] kv.second.utf16;
+            kv.second.utf16 = nullptr;  // just in case
+        }
+    }
+
+    // This pointer is essentially a reference, does not transfer ownership to caller
+    WCHAR* get(const std::string& utf8, int *length = nullptr)
+    {
+        auto it = m8to16.find(utf8);
+        if (it == m8to16.end()) {
+            Utf16Str s;
+            s.utf16 = newBrackets_Utf16FromUtf8(utf8, &s.length);  // calls new[]
+            m8to16[utf8] = s;
+            it = m8to16.find(utf8);
+        }
+        return it->second.utf16;
+    }
+
+private:
+    struct Utf16Str {
+        WCHAR *utf16;
+        int length;
+    };
+    std::map<std::string, Utf16Str> m8to16;
+};
+static UTF16Cache gUTF16Cache;
+
 struct FontInfo
 {
     IDWriteTextFormat *format;
     Font::Metrics metrics;
+    FLOAT d2dSize;
+    DWRITE_FONT_STYLE d2dStyle;
+    DWRITE_FONT_WEIGHT d2dWeight;
 
     FontInfo() : format(nullptr) {}  // for STL containers
-    FontInfo(IDWriteTextFormat* f, const Font::Metrics& fm)
-        : format(f), metrics(fm)
+    FontInfo(IDWriteTextFormat* f, const Font::Metrics& fm,
+             FLOAT sz, DWRITE_FONT_STYLE s, DWRITE_FONT_WEIGHT w)
+        : format(f), metrics(fm), d2dSize(sz), d2dStyle(s), d2dWeight(w)
     {}
 
     // Can't delete here, this object needs to be trivially copyable
@@ -309,12 +370,8 @@ std::wstring getSystemFontName()
 
 FontInfo createFont(const Font& desc, float dpi)
 {
-    const int kNullTerminated = -1;
-    int nCharsNeeded = MultiByteToWideChar(CP_UTF8, 0, desc.family().c_str(),
-                                           kNullTerminated, NULL, 0);
-    WCHAR *family = new WCHAR[nCharsNeeded + 1];  // nCharsNeeded includes \0, but +1 just in case
-    family[0] = '\0';  // in case conversion fails
-    MultiByteToWideChar(CP_UTF8, 0, desc.family().c_str(), kNullTerminated, family, nCharsNeeded);
+    int nCharsNeeded = 0;
+    WCHAR* family = gUTF16Cache.get(desc.family(), &nCharsNeeded);
 
     IDWriteFactory *factory = Direct2D::instance().writeFactory();
 
@@ -338,7 +395,6 @@ FontInfo createFont(const Font& desc, float dpi)
         // only happen for parameter errors (which would be a programming error).
         printError("Error calling CreateTextFormat()", err);
     }
-    delete [] family;
 
     nCharsNeeded = format->GetFontFamilyNameLength() + 1;
     family = new WCHAR[nCharsNeeded + 1];
@@ -347,12 +403,14 @@ FontInfo createFont(const Font& desc, float dpi)
     UINT32 idx;
     collection->FindFamilyName(family, &idx, &exists);
     Font::Metrics metrics;
-    metrics.ascent = PicaPt(0);
-    metrics.capHeight = PicaPt(0);
-    metrics.descent = PicaPt(0);
-    metrics.leading = PicaPt(0);
-    metrics.lineHeight = PicaPt(0);
-    metrics.xHeight = PicaPt(0);
+    metrics.ascent = PicaPt::kZero;
+    metrics.capHeight = PicaPt::kZero;
+    metrics.descent = PicaPt::kZero;
+    metrics.leading = PicaPt::kZero;
+    metrics.lineHeight = PicaPt::kZero;
+    metrics.xHeight = PicaPt::kZero;
+    metrics.underlineOffset = PicaPt::kZero;
+    metrics.underlineThickness = PicaPt::kZero;
     if (exists) {
         IDWriteFontFamily *fontFamily = nullptr;
         if (collection->GetFontFamily(idx, &fontFamily) == S_OK) {
@@ -366,6 +424,8 @@ FontInfo createFont(const Font& desc, float dpi)
                 metrics.descent = PicaPt::fromPixels(float(d2dMetrics.descent) * scaling, 96.0f);
                 metrics.leading = PicaPt::fromPixels(float(d2dMetrics.lineGap) * scaling, 96.0f);
                 metrics.xHeight = PicaPt::fromPixels(float(d2dMetrics.xHeight) * scaling, 96.0f);
+                metrics.underlineOffset = PicaPt::fromPixels(float(-d2dMetrics.underlinePosition) * scaling, 96.0f);
+                metrics.underlineThickness = PicaPt::fromPixels(float(d2dMetrics.underlineThickness) * scaling, 96.0f);
                 font->Release();
             }
             fontFamily->Release();
@@ -374,7 +434,7 @@ FontInfo createFont(const Font& desc, float dpi)
     collection->Release();
     metrics.lineHeight = metrics.ascent + metrics.descent + metrics.leading;
     delete [] family;
-    return FontInfo(format, metrics);
+    return FontInfo(format, metrics, d2dSize, d2dStyle, d2dWeight);
 }
 
 void destroyFont(FontInfo rsrc)
@@ -387,6 +447,303 @@ static ResourceManager<Font, FontInfo> gFontMgr(createFont, destroyFont);
 } // namespace
 
 //---------------------- Custom text renderer ---------------------------------
+class COMifiedIndex : public IUnknown
+{
+public:
+    explicit COMifiedIndex(int index) : mRef(0), mIndex(index) {}
+    ~COMifiedIndex() {}
+
+    int value() const { return mIndex;  }
+
+    HRESULT COMifiedIndex::QueryInterface(REFIID riid, LPVOID *ppvObj)
+    {
+        if (!ppvObj) {
+           return E_INVALIDARG;
+        }
+        *ppvObj = NULL;
+        if (riid == IID_IUnknown) {
+            *ppvObj = (LPVOID)this;
+            AddRef();
+            return NOERROR;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG COMifiedIndex::AddRef()
+    {
+        InterlockedIncrement(&mRef);
+        return mRef;
+    }
+
+    ULONG COMifiedIndex::Release()
+    {
+        ULONG ulRefCount = InterlockedDecrement(&mRef);
+        if (0 == mRef) {
+            delete this;
+        }
+        return ulRefCount;
+    }
+
+private:
+    ULONG mRef;
+    int mIndex;
+};
+// Direct2D's IDWriteTextLayout expects us to allocate an object for every
+// text run to describe what needs to happen. We'll get much better cache
+// locality and get clearer ownership understanding if we do not new() objects
+// all over the heap. Instead, we're doing something similar to what we do
+// for Cairo, which is that we create a little rendering program for each
+// run. (Cairo does it for the whole text, but since D2D sends us the glyphs
+// in callbacks, we have to compromise.) We execute commands until we get
+// to kDone, which tells us to stop and return from the D2D callback function.
+class DrawRunCommands
+{
+public:
+    enum Cmd {
+        kSetFG, kDrawRect, kDrawText, kStrokedText,
+        kStroke, kDoubleStroke, kDottedStroke, kWavyStroke, kDone
+    };
+    // The idea is to keep this fairly small. On 64-bit systems the glyph
+    // pointer will be the largest, and we can fit two floats into 64-bits.
+    // It would be more convenient to have strokes and rects have the four
+    // floats they need rather than have to assume another item in the draw
+    // stack, but this way reduces memory.
+    struct Command {
+        Cmd cmd;
+        union {
+            int rgba;
+            struct {
+                float ascent;
+                float descent;
+            } rect;
+            struct {
+                float dy;  // change from baseline
+                float w;
+            } stroke;
+            struct {
+                float baselineOffset;  // +ve is down
+            } text;
+        } arg;
+    };
+
+    DrawRunCommands(float dpi) : mDPI(dpi) {}
+
+    size_t size() const { return mCmds.size(); }
+
+    void addColor(int rgba)
+    {
+        mCmds.emplace_back();
+        mCmds.back().cmd = kSetFG;
+        mCmds.back().arg.rgba = rgba;
+    }
+
+    void addRect(float d2dAscent, float d2dDescent)
+    {
+        mCmds.emplace_back();
+        mCmds.back().cmd = kDrawRect;
+        mCmds.back().arg.rect.ascent = d2dAscent;
+        mCmds.back().arg.rect.descent = d2dDescent;
+    }
+
+    void addText(float d2dBaselineOffset)
+    {
+        mCmds.emplace_back();
+        mCmds.back().cmd = kDrawText;
+        mCmds.back().arg.text.baselineOffset = d2dBaselineOffset;
+    }
+
+    void addStrokedText(float d2dThickness, float d2dBaselineOffset)
+    {
+        mCmds.emplace_back();
+        mCmds.back().cmd = kStrokedText;
+        mCmds.back().arg.stroke.w = d2dThickness;
+        mCmds.emplace_back();
+        mCmds.back().cmd = kDrawText;
+        mCmds.back().arg.text.baselineOffset = d2dBaselineOffset;
+    }
+
+    void addLine(Cmd type, float d2dDeltaY, float d2dStrokeWidth)
+    {
+        mCmds.emplace_back();
+        mCmds.back().cmd = type;
+        mCmds.back().arg.stroke.dy = d2dDeltaY;
+        float widthPx = std::max(1.0f, fromD2D(d2dStrokeWidth).toPixels(mDPI));
+        mCmds.back().arg.stroke.w = toD2D(PicaPt::fromPixels(widthPx, mDPI));
+    }
+
+    void addDone()
+    {
+        mCmds.emplace_back();
+        mCmds.back().cmd = kDone;
+    }
+
+    void drawRun(ID2D1RenderTarget *gc, D2D1::Matrix3x2F &matrix,
+                 ID2D1PathGeometry *glyphs, ID2D1SolidColorBrush *brush,
+                 float width, int startIdx) const
+    {
+        // Note that (0, 0) is at left of baseline
+        // Also note that any offsets from TextObj have already been applied
+        // (otherwise the text would not be in the right place), and since
+        // all the calculations are done relative to the baseline, the offset
+        // is unnecessary.
+        const float originX = 0.0f;
+        const float originY = 0.0f;
+#if kDebugDraw
+        std::cout << "[debug] draw()" << std::endl;
+#endif
+        bool done = false;
+        size_t i = size_t(startIdx);
+        while (i < mCmds.size() && !done) {
+            auto& cmd = mCmds[i];
+            ++i;
+            switch (cmd.cmd) {
+            case kSetFG: {
+                float r = float((cmd.arg.rgba & 0xff000000) >> 24) / 255.0f;
+                float g = float((cmd.arg.rgba & 0x00ff0000) >> 16) / 255.0f;
+                float b = float((cmd.arg.rgba & 0x0000ff00) >> 8) / 255.0f;
+                float a = float(cmd.arg.rgba & 0x000000ff) / 255.0f;
+                brush->SetColor({ r, g, b, a });
+#if kDebugDraw
+                std::cout << "[debug]   set fg: " << r << ", " << g << ", "
+                          << b << ", " << a << std::endl;
+#endif
+                break;
+            }
+            case kDrawRect: {
+                D2D1_RECT_F r{ originX, originY - cmd.arg.rect.ascent,
+                               originX + width, originY + cmd.arg.rect.descent };
+                gc->FillRectangle(r, brush);
+#if kDebugDraw
+                std::cout << "[debug]   draw rect: " << origin.arg.pt.x
+                          << ", " << origin.arg.pt.y << ", "
+                          << size.arg.size.w << ", " << size.arg.size.h
+                          << std::endl;
+#endif
+                break;
+            }
+            case kStroke:
+            case kDoubleStroke:
+            case kDottedStroke: {
+                float d2dX0 = originX;
+                float d2dX1 = originX + width;
+                float d2dY = originY + cmd.arg.stroke.dy;
+                float strokeWidthPx = fromD2D(cmd.arg.stroke.w).toPixels(mDPI);
+                if (strokeWidthPx < 1.5f && strokeWidthPx > 0.75f) {
+                    float yPx = fromD2D(d2dY).toPixels(mDPI);
+                    yPx = std::round(yPx) + 0.5f;
+                    d2dY = toD2D(PicaPt::fromPixels(yPx, mDPI));
+                }
+#if kDebugDraw
+                std::cout << "[debug]   line: ("
+                          << d2dX0 << ", " << d2dY << ") - (" << d2dX1 << ", " << d2dY << ")"
+                          << std::endl;
+#endif
+                ID2D1StrokeStyle* strokeStyle = nullptr;  // nullptr = solid stroke
+                auto path = std::make_shared<Direct2DPath>();
+                auto y = fromD2D(d2dY);
+                path->moveTo(Point(fromD2D(d2dX0), y));
+                path->lineTo(Point(fromD2D(d2dX1), y));
+                if (cmd.cmd == kDoubleStroke) {
+                    float yPx = (y + 2.0f * fromD2D(cmd.arg.stroke.w)).toPixels(mDPI);
+                    yPx = std::round(yPx) + 0.5f;
+                    y = PicaPt::fromPixels(yPx, mDPI);
+                    path->moveTo(Point(fromD2D(d2dX0), y));
+                    path->lineTo(Point(fromD2D(d2dX1), y));
+                } else if (cmd.cmd == kDottedStroke) {
+                    // We will create the style here since dotted underlines are rather
+                    // rare (I only expect them when inputting CJK text), so no reason to
+                    // force the object to store a 64-bit pointer just so we can pre-allocate
+                    // in addLine(). I expect we will have lots of text lying around, at least
+                    // in user interfaces.
+                    float dotLenPx = std::round(PicaPt(2.0f).toPixels(mDPI));
+                    FLOAT d2dDotLen = toD2D(PicaPt::fromPixels(dotLenPx, mDPI));
+                    FLOAT pattern[] = { d2dDotLen, d2dDotLen };
+                    FLOAT offset = originX / d2dDotLen;
+                    offset = offset - std::floor(offset);
+                    auto strokeProperties = D2D1::StrokeStyleProperties();
+                    strokeProperties.dashStyle = D2D1_DASH_STYLE_CUSTOM;
+                    strokeProperties.dashOffset = -offset;
+                    auto* d2d = Direct2D::instance().factory();
+                    HRESULT err = d2d->CreateStrokeStyle(strokeProperties, pattern,
+                                                         sizeof(pattern) / sizeof(FLOAT), &strokeStyle);
+                    if (err != S_OK) {
+                        printError("Could not create dotted underline stroke", err);
+                        strokeStyle = nullptr;  // fallback to solid
+                    }
+                }
+                gc->DrawGeometry((ID2D1PathGeometry*)path->nativePathForDPI(mDPI, false),
+                                 brush, cmd.arg.stroke.w, strokeStyle);
+                if (strokeStyle) {
+                    strokeStyle->Release();
+                }
+                break;
+            }
+            case kWavyStroke: {
+                float x0 = originX;
+                float y = originY + cmd.arg.stroke.dy;
+                float x1 = originX + width;
+#if kDebugDraw
+                std::cout << "[debug]   wavy line: ("
+                          << x0 << ", " << y << ") - (" << x1 << ", " << y << ")" << std::endl;
+#endif
+                auto pts = createWavyLinePoints(x0, y, x1, cmd.arg.stroke.w);
+
+                auto path = std::make_shared<Direct2DPath>();
+                path->moveTo(Point(fromD2D(pts[0]), fromD2D(pts[1])));
+                for (size_t i = 2; i < pts.size(); i += 2) {
+                    path->lineTo(Point(fromD2D(pts[i]), fromD2D(pts[i + 1])));
+                }
+                gc->DrawGeometry((ID2D1PathGeometry*)path->nativePathForDPI(mDPI, false),
+                                 brush, cmd.arg.stroke.w, nullptr /*= solid stroke*/);
+                break;
+            }
+            case kDrawText: {
+                if (cmd.arg.text.baselineOffset == 0.0f) {
+                    gc->FillGeometry(glyphs, brush);
+                } else {
+                    D2D1::Matrix3x2F newM;
+                    newM.SetProduct(D2D1::Matrix3x2F::Translation(D2D1::SizeF(0.0f, cmd.arg.text.baselineOffset)), matrix);
+                    gc->SetTransform(newM);
+                    gc->FillGeometry(glyphs, brush);
+                    gc->SetTransform(matrix);
+                }
+#if kDebugDraw
+                std::cout << "[debug]   draw text" << std::endl;
+#endif
+                break;
+            }
+            case kStrokedText: {
+                auto text = mCmds[i++];
+                if (cmd.arg.text.baselineOffset == 0.0f) {
+                    gc->DrawGeometry(glyphs, brush, cmd.arg.stroke.w, nullptr /*= solid stroke*/);
+                }
+                else {
+                    D2D1::Matrix3x2F newM;
+                    newM.SetProduct(D2D1::Matrix3x2F::Translation(D2D1::SizeF(0.0f, cmd.arg.text.baselineOffset)), matrix);
+                    gc->SetTransform(newM);
+                    gc->DrawGeometry(glyphs, brush, cmd.arg.stroke.w, nullptr /*= solid stroke*/);
+                    gc->SetTransform(matrix);
+                }
+#if kDebugDraw
+                std::cout << "[debug]   stroke text: " << std::endl;
+#endif
+                break;
+            }
+            case kDone:
+                done = true;
+                break;
+            }
+        }
+
+#if kDebugDraw
+        std::cout << "[debug] done drawing" << std::endl;
+#endif
+    }
+
+private:
+    std::vector<Command> mCmds;
+    float mDPI;
+};
 
 // Note:  to make sure that AddRef() and Release() work right, this should
 //        be created with new(), NOT on the stack!. The new object will have
@@ -427,6 +784,8 @@ public:
 
     STDMETHOD(IsPixelSnappingDisabled)(void* drawContext, BOOL* isDisabled)
     {
+        // We want to do the snapping ourselves, since Windows does not do it
+        // in a predictable, undoable fashion.
         *isDisabled = TRUE;
         return S_OK;
     }
@@ -478,6 +837,13 @@ protected:
     size_t mRefCount = 1;
 };
 
+struct RunStyle
+{
+    int fgRGBA;
+    int bgRGBA;
+
+};
+
 // We need our own renderer so that we can draw outlines
 class CustomTextRenderer : public BaseTextRenderer
 {
@@ -485,12 +851,9 @@ public:
     // Note:  to make sure that AddRef() and Release() work right, this should
     //        be created with new(), NOT on the stack!. The new object will have
     //        the refcount already at 1, so you will need to call Release().
-    CustomTextRenderer(D2D1::Matrix3x2F& matrix, ID2D1SolidColorBrush *brush,
-                       const Color *fill,
-                       const Color *stroke, FLOAT strokeWidth,
-                       ID2D1StrokeStyle *style)
-        : mMatrix(matrix), mBrush(brush), mFillColor(fill)
-        , mStrokeColor(stroke), mStrokeWidth(strokeWidth), mStrokeStyle(style)
+    CustomTextRenderer(D2D1::Matrix3x2F& matrix, ID2D1SolidColorBrush *solidBrush,
+                       const DrawRunCommands& drawCmds)
+        : mMatrix(matrix), mSolid(solidBrush), mDrawCmds(drawCmds)
     {}
 
     ~CustomTextRenderer() {}
@@ -503,6 +866,10 @@ public:
                             DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDescription,
                             IUnknown* clientDrawingEffect)
     {
+        if (!glyphRun || glyphRun->glyphCount == 0) {
+            return S_OK;
+        }
+
         ID2D1PathGeometry *geometry = nullptr;
         ID2D1GeometrySink *sink = nullptr;
         HRESULT err;
@@ -527,16 +894,15 @@ public:
         runMatrix.SetProduct(D2D1::Matrix3x2F::Translation(D2D1::SizeF(baselineOriginX, baselineOriginY)), mMatrix);
         gc->SetTransform(runMatrix);
 
-        if (mFillColor) {
-            mBrush->SetColor({ mFillColor->red(), mFillColor->green(),
-                               mFillColor->blue(), mFillColor->alpha() });
-            gc->FillGeometry(geometry, mBrush);
+        int startIndex = ((COMifiedIndex*)clientDrawingEffect)->value();
+        int nGlyphs = glyphRun->glyphCount;
+        FLOAT width;
+        FLOAT dir = ((glyphRun->bidiLevel & 0x1) == 0) ? 1.0f : -1.0f;
+        width = 0.0f;
+        for (int i = 0;  i < nGlyphs;  ++i) {
+            width += dir * glyphRun->glyphAdvances[i];
         }
-        if (mStrokeColor) {
-            mBrush->SetColor({ mStrokeColor->red(), mStrokeColor->green(),
-                               mStrokeColor->blue(), mStrokeColor->alpha() });
-            gc->DrawGeometry(geometry, mBrush, mStrokeWidth, mStrokeStyle);
-        }
+        mDrawCmds.drawRun(gc, runMatrix, geometry, mSolid, width, startIndex);
 
         gc->SetTransform(mMatrix);
 
@@ -548,13 +914,9 @@ public:
 
 protected:
     D2D1::Matrix3x2F mMatrix;
+    ID2D1SolidColorBrush *mSolid;
+    const DrawRunCommands& mDrawCmds;
     size_t mRefCount = 1;
-    // We don't own any of these pointers
-    ID2D1SolidColorBrush *mBrush;
-    const Color *mFillColor;
-    const Color *mStrokeColor;
-    FLOAT mStrokeWidth;
-    ID2D1StrokeStyle *mStrokeStyle;
 };
 
 //--------------------------- Text layout object ------------------------------
@@ -564,23 +926,59 @@ public:
     // Note:  to make sure that AddRef() and Release() work right, this should
     //        be created with new(), NOT on the stack!. The new object will have
     //        the refcount already at 1, so you will need to call Release().
-    GlyphGetter(float dpi, const std::vector<int>& utf16To8,
+    GlyphGetter(float dpi, float d2dOffsetY, const std::vector<int>& utf16To8,
+                DWRITE_LINE_METRICS lineMetrics[],
                 std::vector<TextLayout::Glyph> *glyphs)
-        : mDPI(dpi), mUTF16To8(utf16To8), mGlyphs(glyphs)
+        : mDPI(dpi), mD2DOffsetY(d2dOffsetY), mUTF16To8(utf16To8), mLineMetrics(lineMetrics)
+        , mGlyphs(glyphs)
     {}
 
     ~GlyphGetter()
     {
     }
 
-    STDMETHOD(DrawGlyphRun)(void* drawContext,
+    STDMETHOD(DrawGlyphRun)(void *drawContext,
                             FLOAT baselineOriginX,
                             FLOAT baselineOriginY,
                             DWRITE_MEASURING_MODE measuringMode,
-                            DWRITE_GLYPH_RUN const* glyphRun,
-                            DWRITE_GLYPH_RUN_DESCRIPTION const* glyphRunDesc,
+                            DWRITE_GLYPH_RUN const *glyphRun,
+                            DWRITE_GLYPH_RUN_DESCRIPTION const *glyphRunDesc,
                             IUnknown* clientDrawingEffect)
     {
+        if (baselineOriginY > mLastBaselineY) {
+            if (mLineNo >= 0) {
+                if (mLineMetrics[mLineNo].newlineLength > 0) {
+                    assert(!mGlyphs->empty());
+                    int utf8idx = mGlyphs->back().index + 1; // newline is one byte
+                    mGlyphs->back().indexOfNext = utf8idx;
+                    auto &r = mGlyphs->back().frame;
+                    mGlyphs->emplace_back(utf8idx, mLineNo,
+                                          Rect(r.maxX(), r.x, PicaPt::kZero, r.height));
+                    for (UINT32 i = 1;  i < mLineMetrics[mLineNo].newlineLength;  ++i) {
+                        mLineNo += 1;
+                        utf8idx += 1;
+                        mGlyphs->back().indexOfNext = utf8idx;
+                        auto& r = mGlyphs->back().frame;
+                        mGlyphs->emplace_back(utf8idx, mLineNo,
+                            Rect(r.maxX(), r.x, PicaPt::kZero, r.height));
+                    }
+                    assert(mLineMetrics[mLineNo].newlineLength < 2);
+                }
+            }
+            mLineNo += 1;
+            mLastBaselineY = baselineOriginY;
+        }
+
+        FLOAT d2dFmAscent = 0.0f;
+        FLOAT d2dHeight = glyphRun->fontEmSize;
+        if (glyphRun->fontFace) {  // this is marked _Notnull_, but just in case
+            DWRITE_FONT_METRICS d2dMetrics;
+            glyphRun->fontFace->GetMetrics(&d2dMetrics);
+            FLOAT scaling = glyphRun->fontEmSize / (float)d2dMetrics.designUnitsPerEm;
+            d2dFmAscent = d2dMetrics.ascent * scaling;
+            d2dHeight = (d2dMetrics.ascent + d2dMetrics.descent) * scaling;
+        }
+
         mGlyphs->reserve(mGlyphs->size() + glyphRun->glyphCount);
         FLOAT advance = FLOAT(0.0);
         for (unsigned int i = 0;  i < glyphRun->glyphCount;  ++i) {
@@ -589,33 +987,30 @@ public:
             FLOAT w, h;
             if (!glyphRun->isSideways) {
                 x = baselineOriginX + advance;
-                y = 0.0f;
+                y = baselineOriginY - d2dFmAscent + mD2DOffsetY;
                 if (glyphRun->glyphOffsets) {
                     x += dir * glyphRun->glyphOffsets[i].advanceOffset;
                     y -= glyphRun->glyphOffsets[i].ascenderOffset;
                 }
                 w = glyphRun->glyphAdvances[i];
-                h = glyphRun->fontEmSize;
+                h = d2dHeight;
             } else {
-                x = 0.0f;
+                x = baselineOriginX - d2dFmAscent + mD2DOffsetY;
                 y = baselineOriginY + advance;
                 if (glyphRun->glyphOffsets) {
                     y += dir * glyphRun->glyphOffsets[i].advanceOffset;
                     x -= glyphRun->glyphOffsets[i].ascenderOffset;
                 }
-                w = glyphRun->fontEmSize;
+                w = d2dHeight;
                 h = glyphRun->glyphAdvances[i];
             }
             advance += dir * glyphRun->glyphAdvances[i];
-            Rect r(PicaPt::fromPixels(x, 96.0f),
-                   PicaPt::fromPixels(y, 96.0f),
-                   PicaPt::fromPixels(w, 96.0f),
-                   PicaPt::fromPixels(h, 96.0f));
+            Rect r(fromD2D(x), fromD2D(y), fromD2D(w), fromD2D(h));
             int utf8idx = mUTF16To8[glyphRunDesc->textPosition + glyphRunDesc->clusterMap[i]];
             if (!mGlyphs->empty()) {
                 mGlyphs->back().indexOfNext = utf8idx;
             }
-            mGlyphs->emplace_back(utf8idx, r);
+            mGlyphs->emplace_back(utf8idx, mLineNo, r);
         }
 
         // Note: this does NOT update .indexOfNext of the last glyph, because we do not know it.
@@ -626,33 +1021,48 @@ public:
 
 protected:
     float mDPI;
-    const std::vector<int>& mUTF16To8;
+    float mD2DOffsetY;
+    FLOAT mLastBaselineY = -1e9f;
+    int mLineNo = -1;
+    const std::vector<int> &mUTF16To8;
+    DWRITE_LINE_METRICS *mLineMetrics;
     std::vector<TextLayout::Glyph> *mGlyphs;
 };
 
 class TextObj : public TextLayout
 {
 public:
-    TextObj(const char* textUTF8, const Font& font, const Color& fill, const Color& stroke,
-            const PicaPt& strokeWidth, ID2D1StrokeStyle* strokeStyle, float dpi,
-            const PicaPt& width, int alignment)
-        : mFont(font)
+    TextObj(const DrawContext& dc, const Text& text,
+            const Size& size, int alignment,
+            TextWrapping wordWrap,
+            Font defaultReplacementFont = kDefaultReplacementFont,
+            const Color& defaultReplacementColor = kDefaultReplacementColor)
+        : mDraw(dc.dpi())
     {
-        mDPI = dpi;
-        mFillColor = fill;
-        mStrokeColor = stroke;
-        mStrokeWidth = strokeWidth;
-        mStrokeStyle = strokeStyle;
+        mDPI = dc.dpi();
+        // In case anyone passes Font() to defaultReplacement font, replace with kDefaultFont
+        if (defaultReplacementFont.family().empty()) {
+            auto pointSize = defaultReplacementFont.pointSize();
+            if (pointSize > PicaPt::kZero) {
+                defaultReplacementFont = kDefaultReplacementFont.fontWithPointSize(pointSize);
+            } else {
+                defaultReplacementFont = kDefaultReplacementFont;
+            }
+        }
 
         // Convert from UTF8 -> WCHAR
-        const int kNullTerminated = -1;
-        int nCharsNeeded = MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, NULL, 0);
-        WCHAR* wtext = new WCHAR[nCharsNeeded + 1];  // nCharsNeeded includes \0, but +1 just in case
-        wtext[0] = '\0';  // in case conversion fails
-        MultiByteToWideChar(CP_UTF8, 0, textUTF8, kNullTerminated, wtext, nCharsNeeded);
+        int nCharsNeeded = 0;
+        WCHAR *wtext = newBrackets_Utf16FromUtf8(text.text(), &nCharsNeeded);  // calls new[]
+
+        // We might need to get the glyphs later. This will mean either
+        // copying the char* now (ugh) so we can use it later, or generating
+        // the utf16 -> utf8 mappings. Copying the char* will require two scans,
+        // so we're just going to make the mapping.
+        mUTF16To8 = utf8IndicesForUTF16Indices(text.text().c_str());
+        assert(mUTF16To8.size() == nCharsNeeded);  // might fail on invalid UTF-8
 
         // Set alignment
-        auto* format = gFontMgr.get(font, dpi).format;
+        auto *format = gFontMgr.get(defaultReplacementFont, mDPI).format;
         switch (alignment & Alignment::kHorizMask) {
             case Alignment::kLeft:
                 format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
@@ -665,17 +1075,234 @@ public:
                 break;
         }
         format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR); // top
-
-        // Create the text layout (don't snap to pixel)
-        float w = 10000.0f;
-        if (width > PicaPt::kZero) {
-            w = toD2D(width);
+        if (size.width == PicaPt::kZero || wordWrap == kWrapNone) {
+            format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        } else {
+            format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
         }
-        auto textOpts = D2D1_DRAW_TEXT_OPTIONS_NO_SNAP;
+
+        // Create the text layout
+        float w = 10000.0f;
+        if (size.width > PicaPt::kZero) {
+            w = toD2D(size.width);
+        }
         HRESULT err = Direct2D::instance().writeFactory()
                               ->CreateTextLayout(wtext, nCharsNeeded - 1, // don't pass the \0
                                                  format, w, 10000.0f, &mLayout);
         delete [] wtext;
+
+        if (text.lineHeightMultiple() > 0.0f) {
+            IDWriteTextLayout3* layout3 = nullptr;
+            err = mLayout->QueryInterface(IID_PPV_ARGS(&layout3));
+            if (err == S_OK) {
+                DWRITE_LINE_SPACING opts;
+                opts.method = DWRITE_LINE_SPACING_METHOD_PROPORTIONAL;
+                opts.height = text.lineHeightMultiple();
+                opts.baseline = text.lineHeightMultiple();
+                opts.leadingBefore = 0.0f;
+                opts.fontLineGapUsage = DWRITE_FONT_LINE_GAP_USAGE_ENABLED;  // use font's leading
+                layout3->SetLineSpacing(&opts);
+                layout3->Release();
+            }
+        }
+
+        // Set the text runs
+        int currentColor = 0;  // transparent: pretty much guaranteed to force fg to be set
+        Font::Metrics currentMetrics;
+        std::vector<Font::Metrics> runMetrics;
+        runMetrics.reserve(text.runs().size());
+        auto utf8to16 = utf16IndicesForUTF8Indices(text.text().c_str());
+        for (size_t i = 0; i < text.runs().size(); ++i) {
+            auto& run = text.runs()[i];
+            assert(run.font.isSet);
+            assert(run.color.isSet);
+            DWRITE_TEXT_RANGE range = {
+                utf8to16[run.startIndex],
+                utf8to16[run.startIndex + run.length] - utf8to16[run.startIndex]  };
+
+            bool hasSuperscript = (run.superscript.isSet && run.superscript.value);
+            bool hasSubscript = (run.subscript.isSet && run.subscript.value);
+            FLOAT d2dBaselineOffset = 0.0f;  // positive is down
+
+            // DirectWrite does not allow us to store enough information in the runs,
+            // so we encode drawing information ourselves. The drawing effect is an
+            // application-defined pointer, and we define it to be the starting index
+            // into the drawing commands.
+            if (i > 0) {
+                currentColor = currentColor;
+            }
+            mLayout->SetDrawingEffect(new COMifiedIndex(int(mDraw.size())), range);
+
+            Font font = run.font.value;
+            if (!run.font.isSet || isFamilyDefault(font)) {
+                font.setFamily(defaultReplacementFont.family());
+                if (isPointSizeDefault(font)) {
+                    font.setPointSize(defaultReplacementFont.pointSize());
+                }
+            }
+            if (run.pointSize.isSet) {
+                font.setPointSize(run.pointSize.value);
+            }
+            if (run.bold.isSet) {
+                font.setBold(run.bold.value);
+            }
+            if (run.italic.isSet) {
+                font.setItalic(run.italic.value);
+            }
+
+            // For the purposes of determining the first line ascent we want
+            // the normal font, not the super-/sub-scripted size.
+            currentMetrics = font.metrics(dc);
+            runMetrics.push_back(currentMetrics);
+            {
+                auto *fontInfo = &gFontMgr.get(font, mDPI);
+                if (hasSuperscript || hasSubscript) {
+                    font = fontSizedForSuperSubscript(font);
+                    auto* smallFontInfo = &gFontMgr.get(font, mDPI);
+                    if (hasSuperscript) {
+                        d2dBaselineOffset = -toD2D(fontInfo->metrics.capHeight - smallFontInfo->metrics.capHeight);
+                    } else if (hasSubscript) {
+                        d2dBaselineOffset = toD2D(fontInfo->metrics.descent - smallFontInfo->metrics.descent);
+                    }
+                    fontInfo = smallFontInfo;
+                    currentMetrics = font.metrics(dc);
+                }
+                WCHAR* utf16Family = gUTF16Cache.get(font.family());
+                mLayout->SetFontFamilyName(utf16Family, range);
+                mLayout->SetFontSize(fontInfo->d2dSize, range);
+                mLayout->SetFontStyle(fontInfo->d2dStyle, range);
+                mLayout->SetFontWeight(fontInfo->d2dWeight, range);
+            }
+
+            bool bgSet = (run.backgroundColor.isSet && run.backgroundColor.value.alpha() > 0.0f);
+            bool underlineSet = (run.underlineStyle.isSet
+                                 && run.underlineStyle.value != kUnderlineNone
+                                 && !(run.underlineColor.isSet
+                                    && run.underlineColor.value.alpha() == 0.0f));
+            bool strikethroughSet = (run.strikethrough.isSet
+                                     && run.strikethrough.value);
+
+            // If a background color is set, it needs to be drawn first.
+            if (bgSet) {
+                auto bgRGBA = run.backgroundColor.value.toRGBA();
+                if (bgRGBA != currentColor) {
+                    mDraw.addColor(bgRGBA);
+                    currentColor = bgRGBA;
+                }
+                mDraw.addRect(toD2D(currentMetrics.ascent), toD2D(currentMetrics.descent));
+            }
+
+            bool isFgDefault = false;
+            Color fg = run.color.value;
+            if ((run.color.value.red() == Color::kTextDefault.red() &&
+                run.color.value.green() == Color::kTextDefault.green() &&
+                run.color.value.blue() == Color::kTextDefault.blue())) {
+                fg = defaultReplacementColor;
+                fg.setAlpha(run.color.value.alpha());
+            }
+            int fgRGBA = fg.toRGBA();
+            if (fgRGBA != currentColor) {
+                mDraw.addColor(fgRGBA);
+                currentColor = fgRGBA;
+            }
+
+            // Draw underline *before* text, so text descenders are on top
+            if (underlineSet) {
+                if (run.underlineColor.isSet) {
+                    int rgba = run.underlineColor.value.toRGBA();
+                    if (rgba != currentColor) {
+                        mDraw.addColor(rgba);
+                        currentColor = rgba;
+                    }
+                }
+
+                // Note that underline position is *above* the baseline
+                // (so usually negative).
+                auto d2dDeltaY = toD2D(currentMetrics.underlineOffset);
+                auto d2dWidth = toD2D(currentMetrics.underlineThickness);
+                DrawRunCommands::Cmd cmd = DrawRunCommands::kStroke;
+                switch (run.underlineStyle.value) {
+                case kUnderlineNone: // to make compiler happy about enum
+                case kUnderlineSingle:
+                    cmd = DrawRunCommands::kStroke;
+                    break;
+                case kUnderlineDouble:
+                    cmd = DrawRunCommands::kDoubleStroke;
+                    break;
+                case kUnderlineDotted:
+                    cmd = DrawRunCommands::kDottedStroke;
+                    break;
+                case kUnderlineWavy:
+                    cmd = DrawRunCommands::kWavyStroke;
+                    break;
+                }
+                mDraw.addLine(cmd, d2dDeltaY + d2dBaselineOffset, d2dWidth);
+            }
+
+            // Draw the actual text (unless transparent)
+            if (fgRGBA != currentColor) { // underline might have changed
+                mDraw.addColor(fgRGBA);
+                currentColor = fgRGBA;
+            }
+            if (fg.alpha() > 0.0f) {
+                mDraw.addText(d2dBaselineOffset);
+            }
+
+            // Draw outlined text
+            bool isOutlineSet = (run.outlineColor.isSet && run.outlineColor.value.alpha() > 0.0f &&
+                                 !(run.outlineStrokeWidth.isSet && run.outlineStrokeWidth.value == PicaPt::kZero));
+            if (isOutlineSet) {
+                int rgba;
+                if (run.outlineColor.isSet) {
+                    rgba = run.outlineColor.value.toRGBA();
+                } else {
+                    rgba = fgRGBA;
+                }
+                if (rgba != currentColor) {
+                    mDraw.addColor(rgba);
+                    currentColor = rgba;
+                }
+
+                PicaPt thickness;
+                if (run.outlineStrokeWidth.isSet) {
+                    thickness = run.outlineStrokeWidth.value;
+                } else {
+                    thickness = PicaPt(1.0f);
+                }
+                mDraw.addStrokedText(toD2D(thickness), d2dBaselineOffset);
+            }
+
+            // Draw strikethroughs *after* text
+            if (run.strikethroughColor.isSet && run.strikethroughColor.value.alpha() > 0.0f) {
+                int rgba = run.strikethroughColor.value.toRGBA();
+                if (rgba != currentColor) {
+                    mDraw.addColor(rgba);
+                    currentColor = rgba;
+                }
+            }
+            if (strikethroughSet) {
+                mDraw.addLine(DrawRunCommands::kStroke,
+                              toD2D(-0.5f * currentMetrics.xHeight) + d2dBaselineOffset,
+                              toD2D(currentMetrics.underlineThickness));
+            }
+
+            // Character spacing
+            if (run.characterSpacing.isSet && run.characterSpacing.value != PicaPt::kZero) {
+                IDWriteTextLayout1* layout = nullptr;
+                err = mLayout->QueryInterface(IID_PPV_ARGS(&layout));
+                if (err == S_OK) {
+                    // *sigh* We'd like to specify the space in-between characters,
+                    // but Microsoft only lets us specify the leading and trailing spacing,
+                    // which will lead to extra space at the beginning and end.
+                    float d2dSpacing = toD2D(run.characterSpacing.value);
+                    layout->SetCharacterSpacing(0.5f * d2dSpacing, 0.5f * d2dSpacing, 0.0f,
+                        range);
+                    layout->Release();
+                }
+            }
+
+            mDraw.addDone();
+        }
 
         // Snapping to pixel sometimes puts the text above the baseline
         // (as desired) or on the pixel of the baseline (not desired).
@@ -687,16 +1314,43 @@ public:
             mLayout->GetLineMetrics(lineMetrics, 0, &nLines);
             lineMetrics = new DWRITE_LINE_METRICS[nLines];
             mLayout->GetLineMetrics(lineMetrics, nLines, &nLines);
-            mBaseline = PicaPt::fromPixels(float(lineMetrics->baseline), 96.0f);
+            mBaseline = fromD2D(float(lineMetrics->baseline));
             delete[] lineMetrics;
+
+            // Q: Does DWRITE_LINE_METRICS::length which is "number of text positions"
+            //    (including trailing whitespace/newlines) mean the number of code
+            //    points, or the number of WCHARs you need to advance by? If the latter,
+            //    we could pass the length to calcFirstLineMetrics and avoid ever
+            //    calculating the glyphs.
         }
 
-        // We might need to get the glyphs later. This will mean either
-        // copying the char* now (ugh) so we can use it later, or generating
-        // the utf16 -> utf8 mappings. Copying the char* will require two scans,
-        // so we're just going to make the mapping.
-        mUTF16To8 = utf8IndicesForUTF16Indices(textUTF8);
-        assert(mUTF16To8.size() == nCharsNeeded);  // might fail on invalid UTF-8
+        // Handle vertical alignment
+        Font::Metrics firstLineMetrics;
+        if (!runMetrics.empty()) {
+            firstLineMetrics = calcFirstLineMetrics(runMetrics, text.runs());
+        } else {
+            firstLineMetrics = defaultReplacementFont.metrics(dc);
+        }
+        mFirstLineAscent = firstLineMetrics.ascent;
+        mFirstLineLeading = firstLineMetrics.leading;
+        mAlignmentOffset = calcOffsetForAlignment(alignment, size, firstLineMetrics);
+        if (text.lineHeightMultiple() > 0.0f) {
+            if (alignment & Alignment::kBottom) {
+                mAlignmentOffset.y += (text.lineHeightMultiple() - 1.0f) * (firstLineMetrics.lineHeight + firstLineMetrics.leading);
+            } else if (alignment & Alignment::kVCenter) {
+                mAlignmentOffset.y += 0.5f * (text.lineHeightMultiple() - 1.0f) * (firstLineMetrics.lineHeight + firstLineMetrics.leading);
+            }
+        }
+
+        // So this is kind of hacky: calcFirstLineMetrics *might* have created
+        // the glyphs in order to find line boundaries. We need to deallocate
+        // them (see the comment for TextLayout in the header file). Also, they
+        // will have been created without any alignment offsets (since that was
+        // what we were computing), so they will be wrong anyway.
+        if (!mGlyphs.empty()) {
+            mGlyphs.clear();
+            mGlyphs.shrink_to_fit();  // clear() does not release memory
+        }
     }
 
     ~TextObj()
@@ -706,25 +1360,13 @@ public:
         }
     }
 
-    const Color* fillColor() const
-        { return (mFillColor.alpha() > 0.001f) ? &mFillColor : nullptr; }
-    const Color* strokeColor() const
-        { return (mStrokeColor.alpha() > 0.001f) ? &mStrokeColor : nullptr; }
-    const PicaPt& strokeWidth() const { return mStrokeWidth; }
-    ID2D1StrokeStyle* strokeStyle() const { return mStrokeStyle; }
-    const Font& font() const { return mFont; }
-
-    const PicaPt& baseline() const { return mBaseline; }
-
-    IDWriteTextLayout* layout() const { return mLayout; }
-
     const TextMetrics& metrics() const override
     {
         if (!mMetricsValid) {
             DWRITE_TEXT_METRICS winMetrics;
-            layout()->GetMetrics(&winMetrics);
-            mMetrics.width = PicaPt::fromPixels(winMetrics.width, 96.0f);
-            mMetrics.height = PicaPt::fromPixels(winMetrics.height, 96.0f);
+            mLayout->GetMetrics(&winMetrics);
+            mMetrics.width = fromD2D(winMetrics.width);
+            mMetrics.height = fromD2D(winMetrics.height);
             if (mMetrics.width == PicaPt::kZero) {
                 mMetrics.height = PicaPt::kZero;
             }
@@ -742,9 +1384,19 @@ public:
     const std::vector<Glyph>& glyphs() const override
     {
         if (!mUTF16To8.empty() && mGlyphs.empty() && mLayout) {
-            auto *glyphGetter = new GlyphGetter(mDPI, mUTF16To8, &mGlyphs);
+            DWRITE_LINE_METRICS* lineMetrics = nullptr;
+            UINT32 nLines;
+            mLayout->GetLineMetrics(lineMetrics, 0, &nLines);
+            lineMetrics = new DWRITE_LINE_METRICS[nLines];
+            mLayout->GetLineMetrics(lineMetrics, nLines, &nLines);
+
+            // Same calculation as draw() does, except for the pixel-snapping.
+            auto offsetY = toD2D(mAlignmentOffset.y - (mBaseline - mFirstLineAscent));
+            auto* glyphGetter = new GlyphGetter(mDPI, offsetY, mUTF16To8, lineMetrics, &mGlyphs);
             mLayout->Draw(nullptr, glyphGetter, 0.0f, 0.0f);
             glyphGetter->Release();
+
+            delete[] lineMetrics;
         }
         // GlyphGetter cannot know when the end of the string has been
         // reached, so we need to fixup .nextIndex for the last glyph.
@@ -754,17 +1406,51 @@ public:
         return mGlyphs;
     }
 
+    void draw(ID2D1DeviceContext *gc, ID2D1SolidColorBrush *solidBrush,
+              D2D1::Matrix3x2F& matrix, const Point& topLeft) const
+    {
+        auto* textRenderer = new CustomTextRenderer(matrix, solidBrush, mDraw);
+
+        // We need to disable snapping to pixel because Windows is inconsistent about
+        // how it snaps; this is done in BaseTextRenderer::IsSnappingDisabled().
+        // So we need to do the snapping ourselves. The expectation of this function is
+        // that topLeft.y + font.ascent = baselineY. This is the mathematical line;
+        // the pixel "at" baselineY begins at the baseline and continues below,
+        // so visually the pixel "at" baselineY is "below" the baseline. At any
+        // rate, the ascent pixels of the glyph should all be above the baseline.
+        // It seems that y + ascent != baseline in Direct2D, so we need to take
+        // the actual baseline, and offset topLeft.y so that the result is that
+        // the ascending pixels stop exactly at the mathematical baseline.
+        PicaPt actualBaseline = topLeft.y + mAlignmentOffset.y + mBaseline;
+        PicaPt expectedBaseline = topLeft.y + mAlignmentOffset.y + mFirstLineAscent;
+
+        // The GC uses units of DIPs (96-dpi) which may or may not correspond to actual
+        // pixels. Since we need to snap to actual pixels, we need toPixels(), not toD2D().
+        // Q: Should we take into account the scale factor?
+        // A: No, this way applying a scale factor keeps the position of the text,
+        //    and if you are applying a scale factor, all bets are of on pixel snapping
+        //    in general.
+        float offsetPx = actualBaseline.toPixels(mDPI) - std::floor(expectedBaseline.toPixels(mDPI));
+
+        // Since we are calling a D2D function, we need to make sure that our offset is
+        // converted from pixels to DIPs. The easiest way to do that is to convert
+        // the offset to PicaPt.
+        mLayout->Draw(gc, textRenderer,
+                      toD2D(topLeft.x),
+                      toD2D(topLeft.y + mAlignmentOffset.y - PicaPt::fromPixels(offsetPx, mDPI)));
+
+        textRenderer->Release();
+    }
+
 private:
-    const Font& mFont;
-
     float mDPI;
-    Color mFillColor;
-    Color mStrokeColor;
-    PicaPt mStrokeWidth;
-    ID2D1StrokeStyle* mStrokeStyle;
+    Point mAlignmentOffset;
+    PicaPt mBaseline;
+    PicaPt mFirstLineAscent;
+    PicaPt mFirstLineLeading;
 
-    IDWriteTextLayout* mLayout = nullptr;
-    PicaPt mBaseline = PicaPt::kZero;
+    IDWriteTextLayout *mLayout = nullptr;
+    DrawRunCommands mDraw;
 
     mutable bool mMetricsValid = false;
     mutable TextMetrics mMetrics;
@@ -866,12 +1552,33 @@ public:
 
     std::shared_ptr<TextLayout> createTextLayout(
                          const char *utf8, const Font& font, const Color& color,
-                         const PicaPt& width /*= PicaPt::kZero*/,
-                         int alignment /*= Alignment::kLeft*/) const override
+                         const Size& size /*= Size::kZero*/,
+                         int alignment /*= Alignment::kLeft | Alignment::kTop*/,
+                         TextWrapping wrap /*= kWrapWord*/) const override
     {
-        return std::make_shared<TextObj>(utf8, font, color,
-                                         Color::kTransparent, PicaPt::kZero, nullptr,
-                                         mDPI, width, alignment);
+        return std::make_shared<TextObj>(*this, Text(utf8, font, color),
+                                         size, alignment, wrap);
+    }
+
+    std::shared_ptr<TextLayout> createTextLayout(
+                         const Text& t,
+                         const Size& size /*= Size::kZero*/,
+                         int alignment /*= Alignment::kLeft | Alignment::kTop*/,
+                         TextWrapping wrap /*= kWrapWord*/) const
+    {
+        return std::make_shared<TextObj>(*this, t, size, alignment, wrap);
+    }
+
+    std::shared_ptr<TextLayout> createTextLayout(
+                         const Text& t,
+                         const Font& defaultReplacementFont,
+                         const Color& defaultReplacementColor,
+                         const Size& size /*= Size::kZero*/,
+                         int alignment /*= Alignment::kLeft | Alignment::kTop*/,
+                         TextWrapping wrap /*= kWrapWord*/) const
+    {
+        return std::make_shared<TextObj>(*this, t, size, alignment, wrap,
+                                         defaultReplacementFont, defaultReplacementColor);
     }
 
 private:
@@ -1223,31 +1930,7 @@ public:
         // do not want to make it a virtual function, either, otherwise
         // it end up visible in the user-visible interface.
         const TextObj *text = static_cast<const TextObj*>(&layout);
-
-        // gc->DrawTextLayout() works fine for filled text but has
-        // no support for outlines, so we need to use our own custom
-        // text renderer :(
-        FLOAT strokeWidth = toD2D(text->strokeWidth());
-        auto *textRenderer = new CustomTextRenderer(
-                                state.transform, mSolidBrush, text->fillColor(),
-                                text->strokeColor(), strokeWidth, text->strokeStyle());
-        // We have chosen to snap the text to pixels ourself because Windows
-        // is not consistent about it. The expectation of this function is that
-        // topLeft.y + font.ascent = baselineY. This is the mathematical line;
-        // the pixel "at" baselineY begins at the baseline and continues below,
-        // so visually the pixel "at" baselineY is "below" the baseline. At any
-        // rate, the ascent pixels of the glyph should all be above the baseline.
-        // It seems that y + ascent != baseline in Direct2D, so we need to take
-        // the actual baseline, and offset topLeft.y so that the result is that
-        // the ascending pixels stop exactly at the mathematical baseline.
-        Font::Metrics fm = fontMetrics(text->font());
-        PicaPt actualBaseline = topLeft.y + text->baseline();
-        PicaPt expectedBaseline = topLeft.y + fm.ascent;
-        float offsetPx = actualBaseline.toPixels(mDPI) -
-                         std::floor(expectedBaseline.toPixels(mDPI));
-        text->layout()->Draw(gc, textRenderer, toD2D(topLeft.x),
-                             toD2D(topLeft.y - PicaPt::fromPixels(offsetPx, mDPI)));
-        textRenderer->Release();
+        text->draw(gc, mSolidBrush, state.transform, topLeft);
     }
 
     void drawImage(std::shared_ptr<Image> image, const Rect& rect) override
@@ -1384,13 +2067,13 @@ protected:
         if (mode & kPaintFill) {
             fillColor = state.fillColor;
         }
+        Text t(textUTF8, font, fillColor);
         if (mode & kPaintStroke) {
-            strokeColor = state.strokeColor;
-            strokeWidth = state.strokeWidth;
-            strokeStyle = getStrokeStyle();
+            t.setOutlineColor(state.strokeColor);
+            t.setOutlineStrokeWidth(state.strokeWidth);
+            //strokeStyle = getStrokeStyle();
         }
-        return TextObj(textUTF8, font, fillColor, strokeColor, strokeWidth, strokeStyle, mDPI,
-                       PicaPt::kZero, Alignment::kLeft);
+        return TextObj(*this, t, Size::kZero, Alignment::kLeft, kWrapNone);
     }
 
     void pushClipLayer(std::shared_ptr<BezierPath> path)

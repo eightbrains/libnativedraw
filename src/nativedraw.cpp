@@ -1052,14 +1052,14 @@ void BezierPath::addEllipse(const Rect& r)
 }
 
 //-----------------------------------------------------------------------------
-DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi)
-    : mNativeDC(nativeDC), mWidth(width), mHeight(height), mDPI(dpi)
+DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi, float nativeDPI)
+    : mNativeDC(nativeDC), mWidth(width), mHeight(height), mDPI(dpi), mNativeDPI(nativeDPI)
 {
 }
 
 PicaPt DrawContext::onePixel() const
 {
-    return PicaPt::fromPixels(1.0f, mDPI);
+    return PicaPt::fromPixels(1.0f, mNativeDPI);
 }
 
 PicaPt DrawContext::floorToNearestPixel(const PicaPt& p) const

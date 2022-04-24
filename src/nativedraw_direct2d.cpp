@@ -1523,7 +1523,7 @@ protected:
 
 public:
     Direct2DContext(void* renderTarget, int width, int height, float dpi)
-        : DrawContext(renderTarget, width, height, dpi)
+        : DrawContext(renderTarget, width, height, dpi, dpi)
     {
         mDrawingState = DrawingState::kNotDrawing;
         if (renderTarget) {

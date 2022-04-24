@@ -79,21 +79,21 @@ public:
             for (auto &cmd : mImpl->commands) {
                 switch (cmd.cmd) {
                     case BezierPath::Impl::Command::kMoveTo:
-                        CGPathMoveToPoint(path, NULL, cmd.p1.x.asFloat(), cmd.p1.y.asFloat());
+                        CGPathMoveToPoint(path, NULL, cmd.p1.x.toPixels(dpi), cmd.p1.y.toPixels(dpi));
                         break;
                     case BezierPath::Impl::Command::kLineTo:
-                        CGPathAddLineToPoint(path, NULL, cmd.p1.x.asFloat(), cmd.p1.y.asFloat());
+                        CGPathAddLineToPoint(path, NULL, cmd.p1.x.toPixels(dpi), cmd.p1.y.toPixels(dpi));
                         break;
                     case BezierPath::Impl::Command::kQuadraticTo:
                         CGPathAddQuadCurveToPoint(path, NULL,
-                                                  cmd.p1.x.asFloat(), cmd.p1.y.asFloat(),
-                                                  cmd.p2.x.asFloat(), cmd.p2.y.asFloat());
+                                                  cmd.p1.x.toPixels(dpi), cmd.p1.y.toPixels(dpi),
+                                                  cmd.p2.x.toPixels(dpi), cmd.p2.y.toPixels(dpi));
                         break;
                     case BezierPath::Impl::Command::kCubicTo:
                         CGPathAddCurveToPoint(path, NULL,
-                                              cmd.p1.x.asFloat(), cmd.p1.y.asFloat(),
-                                              cmd.p2.x.asFloat(), cmd.p2.y.asFloat(),
-                                              cmd.p3.x.asFloat(), cmd.p3.y.asFloat());
+                                              cmd.p1.x.toPixels(dpi), cmd.p1.y.toPixels(dpi),
+                                              cmd.p2.x.toPixels(dpi), cmd.p2.y.toPixels(dpi),
+                                              cmd.p3.x.toPixels(dpi), cmd.p3.y.toPixels(dpi));
                         break;
                     case BezierPath::Impl::Command::kClose:
                         CGPathCloseSubpath(path);
@@ -181,7 +181,7 @@ static ResourceManager<Font, NSFont*> gFontMgr(createFont, destroyFont);
 //----------------------------- Text Obj --------------------------------------
 class TextObj : public TextLayout
 {
-    static constexpr CGFloat kTextFrameHeight = 10000.0;
+    static constexpr CGFloat kTextFrameHeight = 100000.0;
 
 public:
     TextObj(const DrawContext& dc, const Text& text, const Size& size, int alignment,
@@ -207,7 +207,7 @@ public:
         };
 
         mLen = int(text.text().size());
-        mDPI = 72.0f;
+        mDPI = dc.dpi();
         mFirstLineOffsetForGlyphs = PicaPt::kZero;
 
         assert(!text.runs().empty());
@@ -247,25 +247,25 @@ public:
             // Although there is NSSuperscriptAttributeName, it appears to only work for the
             // San Francisco font, and is not available on iOS (although @"NSSuperScript"
             // apparently works). So we need to do it ourselves.
-            NSFont *nsfont72 = gFontMgr.get(font, mDPI);
+            NSFont *nsfont = gFontMgr.get(font, mDPI);
             // The metrics, for purposes of determining the height of the first line
             // is the original font size.
             runMetrics.push_back(font.metrics(dc));
             if (hasSuperscript || hasSubscript) {
                 font = fontSizedForSuperSubscript(font);
-                NSFont *nssmall72 = gFontMgr.get(font, mDPI);
+                NSFont *nssmall = gFontMgr.get(font, mDPI);
                 // We do the super/sub-scripting by setting the baseline offset.
                 // Note that macOS' origin is lower-left, instead of our upper-right
                 if (hasSuperscript) {  // align top of super caps with top of regular caps
-                    baselineOffset = nsfont72.capHeight - nssmall72.capHeight;
+                    baselineOffset = nsfont.capHeight - nssmall.capHeight;
                 } else {
-                    baselineOffset = nsfont72.descender - nssmall72.descender;
+                    baselineOffset = nsfont.descender - nssmall.descender;
                 }
                 attr[NSBaselineOffsetAttributeName] = @(baselineOffset);
-                nsfont72 = nssmall72;
+                nsfont = nssmall;
             }
             // Now we can actually set the font
-            attr[NSFontAttributeName] = nsfont72;
+            attr[NSFontAttributeName] = nsfont;
 
             Color fg = run.color.value;
             if ((run.color.value.red() == Color::kTextDefault.red() &&
@@ -308,8 +308,8 @@ public:
                                 c = run.underlineColor.value;
                             }
                             lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kWavy,
-                                              c, nsfont72.underlineThickness,
-                                              nsfont72.ascender - baselineOffset + std::abs(nsfont72.underlinePosition) });
+                                              c, nsfont.underlineThickness,
+                                              nsfont.ascender - baselineOffset + std::abs(nsfont.underlinePosition) });
                             break;
                         }
                     }
@@ -321,7 +321,7 @@ public:
                     if (run.underlineColor.isSet) {
                         c = run.underlineColor.value;
                     }
-                    CGFloat thickness = std::max(CGFloat(1.0), nsfont72.underlineThickness);
+                    CGFloat thickness = std::max(CGFloat(1.0), nsfont.underlineThickness);
                     Line::Type lineType = Line::Type::kSingle;
                     switch (run.underlineStyle.value) {
                         case kUnderlineNone:  break;
@@ -337,7 +337,7 @@ public:
                     }
                     lines.push_back({ run.startIndex, run.startIndex + run.length,
                                       lineType, c, thickness,
-                                      nsfont72.ascender - baselineOffset + std::abs(nsfont72.underlinePosition) });
+                                      nsfont.ascender - baselineOffset + std::abs(nsfont.underlinePosition) });
                 }
             }
             if (run.strikethrough.isSet && run.strikethrough.value
@@ -352,8 +352,8 @@ public:
                 // is nice and continuous. What thickness should it be? Underline thickness seems to be
                 // as good as any, but truncate to increments of one unit.
                 lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kSingle,
-                                  c, std::max(1.0, nsfont72.underlineThickness),
-                                  nsfont72.ascender - baselineOffset - 0.5f * nsfont72.xHeight });
+                                  c, std::max(1.0, nsfont.underlineThickness),
+                                  nsfont.ascender - baselineOffset - 0.5f * nsfont.xHeight });
             }
             if (run.characterSpacing.isSet && run.characterSpacing.value != PicaPt::kZero) {
                 attr[NSKernAttributeName] = @(run.characterSpacing.value.toPixels(mDPI));
@@ -368,8 +368,8 @@ public:
                 // already in the correct units (namely PicaPt), just like
                 // nsfont72.pointSize is (since we got the 72 dpi version of the
                 // font).
-                float strokeWidth = run.outlineStrokeWidth.value.asFloat();
-                strokeWidth = strokeWidth / nsfont72.pointSize * 100.0f;
+                float strokeWidth = run.outlineStrokeWidth.value.toPixels(mDPI);
+                strokeWidth = strokeWidth / nsfont.pointSize * 100.0f;
                 if (run.outlineColor.isSet) {
                     attr[NSStrokeColorAttributeName] = makeNSColor(run.outlineColor.value);
                 }
@@ -421,7 +421,7 @@ public:
         }
 
         mLayout = CTFramesetterCreateWithAttributedString((CFAttributedStringRef)nsstring);
-        CGFloat w = (size.width == PicaPt::kZero ? 10000 : size.width.asFloat());
+        CGFloat w = (size.width == PicaPt::kZero ? kTextFrameHeight : size.width.toPixels(mDPI));
         auto r = CGRectMake(0, 0, w, kTextFrameHeight);
         mPath = CGPathCreateWithRect(r, nullptr);
         mFrame = CTFramesetterCreateFrame(mLayout,
@@ -459,8 +459,8 @@ public:
 
         // Cache here to speed drawing
         auto alignOffset = calcOffsetForAlignment(alignment, size, firstLineMetrics);
-        mAlignmentOffsetPx = CGPointMake(alignOffset.x.asFloat(),
-                                         alignOffset.y.asFloat());
+        mAlignmentOffsetPx = CGPointMake(alignOffset.x.toPixels(mDPI),
+                                         alignOffset.y.toPixels(mDPI));
 
         // As far as I can tell, if -setLineHeightMultiple: is set on the paragraph style,
         // CTFrameGetLineOrigins() returns everything offset as if there were another line
@@ -493,9 +493,9 @@ public:
                 auto xEndPt = xStartPt;
                 while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < line.utf8end) {
                     if (mGlyphs[glyphIdx].frame.y > yPt) {
-                        CGFloat y = std::trunc(yPt.asFloat() + line.dy) - 0.5;  // floor(x) differs for +ve and -ve x!
-                        auto p1 = CGPointMake(xStartPt.asFloat(), y);
-                        auto p2 = CGPointMake(xEndPt.asFloat(), y);
+                        CGFloat y = std::trunc(yPt.toPixels(mDPI) + line.dy) - 0.5;  // floor(x) differs for +ve and -ve x!
+                        auto p1 = CGPointMake(xStartPt.toPixels(mDPI), y);
+                        auto p2 = CGPointMake(xEndPt.toPixels(mDPI), y);
                         mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
                         yPt = mGlyphs[glyphIdx].frame.y;
                         xStartPt = mGlyphs[glyphIdx].frame.x;
@@ -503,9 +503,9 @@ public:
                     xEndPt = mGlyphs[glyphIdx].frame.maxX();
                     ++glyphIdx;
                 }
-                CGFloat y = std::trunc(yPt.asFloat() + line.dy) - 0.5;
-                auto p1 = CGPointMake(xStartPt.asFloat(), y);
-                auto p2 = CGPointMake(xEndPt.asFloat(), y);
+                CGFloat y = std::trunc(yPt.toPixels(mDPI) + line.dy) - 0.5;
+                auto p1 = CGPointMake(xStartPt.toPixels(mDPI), y);
+                auto p2 = CGPointMake(xEndPt.toPixels(mDPI), y);
                 mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
             }
         }
@@ -577,6 +577,8 @@ public:
     const std::vector<Glyph>& glyphs() const override
     {
         if (!mGlyphsInitialized) {
+            Point alignmentOffset(PicaPt::fromPixels(mAlignmentOffsetPx.x, mDPI),
+                                  PicaPt::fromPixels(mAlignmentOffsetPx.y, mDPI));
             NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
             std::vector<CGPoint> lineOrigins;
             lineOrigins.resize(lines.count);
@@ -613,8 +615,8 @@ public:
                         }
                         mGlyphs.push_back({
                             indices[g], i,
-                            Rect(mAlignmentOffsetPx.x + PicaPt::fromPixels(x + positions[g].x, mDPI),
-                                 mAlignmentOffsetPx.y + yPt,
+                            Rect(alignmentOffset.x + PicaPt::fromPixels(x + positions[g].x, mDPI),
+                                 alignmentOffset.y + yPt,
                                  PicaPt::fromPixels(advances[g].width, mDPI),
                                  hPt),
                             });
@@ -647,9 +649,10 @@ public:
         // Note that we've scaled the coordinates so that one unit is one PicaPt, not one pixel.
         // TopLeft *is* in PicaPt; origin and nsfont.ascender are in text-bitmap units which apparently
         // take into account the scale factor.
+        auto dpi = dc.dpi();
         CGContextTranslateCTM(gc,
-                              mAlignmentOffsetPx.x + topLeft.x.asFloat(),
-                              mAlignmentOffsetPx.y + topLeft.y.asFloat() + origin.y + mFirstLineAscender.asFloat() - PicaPt::fromPixels(1, dc.dpi()).asFloat());
+                              mAlignmentOffsetPx.x + topLeft.x.toPixels(dpi),
+                              mAlignmentOffsetPx.y + topLeft.y.toPixels(dpi) + origin.y + mFirstLineAscender.toPixels(dpi) - /*PicaPt::fromPixels(1, dpi).asFloat()*/1.0);
         CGContextScaleCTM(gc, 1, -1);
         CTFrameDraw(mFrame, gc);
         CGContextRestoreGState(gc); // ok, graphics state is sane
@@ -658,7 +661,7 @@ public:
         // so we have to do these ourselves. macOS appears to draw underlines on top of the text,
         // which I think is not great, but at least it is convenient for this.
         if (!mLines.empty()) {
-            CGContextTranslateCTM(gc, topLeft.x.asFloat(), topLeft.y.asFloat());
+            CGContextTranslateCTM(gc, topLeft.x.toPixels(dpi), topLeft.y.toPixels(dpi));
             CGContextSetLineCap(gc, kCGLineCapButt);
             CGContextSetLineDash(gc, 0.0, nullptr, 0);
             int glyphIdx = 0;
@@ -757,8 +760,8 @@ private:
     std::vector<ContextState> mStateStack;
 
 public:
-    CoreGraphicsContext(void *cgcontext, int width, int height, float dpi)
-        : DrawContext(cgcontext, width, height, dpi)
+    CoreGraphicsContext(void *cgcontext, int width, int height, float dpi, float nativeDPI)
+        : DrawContext(cgcontext, width, height, dpi, nativeDPI)
     {
         if (cgcontext) {
             setNativeDC(cgcontext);
@@ -840,7 +843,7 @@ public:
     void translate(const PicaPt& dx, const PicaPt& dy) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
-        CGContextTranslateCTM(gc, dx.asFloat(), dy.asFloat());
+        CGContextTranslateCTM(gc, dx.toPixels(mDPI), dy.toPixels(mDPI));
     }
 
     void rotate(float degrees) override
@@ -863,7 +866,7 @@ public:
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGAffineTransform t = CGContextGetCTM(gc);
-        CGPoint p = CGPointMake(point.x.toPixels(72.0f), point.y.toPixels(72.0f));
+        CGPoint p = CGPointMake(point.x.toPixels(mDPI), point.y.toPixels(mDPI));
         p = CGPointApplyAffineTransform(p, t);
         if (x) {
             *x = float(p.x);
@@ -900,8 +903,8 @@ public:
     void clearRect(const Rect& rect) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
-        CGContextClearRect(gc, CGRectMake(rect.x.asFloat(), rect.y.asFloat(),
-                                          rect.width.asFloat(), rect.height.asFloat()));
+        CGContextClearRect(gc, CGRectMake(rect.x.toPixels(mDPI), rect.y.toPixels(mDPI),
+                                          rect.width.toPixels(mDPI), rect.height.toPixels(mDPI)));
     }
 
     Color fillColor() const override { return mStateStack.back().fillColor; }
@@ -936,7 +939,7 @@ public:
     void setStrokeWidth(const PicaPt& w) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
-        CGContextSetLineWidth(gc, w.asFloat());
+        CGContextSetLineWidth(gc, w.toPixels(mDPI));
         mStateStack.back().strokeWidth = w;
     }
 
@@ -974,11 +977,11 @@ public:
         std::vector<CGFloat> lengthsPx;
         lengthsPx.reserve(lengths.size());
         for (size_t i = 0;  i < lengths.size();  ++i) {
-            lengthsPx.push_back(lengths[i].asFloat());
+            lengthsPx.push_back(lengths[i].toPixels(mDPI));
         }
         // CoreGraphics seems to offset away from the line direction, whereas
         // it seems more intuitive for a positive offset to go forward.
-        CGContextSetLineDash(gc, -offset.asFloat(), lengthsPx.data(), lengthsPx.size());
+        CGContextSetLineDash(gc, -offset.toPixels(mDPI), lengthsPx.data(), lengthsPx.size());
     }
 
     void drawLines(const std::vector<Point>& lines) override
@@ -987,7 +990,7 @@ public:
         std::vector<CGPoint> pts;
         pts.reserve(2 * lines.size());
         for (auto &p : lines) {
-            pts.push_back(CGPointMake(p.x.asFloat(), p.y.asFloat()));
+            pts.push_back(CGPointMake(p.x.toPixels(mDPI), p.y.toPixels(mDPI)));
         }
         CGContextAddLines(gc, pts.data(), pts.size());
         CGContextStrokePath(gc);
@@ -996,8 +999,8 @@ public:
     void drawRect(const Rect& rect, PaintMode mode) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
-        CGContextAddRect(gc, CGRectMake(rect.x.asFloat(), rect.y.asFloat(),
-                                        rect.width.asFloat(), rect.height.asFloat()));
+        CGContextAddRect(gc, CGRectMake(rect.x.toPixels(mDPI), rect.y.toPixels(mDPI),
+                                        rect.width.toPixels(mDPI), rect.height.toPixels(mDPI)));
         CGContextDrawPath(gc, calcCGDrawMode(mode));
     }
 
@@ -1006,8 +1009,8 @@ public:
     void drawEllipse(const Rect& rect, PaintMode mode) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
-        auto r = CGRectMake(rect.x.asFloat(), rect.y.asFloat(),
-                            rect.width.asFloat(), rect.height.asFloat());
+        auto r = CGRectMake(rect.x.toPixels(mDPI), rect.y.toPixels(mDPI),
+                            rect.width.toPixels(mDPI), rect.height.toPixels(mDPI));
         CGContextAddEllipseInRect(gc, r);
         CGContextDrawPath(gc, calcCGDrawMode(mode));
     }
@@ -1040,13 +1043,13 @@ public:
     void drawImage(std::shared_ptr<Image> image, const Rect& destRect) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
-        auto cgrect = CGRectMake(destRect.x.asFloat(), destRect.y.asFloat(),
-                                 destRect.width.asFloat(), destRect.height.asFloat());
+        auto cgrect = CGRectMake(destRect.x.toPixels(mDPI), destRect.y.toPixels(mDPI),
+                                 destRect.width.toPixels(mDPI), destRect.height.toPixels(mDPI));
         // We need to flip coordinates, as the blit will just write directly
         // into the bitmap. Note that we've scaled the coordinates so that
         // one unit is one PicaPt, not one pixel.
         CGContextSaveGState(gc);
-        CGContextTranslateCTM(gc, 0, PicaPt::fromPixels(mHeight, mDPI).asFloat());
+        CGContextTranslateCTM(gc, 0, /*PicaPt::fromPixels(mHeight, mDPI).asFloat()*/mHeight);
         CGContextScaleCTM(gc, 1, -1);
         CGContextDrawImage(gc, cgrect, (CGImageRef)image->nativeHandle());
         CGContextRestoreGState(gc);
@@ -1055,8 +1058,8 @@ public:
     void clipToRect(const Rect& rect) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
-        CGContextClipToRect(gc, CGRectMake(rect.x.asFloat(), rect.y.asFloat(),
-                                           rect.width.asFloat(), rect.height.asFloat()));
+        CGContextClipToRect(gc, CGRectMake(rect.x.toPixels(mDPI), rect.y.toPixels(mDPI),
+                                           rect.width.toPixels(mDPI), rect.height.toPixels(mDPI)));
     }
 
     void clipToPath(std::shared_ptr<BezierPath> path) override
@@ -1068,11 +1071,6 @@ public:
 
     Font::Metrics fontMetrics(const Font& font) const override
     {
-        // We could get the 72 dpi version of the font, which is exactly in
-        // PicaPt, but we get the actual size font so that we can attempt
-        // get more accurate values due to hinting (or lack thereof at
-        // higher resolutions). Although, on macOS I believe it's just
-        // scaled up, so maybe no difference.
         NSFont *nsfont = gFontMgr.get(font, mDPI);
         Font::Metrics m;
         m.ascent = PicaPt::fromPixels(nsfont.ascender, mDPI);
@@ -1103,12 +1101,12 @@ public:
         for (int i = 0;  i < lines.count;  ++i) {
             width = CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
                                                &ascent, &descent, &leading);
-            tm.width = std::max(tm.width, PicaPt::fromPixels(width, 72.0f));
-            tm.height += PicaPt::fromPixels(ascent + descent, 72.0f);
+            tm.width = std::max(tm.width, PicaPt::fromPixels(width, mDPI));
+            tm.height += PicaPt::fromPixels(ascent + descent, mDPI);
             if (i < lines.count - 1) {
-                tm.height += PicaPt::fromPixels(leading, 72.0f);
+                tm.height += PicaPt::fromPixels(leading, mDPI);
             } else {
-                tm.advanceY += PicaPt::fromPixels(leading, 72.0f);
+                tm.advanceY += PicaPt::fromPixels(leading, mDPI);
             }
         }
         tm.advanceX = tm.width;
@@ -1160,7 +1158,7 @@ private:
 
 public:
     CoreGraphicsBitmap(BitmapType type, int width, int height, float dpi /*= 72.0f*/)
-        : CoreGraphicsContext(nullptr, width, height, dpi)
+        : CoreGraphicsContext(nullptr, width, height, dpi, dpi)
     {
         mType = type;
         CGImageAlphaInfo alphaInfo;
@@ -1203,7 +1201,6 @@ public:
                                         mColorspace,
                                         alphaInfo);
         setNativeDC(gc);
-        scale(mDPI / 72.0f, mDPI / 72.0f);
     }
 
     ~CoreGraphicsBitmap()
@@ -1249,9 +1246,78 @@ public:
 };
 
 //--------------------------- DrawContext -------------------------------------
-std::shared_ptr<DrawContext> DrawContext::fromCoreGraphics(void* cgcontext, int width, int height, float dpi)
+void DrawContext::getScreenDPI(void* nsscreen, float *uiDPI, float *cocoaDPI, float *hiresDPI)
 {
-    return std::make_shared<CoreGraphicsContext>(cgcontext, width, height, dpi);
+    const CGFloat kMillimetersToInches = 25.4;
+
+    NSScreen *screen = (__bridge NSScreen*)nsscreen;
+    unsigned int displayID = [[screen.deviceDescription objectForKey:@"NSScreenNumber"] unsignedIntValue];
+    CGSize displaySizeMM = CGDisplayScreenSize(displayID);
+
+    // NSScreen.frame, NSScreen.visibleFrame, and CGDisplayPixelsWide() all report the
+    // number of virtual pixels (that is, CGFloat, and 1.0 CGFloats has a non-integer
+    // relationship with actual device pixels. Now if you calculate the DPI from the
+    // physical size and the current size, and draw a, say, 1x1 inch square, you will get
+    // a square that has the same physical size in all modes. Which is kind of convenient,
+    // if you are a drawing program displaying at 100%. But the expectation of users is
+    // that changing the scaling actually changes the size of the UI. Apple seems to go out
+    // of their way to avoid giving us this information, so we need to find out the native
+    // resolution is so that we can calculate the scaling factor. In fact, this is virtually
+    // a necessity, since the default mode for 15" MacBook Pros since 2016 is to make the
+    // default size higher than the native resolution. Since all the units above are in
+    // CGFloat (that is, as if screen.backingStore is 1.0), so we find the lowest native
+    // resolution as use that for our calculations.
+    const int kFlagNativeMode = 0x2000000;  // See IOGraphicsTypes.h
+    const CGFloat kNoSize = 100000.0;
+    CGSize nativeSize = CGSizeMake(kNoSize, kNoSize);
+    CFStringRef keys[1] = { kCGDisplayShowDuplicateLowResolutionModes };
+    CFBooleanRef values[1] = { kCFBooleanTrue };
+    CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, (const void**)keys, (const void**)values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks );
+    CFArrayRef modes = CGDisplayCopyAllDisplayModes(displayID, options);
+    int n = CFArrayGetCount(modes);
+    for (int i = 0;  i < n;  i++) {
+        CGDisplayModeRef mode = (CGDisplayModeRef) CFArrayGetValueAtIndex(modes, i);
+        if (CGDisplayModeGetIOFlags(mode) & kFlagNativeMode) {
+            int w = CGDisplayModeGetWidth(mode);
+            if (w < nativeSize.width) {
+                nativeSize.width = w;
+                nativeSize.height = CGDisplayModeGetHeight(mode);
+            }
+        }
+    }
+    if (nativeSize.width == kNoSize) {
+        nativeSize = screen.frame.size;
+    }
+    CFRelease(modes);
+    CFRelease(options);
+
+    float nativeDPI = nativeSize.width / displaySizeMM.width * kMillimetersToInches;
+    float apparentDPI = screen.frame.size.width / displaySizeMM.width * kMillimetersToInches;
+
+    // The DPI of the UI should be the native resolution, so that the everything is drawn
+    // with the correct physical units for the native resolution, and scaled according to
+    // the user's preferences otherwise.
+    if (uiDPI) {
+        *uiDPI = nativeDPI;
+    }
+    // The apparent resolution is what Cocoa thinks we are using. If we draw a line with
+    // thickness of 1.0 / screen.backingScaleFactor, we will get a 1 px line.
+    if (cocoaDPI) {
+        *cocoaDPI = apparentDPI;
+    }
+    // This is the hires version of cocoaDPI, which we return so that we can get really
+    // thin pixels if we call onePixel().
+    if (hiresDPI) {
+        *hiresDPI = screen.backingScaleFactor * screen.frame.size.width / displaySizeMM.width * kMillimetersToInches;
+    }
+}
+
+std::shared_ptr<DrawContext> DrawContext::fromCoreGraphics(void* cgcontext, int width, int height, float dpi, float nativeDPI /*= 0*/)
+{
+    if (nativeDPI == 0) {
+        nativeDPI = dpi;
+    }
+    return std::make_shared<CoreGraphicsContext>(cgcontext, width, height, dpi, nativeDPI);
 }
 
 std::shared_ptr<DrawContext> DrawContext::createCoreGraphicsBitmap(BitmapType type, int width, int height,

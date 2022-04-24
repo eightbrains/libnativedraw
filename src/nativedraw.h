@@ -42,6 +42,12 @@ namespace ND_NAMESPACE {
 // the same measurement. Note that that one "pica" is actually
 // 1/12 of an inch, but since "point" usually means an (x, y) pair in
 // computer graphics, it's hard to come up with a meaningful name.
+// Note: if you are using a DrawContext for a window, the physical unit may
+//       be scaled according to the system's UI scaling settings. The native
+//       resolution should produce PicaPt(72) = 1 inch. On macOS, the native
+//       resolution may not be the default! On Windows, the UI scaling will
+//       affect the actual length. On Linux, the DPI that the X server thinks
+//       it is using and the value of the X resource Xft.dpi affect the scaling.
 struct PicaPt
 {
     static const PicaPt kZero;
@@ -693,7 +699,55 @@ class DrawContext
 {
 public:
 #if __APPLE__
-    static std::shared_ptr<DrawContext> fromCoreGraphics(void* cgcontext, int width, int height, float dpi);
+    // macOS lets the user scale the user interface. If the context represents
+    // a window, `dpi` should be the scaled screen size:  window.screen.frame.size.
+    // PicaPt(1.0f) at native resolution is exactly 1/72 inch.
+    // `nativeDPI` is used by onePixel() and ...ToNearestPixel() functions.
+
+    // Returns:
+    // - uiDPI: this is the DPI that macOS is pretending that the UI is using.
+    //          In actual fact, this uses the native resolution of the screen (but
+    //          in CGFloat units, unscaled by backingScaleFactor).
+    //          If the DrawContext's DPI is set to `uiDPI`, then the native resolution
+    //          will have the correct physical measurements (PicaPt(72) should measure
+    //          1.0 inches with a ruler) but all other resolutions will scale like all
+    //          other applications. This is probably what you want for a DrawContext
+    //          used in an NSWindow.
+    // - cocoaDPI: the DPI of the user interface (the apparent DPI based on the
+    //          size of the display set in Settings >> Display >> Resolution), in
+    //          CGFloat units. This is the value `screen.frame.size / physicalSize`,
+    //          and is the DPI that CGContext is using. `cocoaDPI / uiDPI` gives the
+    //          scaling factor the user chose in Settings >> Display >> Resolution.
+    //          If the DrawContext's DPI is set to `cocoaDPI`, then the PicaPt(72)
+    //          will always be 1 inch physically, which is probably not what you want
+    //          because it ignores the user's settings.
+    // - hiresDPI: this is `cocoaDPI * nsscreen.backingScaleFactor`. If you pass this
+    //          this to the `nativeDPI` parameter of fromCoreGraphics(), onePixel()
+    //          return a value corresponding to one physical pixel.
+    // (It is a little counter-intuitive that `uiDPI * nsscreen.backingScaleFactor` is
+    // the actual native resolution of the screen. This is because Cocoa really wants
+    // you to pretend that the cocoaDPI is the real resolution, and scales things
+    // for you underneath.)
+    static void getScreenDPI(void* nsscreen, float *uiDPI, float *cocoaDPI, float *hiresDPI);
+
+    // Creates a context from a CGContext. If this is from a window, the
+    // CGContext can be retrieved with `NSGraphicsContext.currentContext.CGContext` and
+    // the DrawContext should NOT live longer than the window's draw callback, as there
+    // is no guarantee that the context will be the same in the next call.
+    // Note: for a window context, this function should be called with:
+    //   float uiDPI, nativeDPI;
+    //   DrawContext::getScreenDPI((__bridge void*)screen, &uiDPI, nullptr, &hiresDPI);
+    //   auto dc = DrawContext::fromCoreGraphics(cgctxt, w, h, uiDPI, hiresDPI);
+    // This is because macOS allows the user to scale the display in
+    // Settings >> Display >> Resolution, and the expectation is that the size of the
+    // UI should scale accordingly. We want pass the native resolution so that
+    // onePixel() and friends return one actual pixel.
+    // (We do not provide a fromCoreGraphics(void* nswin) that does this all for you
+    // because the DrawContext must be recreated on each draw, and this avoids the
+    // surprisingly complicated work of figuring out what the scaling factor is. You
+    // should cache the values of getScreenDPI() for best performance.)
+    static std::shared_ptr<DrawContext> fromCoreGraphics(void* cgcontext, int width, int height, float dpi,
+                                                         float nativeDPI = 0.0f);
     static std::shared_ptr<DrawContext> createCoreGraphicsBitmap(BitmapType type, int width, int height,
                                                                  float dpi = 72.0f);
 #elif defined(__unix__)
@@ -709,7 +763,6 @@ public:
                                                              float dpi = 72.0f);
 #endif
 
-    DrawContext(void *nativeDC, int width, int height, float dpi);
     virtual ~DrawContext() {}
 
     // This is the preferred function to create a bitmap if you already have a
@@ -841,12 +894,15 @@ public:
     virtual void calcContextPixel(const Point& point, float *x, float *y) = 0;
 
 protected:
+    DrawContext(void *nativeDC, int width, int height, float dpi, float nativeDPI);
+
     void setInitialState();
 
 protected:
     // This is void* so that we don't pull in platform header files.
     void *mNativeDC;
     float mDPI;
+    float mNativeDPI;
     int mWidth;
     int mHeight;
 };

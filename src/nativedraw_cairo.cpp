@@ -1056,7 +1056,7 @@ class CairoImage : public Image
 {
 public:
     CairoImage(cairo_surface_t *nativeHandle, int width, int height, float dpi)
-        : Image(nativeHandle, width, height, dpi, dpi)
+        : Image(nativeHandle, width, height, dpi)
     {}
 
     virtual ~CairoImage()
@@ -1076,7 +1076,7 @@ protected:
 
 public:
     CairoDrawContext(void *nativeDC, int width, int height, float dpi)
-        : DrawContext(nativeDC, width, height, dpi)
+        : DrawContext(nativeDC, width, height, dpi, dpi)
     {
         mDrawingState = DrawingState::kNotDrawing;
         if (nativeDC) {

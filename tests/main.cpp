@@ -426,7 +426,7 @@ public:
         Color color(1.0f, 1.0f, 0.0f, 1.0f); // asymmetric, tests RGBA/BGRA swap
         auto dpi = mBitmap->dpi();
         auto r = Rect::fromPixels(0.0f, 0.0f, mWidth, mHeight, dpi);
-        r.inset(PicaPt::fromPixels(3.0f, dpi), PicaPt::fromPixels(3.0f, dpi));
+        r.inset(PicaPt::fromPixels(float(margin), dpi), PicaPt::fromPixels(float(margin), dpi));
         mBitmap->beginDraw();
         mBitmap->fill(mBGColor);
         mBitmap->setFillColor(color);
@@ -1720,7 +1720,7 @@ public:
         mBitmap->endDraw();
 
         float fontSize = 12.0f;
-        float dpi = 72.0f;
+        float dpi = mBitmap->dpi();
         auto fontSizePt = PicaPt::fromPixels(fontSize, dpi);
         Font font("Arial", fontSizePt);
 
@@ -1787,7 +1787,7 @@ class TextAlignmentTest : public BitmapTest
 {
     static constexpr int kPointSize = 13;
 public:
-    TextAlignmentTest() : BitmapTest("text alignment", 1.75 * kPointSize, 1.75 * kPointSize) {}
+    TextAlignmentTest() : BitmapTest("text alignment", 3.0 * kPointSize, 1.75 * kPointSize) {}
 
     std::string run() override
     {
@@ -2584,21 +2584,21 @@ public:
         auto glyphsHeight = glyphs.back().frame.maxY() - glyphs.front().frame.y;
         Size size(PicaPt(1000), PicaPt(1000));
         glyphs = mBitmap->createTextLayout(t, size, Alignment::kLeft | Alignment::kBottom)->glyphs();
-        if (std::abs(size.height.asFloat() - glyphs.back().frame.maxY().asFloat()) > glyphErrPx) {
-            return "expected bottom of last glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string(size.height.asFloat()) + ", got " + std::to_string(glyphs.back().frame.maxY().asFloat());
+        if (std::abs(size.height.toPixels(dpi) - glyphs.back().frame.maxY().toPixels(dpi)) > glyphErrPx) {
+            return "expected bottom of last glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string(size.height.toPixels(dpi)) + ", got " + std::to_string(glyphs.back().frame.maxY().toPixels(dpi));
         }
-        if (std::abs((size.height - glyphsHeight - glyphs.front().frame.y).asFloat()) > glyphErrPx) {
-            return "expected top of first glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string((size.height - glyphsHeight).asFloat()) + ", got " + std::to_string(glyphs.front().frame.y.asFloat());
+        if (std::abs((size.height - glyphsHeight - glyphs.front().frame.y).toPixels(dpi)) > glyphErrPx) {
+            return "expected top of first glyph with lineHeight = 200%, alignment = kLeft | kBottom to be " + std::to_string((size.height - glyphsHeight).toPixels(dpi)) + ", got " + std::to_string(glyphs.front().frame.y.toPixels(dpi));
         }
         // Check that glyphs with line height and center alignment works
         glyphs = mBitmap->createTextLayout(t, size, Alignment::kLeft | Alignment::kVCenter)->glyphs();
-        expectedY = 0.5f * size.height.asFloat() + 0.5f * glyphsHeight.asFloat();
-        if (std::abs(expectedY - glyphs.back().frame.maxY().asFloat()) > glyphErrPx) {
-            return "expected bottom of last glyph with lineHeight = 200%, alignment = kLeft | kVCenter to be " + std::to_string(expectedY) + ", got " + std::to_string(glyphs.back().frame.maxY().asFloat());
+        expectedY = 0.5f * size.height.toPixels(dpi) + 0.5f * glyphsHeight.toPixels(dpi);
+        if (std::abs(expectedY - glyphs.back().frame.maxY().toPixels(dpi)) > glyphErrPx) {
+            return "expected bottom of last glyph with lineHeight = 200%, alignment = kLeft | kVCenter to be " + std::to_string(expectedY) + ", got " + std::to_string(glyphs.back().frame.maxY().toPixels(dpi));
         }
-        expectedY = 0.5f * size.height.asFloat() - 0.5f * glyphsHeight.asFloat();
-        if (std::abs(expectedY - glyphs.front().frame.y.asFloat()) > glyphErrPx) {
-            return "expected top of first glyph with lineHeight = 200%, alignment = kLeft | kVCenter to be " + std::to_string(expectedY) + ", got " + std::to_string(glyphs.front().frame.y.asFloat());
+        expectedY = 0.5f * size.height.toPixels(dpi) - 0.5f * glyphsHeight.toPixels(dpi);
+        if (std::abs(expectedY - glyphs.front().frame.y.toPixels(dpi)) > glyphErrPx) {
+            return "expected top of first glyph with lineHeight = 200%, alignment = kLeft | kVCenter to be " + std::to_string(expectedY) + ", got " + std::to_string(glyphs.front().frame.y.toPixels(dpi));
         }
 
         // ----

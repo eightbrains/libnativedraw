@@ -1076,7 +1076,7 @@ protected:
 
 public:
     CairoDrawContext(void *nativeDC, int width, int height, float dpi)
-        : DrawContext(nativeDC, width, height, dpi)
+        : DrawContext(nativeDC, width, height, dpi, dpi)
     {
         mDrawingState = DrawingState::kNotDrawing;
         if (nativeDC) {

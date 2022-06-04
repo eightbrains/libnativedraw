@@ -221,6 +221,8 @@ public:
             utf8to16 = utf16IndicesForUTF8Indices(text.text().c_str());
         }
 
+        mUTF16To8 = utf8IndicesForUTF16Indices(text.text().c_str());
+
         std::vector<Font::Metrics> runMetrics;
         runMetrics.reserve(text.runs().size());
 
@@ -389,7 +391,6 @@ public:
                 [nsstring addAttributes:attr range:NSMakeRange(start16, length16)];
             }
         }
-
 
         NSMutableParagraphStyle *paragraphStyle = nil;
         auto horizAlign = (alignment & Alignment::kHorizMask);
@@ -614,7 +615,7 @@ public:
                             mGlyphs.back().indexOfNext = indices[g];
                         }
                         mGlyphs.push_back({
-                            indices[g], i,
+                            mUTF16To8[indices[g]], i,
                             Rect(alignmentOffset.x + PicaPt::fromPixels(x + positions[g].x, mDPI),
                                  alignmentOffset.y + yPt,
                                  PicaPt::fromPixels(advances[g].width, mDPI),
@@ -719,6 +720,7 @@ private:
     CGPoint mAlignmentOffsetPx;
     PicaPt mFirstLineAscender;
     PicaPt mFirstLineOffsetForGlyphs;
+    std::vector<int> mUTF16To8;
     mutable std::vector<Glyph> mGlyphs;
     mutable bool mGlyphsInitialized = false;
     mutable TextMetrics mMetrics;

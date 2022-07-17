@@ -36,18 +36,18 @@
 
 namespace ND_NAMESPACE {
 
-// This is a typographical "point", which is a unit of measurement equal to
-// 1/72 inch. It can usually be used as "pixel" (even though on-screen it
-// 1 point may be multiple pixels), and in 72 dpi, a PicaPt and a pixel are
-// the same measurement. Note that that one "pica" is actually
-// 1/12 of an inch, but since "point" usually means an (x, y) pair in
-// computer graphics, it's hard to come up with a meaningful name.
-// Note: if you are using a DrawContext for a window, the physical unit may
-//       be scaled according to the system's UI scaling settings. The native
-//       resolution should produce PicaPt(72) = 1 inch. On macOS, the native
-//       resolution may not be the default! On Windows, the UI scaling will
-//       affect the actual length. On Linux, the DPI that the X server thinks
-//       it is using and the value of the X resource Xft.dpi affect the scaling.
+/// This is a typographical "point", which is a unit of measurement equal to
+/// 1/72 inch. It can usually be used as "pixel" (even though on-screen it
+/// 1 point may be multiple pixels), and in 72 dpi, a PicaPt and a pixel are
+/// the same measurement. Note that that one "pica" is actually
+/// 1/12 of an inch, but since "point" usually means an (x, y) pair in
+/// computer graphics, it's hard to come up with a meaningful name.
+/// Note: if you are using a DrawContext for a window, the physical unit may
+///       be scaled according to the system's UI scaling settings. The native
+///       resolution should produce PicaPt(72) = 1 inch. On macOS, the native
+///       resolution may not be the default! On Windows, the UI scaling will
+///       affect the actual length. On Linux, the DPI that the X server thinks
+///       it is using and the value of the X resource Xft.dpi affect the scaling.
 struct PicaPt
 {
     static const PicaPt kZero;
@@ -228,9 +228,9 @@ struct Rect
 class Color
 {
 public:
-    // Note that because these are static variable, they cannot be
-    // used to initialize other static variables, as they may not
-    // be constructed yet.
+    /// Note that because these are static variable, they cannot be
+    /// used to initialize other static variables, as they may not
+    /// be constructed yet.
     static const Color kTransparent;
     static const Color kBlack;
     static const Color kWhite;
@@ -292,11 +292,11 @@ public:
     Color lighter(float amount = 0.1f) const;
     Color darker(float amount = 0.1f) const;
 
-    // Blends two colors. Amount must be in [0, 1], and is essentially the
-    // alpha value. Blending is done by component, according to:
-    //     this * (1.0f - amount) + dest * amount
-    // Note that this not exactly alpha blending, and is intended to blend
-    // between two solid colors (although the alpha channels are blended, too).
+    /// Blends two colors. Amount must be in [0, 1], and is essentially the
+    /// alpha value. Blending is done by component, according to:
+    ///     this * (1.0f - amount) + dest * amount
+    /// Note that this not exactly alpha blending, and is intended to blend
+    /// between two solid colors (although the alpha channels are blended, too).
     Color blend(const Color& dest, float amount);
 
     Color toGrey() const {
@@ -358,6 +358,7 @@ struct Alignment {
     static const int kLeft = (1 << 0);
     static const int kHCenter = (1 << 1);
     static const int kRight = (1 << 2);
+    static const int kJustify = (1 << 3);  // not implemented
     static const int kTop = (1 << 4);
     static const int kVCenter = (1 << 5);
     static const int kBottom = (1 << 6);
@@ -596,9 +597,9 @@ class TextLayout
 public:
     struct Glyph
     {
-        long index = -1;  // index into the original string
-        long indexOfNext = 0;  // where the next glyph starts in string;
-                               // this will be str.size() for last glyph
+        long index = -1;  /// index into the original string
+        long indexOfNext = 0;  /// where the next glyph starts in string;
+                               /// this will be str.size() for last glyph
         int line = 0;
         Rect frame = Rect(PicaPt::kZero, PicaPt::kZero,
                           PicaPt::kZero, PicaPt::kZero);
@@ -648,11 +649,16 @@ public:
     virtual void lineTo(const Point& end);
     virtual void quadraticTo(const Point& cp1, const Point& end);
     virtual void cubicTo(const Point& cp1, const Point& cp2, const Point& end);
+    /// Draws a 90 deg elliptical arc. Note that current point -> forwardCorner
+    /// and forwardCorner -> endPt should be at right angles, however, this is
+    /// not checked by the function.
+    virtual void quarterEllipseTo(const Point& forwardCorner, const Point& endPt);
     virtual void close();
 
     void addRect(const Rect& r);
     void addRoundedRect(const Rect& r, const PicaPt& radius);
     void addEllipse(const Rect& r);
+    void addCircle(const Point& center, const PicaPt& radius);
 
     virtual void clearNative() = 0;  // called when path changes
     virtual void* nativePathForDPI(float dpi, bool isFilled) = 0;
@@ -685,16 +691,16 @@ protected:
 
 enum BitmapType { kBitmapRGB = 0, kBitmapRGBA, kBitmapGreyscale, kBitmapAlpha };
 
-// Implements an abstract drawable:
-// - Origin (0, 0) is in the upper left, +x is to the right, +y is down.
-// - (x, y) is the upper left of the pixel
-// - Lines are drawn centered. Thus a line 2 pixels width from
-//   (1, 2) - (1, 10) will fully cover pixels x=0 and x=1. However,
-//   a 1 pixel line from the same coordinates would straddle the two
-//   pixels and both x=0 and x=1 would have 50% alpha. This also implies
-//   that borders (e.g. a Rect painted with kPaintFillAndStroke) are
-//   also centered along the path, so half the border is outside the
-//   fill area.
+/// Implements an abstract drawable:
+/// - Origin (0, 0) is in the upper left, +x is to the right, +y is down.
+/// - (x, y) is the upper left of the pixel
+/// - Lines are drawn centered. Thus a line 2 pixels width from
+///   (1, 2) - (1, 10) will fully cover pixels x=0 and x=1. However,
+///   a 1 pixel line from the same coordinates would straddle the two
+///   pixels and both x=0 and x=1 would have 50% alpha. This also implies
+///   that borders (e.g. a Rect painted with kPaintFillAndStroke) are
+///   also centered along the path, so half the border is outside the
+///   fill area.
 class DrawContext
 {
 public:
@@ -704,57 +710,57 @@ public:
     // PicaPt(1.0f) at native resolution is exactly 1/72 inch.
     // `nativeDPI` is used by onePixel() and ...ToNearestPixel() functions.
 
-    // Returns:
-    // - uiDPI: this is the DPI that macOS is pretending that the UI is using.
-    //          In actual fact, this uses the native resolution of the screen (but
-    //          in CGFloat units, unscaled by backingScaleFactor).
-    //          If the DrawContext's DPI is set to `uiDPI`, then the native resolution
-    //          will have the correct physical measurements (PicaPt(72) should measure
-    //          1.0 inches with a ruler) but all other resolutions will scale like all
-    //          other applications. This is probably what you want for a DrawContext
-    //          used in an NSWindow.
-    // - cocoaDPI: the DPI of the user interface (the apparent DPI based on the
-    //          size of the display set in Settings >> Display >> Resolution), in
-    //          CGFloat units. This is the value `screen.frame.size / physicalSize`,
-    //          and is the DPI that CGContext is using. `cocoaDPI / uiDPI` gives the
-    //          scaling factor the user chose in Settings >> Display >> Resolution.
-    //          If the DrawContext's DPI is set to `cocoaDPI`, then the PicaPt(72)
-    //          will always be 1 inch physically, which is probably not what you want
-    //          because it ignores the user's settings.
-    // - hiresDPI: this is `cocoaDPI * nsscreen.backingScaleFactor`. If you pass this
-    //          this to the `nativeDPI` parameter of fromCoreGraphics(), onePixel()
-    //          return a value corresponding to one physical pixel.
-    // (It is a little counter-intuitive that `uiDPI * nsscreen.backingScaleFactor` is
-    // the actual native resolution of the screen. This is because Cocoa really wants
-    // you to pretend that the cocoaDPI is the real resolution, and scales things
-    // for you underneath.)
+    /// Returns:
+    /// - uiDPI: this is the DPI that macOS is pretending that the UI is using.
+    ///          In actual fact, this uses the native resolution of the screen (but
+    ///          in CGFloat units, unscaled by backingScaleFactor).
+    ///          If the DrawContext's DPI is set to `uiDPI`, then the native resolution
+    ///          will have the correct physical measurements (PicaPt(72) should measure
+    ///          1.0 inches with a ruler) but all other resolutions will scale like all
+    ///          other applications. This is probably what you want for a DrawContext
+    ///          used in an NSWindow.
+    /// - cocoaDPI: the DPI of the user interface (the apparent DPI based on the
+    ///          size of the display set in Settings >> Display >> Resolution), in
+    ///          CGFloat units. This is the value `screen.frame.size / physicalSize`,
+    ///          and is the DPI that CGContext is using. `cocoaDPI / uiDPI` gives the
+    ///          scaling factor the user chose in Settings >> Display >> Resolution.
+    ///          If the DrawContext's DPI is set to `cocoaDPI`, then the PicaPt(72)
+    ///          will always be 1 inch physically, which is probably not what you want
+    ///          because it ignores the user's settings.
+    /// - hiresDPI: this is `cocoaDPI * nsscreen.backingScaleFactor`. If you pass this
+    ///          this to the `nativeDPI` parameter of fromCoreGraphics(), onePixel()
+    ///          return a value corresponding to one physical pixel.
+    /// (It is a little counter-intuitive that `uiDPI * nsscreen.backingScaleFactor` is
+    /// the actual native resolution of the screen. This is because Cocoa really wants
+    /// you to pretend that the cocoaDPI is the real resolution, and scales things
+    /// for you underneath.)
     static void getScreenDPI(void* nsscreen, float *uiDPI, float *cocoaDPI, float *hiresDPI);
 
-    // Creates a context from a CGContext. If this is from a window, the
-    // CGContext can be retrieved with `NSGraphicsContext.currentContext.CGContext` and
-    // the DrawContext should NOT live longer than the window's draw callback, as there
-    // is no guarantee that the context will be the same in the next call.
-    // Note: for a window context, this function should be called with:
-    //   float uiDPI, nativeDPI;
-    //   DrawContext::getScreenDPI((__bridge void*)screen, &uiDPI, nullptr, &hiresDPI);
-    //   auto dc = DrawContext::fromCoreGraphics(cgctxt, w, h, uiDPI, hiresDPI);
-    // This is because macOS allows the user to scale the display in
-    // Settings >> Display >> Resolution, and the expectation is that the size of the
-    // UI should scale accordingly. We want pass the native resolution so that
-    // onePixel() and friends return one actual pixel.
-    // (We do not provide a fromCoreGraphics(void* nswin) that does this all for you
-    // because the DrawContext must be recreated on each draw, and this avoids the
-    // surprisingly complicated work of figuring out what the scaling factor is. You
-    // should cache the values of getScreenDPI() for best performance.)
+    /// Creates a context from a CGContext. If this is from a window, the
+    /// CGContext can be retrieved with `NSGraphicsContext.currentContext.CGContext` and
+    /// the DrawContext should NOT live longer than the window's draw callback, as there
+    /// is no guarantee that the context will be the same in the next call.
+    /// Note: for a window context, this function should be called with:
+    ///   float uiDPI, nativeDPI;
+    ///   DrawContext::getScreenDPI((__bridge void*)screen, &uiDPI, nullptr, &hiresDPI);
+    ///   auto dc = DrawContext::fromCoreGraphics(cgctxt, w, h, uiDPI, hiresDPI);
+    /// This is because macOS allows the user to scale the display in
+    /// Settings >> Display >> Resolution, and the expectation is that the size of the
+    /// UI should scale accordingly. We want pass the native resolution so that
+    /// onePixel() and friends return one actual pixel.
+    /// (We do not provide a fromCoreGraphics(void* nswin) that does this all for you
+    /// because the DrawContext must be recreated on each draw in macOS, and this avoids
+    /// the surprisingly complicated work of figuring out what the scaling factor is.
+    /// You should cache the values of getScreenDPI() for best performance.)
     static std::shared_ptr<DrawContext> fromCoreGraphics(void* cgcontext, int width, int height, float dpi,
                                                          float nativeDPI = 0.0f);
     static std::shared_ptr<DrawContext> createCoreGraphicsBitmap(BitmapType type, int width, int height,
                                                                  float dpi = 72.0f);
 #elif defined(__unix__)
-    // Note that an Xlib Window is NOT a pointer, so you will need to call this
-    // as fromX11(display, &window, ...). (Window is actually a typedef of
-    // long int, but we do not want to hard-code it, nor do we want to include
-    // Xlib.h in this header.
+    /// Note that an Xlib Window is NOT a pointer, so you will need to call this
+    /// as fromX11(display, &window, ...). (Window is actually a typedef of
+    /// long int, but we do not want to hard-code it, nor do we want to include
+    /// Xlib.h in this header.
     static std::shared_ptr<DrawContext> fromX11(void* display, const void* window, int width, int height, float dpi);
     static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi = 72.0f);
 #elif defined(_WIN32) || defined(_WIN64)
@@ -765,8 +771,8 @@ public:
 
     virtual ~DrawContext() {}
 
-    // This is the preferred function to create a bitmap if you already have a
-    // context (for instance, if you are creating a bitmap for a window).
+    /// This is the preferred function to create a bitmap if you already have a
+    /// context (for instance, if you are creating a bitmap for a window).
     virtual std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
                                                       float dpi = 72.0f) = 0;
 
@@ -802,6 +808,20 @@ public:
     PicaPt floorToNearestPixel(const PicaPt& p) const;
     PicaPt roundToNearestPixel(const PicaPt& p) const;
     PicaPt ceilToNearestPixel(const PicaPt& p) const;
+    /// Offsets p so that a straight line along that dimension with be centered
+    /// on that physical pixel. Note that p should already be on a pixel
+    /// boundary (use floorToNearestPixel(), roundToNearestPixel(),
+    /// ceilToNearestPixel(), as desired). This is a convenience function for
+    /// offsetting by half a pixel if the stroke width is an odd number of
+    /// pixels. (Because a stroke is centered on the pixel boundary, an
+    /// even-width stroke will paint exactly half the stroke width's work of
+    /// pixels on either side, but an odd width will have a different amount.
+    /// In fact, a one pixel line is really bad because it will become a
+    /// 2 pixel line with alpha = 50%, which is definitely not what is usually
+    /// desired.) The stroke width need not be an integer value; it is
+    /// round()ed and then determined to be even/odd. So a 2.25 px line would
+    /// be treated as 2 pixels, and a 2.8 px line would be treated as 3 pixels.
+    PicaPt offsetPixelForStroke(const PicaPt& p, const PicaPt& strokeWidth) const;
 
     virtual void beginDraw() = 0;
     virtual void endDraw() = 0;
@@ -826,12 +846,12 @@ public:
     virtual EndCapStyle strokeEndCap() const = 0;
     virtual JoinStyle strokeJoinStyle() const = 0;
 
-    // Sets the entire context to 'color'. For opaque colors this is the
-    // same as drawing a filled rectangle the same size as the context
-    // (but does not change the fill color like setFillColor() would).
-    // Is affected by clipping path.
+    /// Sets the entire context to 'color'. For opaque colors this is the
+    /// same as drawing a filled rectangle the same size as the context
+    /// (but does not change the fill color like setFillColor() would).
+    /// Is affected by clipping path.
     virtual void fill(const Color& color) = 0;
-    // Sets contents of rect to be transparent
+    /// Sets contents of rect to be transparent
     virtual void clearRect(const Rect& rect) = 0;
 
     virtual void drawLines(const std::vector<Point>& lines) = 0;
@@ -839,58 +859,58 @@ public:
     virtual void drawRoundedRect(const Rect& rect, const PicaPt& radius, PaintMode mode);  // has impl
     virtual void drawEllipse(const Rect& rect, PaintMode mode) = 0;
     virtual void drawPath(std::shared_ptr<BezierPath> path, PaintMode mode) = 0;
-    // Note that the text sits ON the baseline, which will be aligned with
-    // the vertical pixel boundary. As a result, if the baseline is at y=16,
-    // The ascent of the glyph will end at pixel 15 (since y=16 is in-between
-    // pixels 15 and 16). However, for smaller point sizes concessions need to
-    // be made for readability, and platforms may choose to to place the
-    // baseline so that in the above example the ascent actually ends at
-    // pixel 16.
-    // Note: this recreates a TextLayout every call, so do not use when drawing
-    //       repeatedly, such as when drawing the contents of a widget.
+    /// Note that the text sits ON the baseline, which will be aligned with
+    /// the vertical pixel boundary. As a result, if the baseline is at y=16,
+    /// The ascent of the glyph will end at pixel 15 (since y=16 is in-between
+    /// pixels 15 and 16). However, for smaller point sizes concessions need to
+    /// be made for readability, and platforms may choose to to place the
+    /// baseline so that in the above example the ascent actually ends at
+    /// pixel 16.
+    /// Note: this recreates a TextLayout every call, so do not use when drawing
+    ///       repeatedly, such as when drawing the contents of a widget.
     virtual void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode) = 0;
 
-    // Draws text within the provided rectangle. Use the values from Alignment
-    // in the alignment parameter (e.g. Alignment::kLeft | Alignment::kVCenter).
-    // Note: this recreates a TextLayout every call, so do not use when drawing
-    //       repeatedly, such as when drawing the contents of a widget.
+    /// Draws text within the provided rectangle. Use the values from Alignment
+    /// in the alignment parameter (e.g. Alignment::kLeft | Alignment::kVCenter).
+    /// Note: this recreates a TextLayout every call, so do not use when drawing
+    ///       repeatedly, such as when drawing the contents of a widget.
     void drawText(const char *textUTF8, const Rect& r, int alignment,
                   TextWrapping wrap, const Font& font, PaintMode mode);
 
-    // Draws the text. If you need a layout, you should use this function to
-    // draw it, as it avoids the need to re-create the layout inside the other
-    // text-drawing functions. Only draw using the same context that created
-    // the text, except on macOS/iOS which use transient contexts (however, the
-    // DPI should be the same as the original context, which it normally is,
-    // except in cases like where the window moves to another monitor).
+    /// Draws the text. If you need a layout, you should use this function to
+    /// draw it, as it avoids the need to re-create the layout inside the other
+    /// text-drawing functions. Only draw using the same context that created
+    /// the text, except on macOS/iOS which use transient contexts (however, the
+    /// DPI should be the same as the original context, which it normally is,
+    /// except in cases like where the window moves to another monitor).
     virtual void drawText(const TextLayout& layout, const Point& topLeft) = 0;
 
     virtual void drawImage(std::shared_ptr<Image> image, const Rect& destRect) = 0;
 
     virtual void clipToRect(const Rect& rect) = 0;
-    // The path will be retained; the caller may let its copy go out of scope.
-    // (However, reusing same path on the next draw will give better performance,
-    // since the OS resources will not need to be recreated.)
+    /// The path will be retained; the caller may let its copy go out of scope.
+    /// (However, reusing same path on the next draw will give better performance,
+    /// since the OS resources will not need to be recreated.)
     virtual void clipToPath(std::shared_ptr<BezierPath> path) = 0;
 
     void* nativeDC() const { return mNativeDC; }
-    // Cannot be called within a beginDraw()/endDraw() pair.
-    // Note that this function can be slow.
+    /// Cannot be called within a beginDraw()/endDraw() pair.
+    /// Note that this function can be slow.
     // Design note: this is not const because it's easier in Windows that way.
     virtual Color pixelAt(int x, int y) = 0;
-    // Cannot be called within a beginDraw()/endDraw() pair.
+    /// Cannot be called within a beginDraw()/endDraw() pair.
     virtual std::shared_ptr<Image> copyToImage() = 0;
 
     virtual Font::Metrics fontMetrics(const Font& font) const = 0;
 
-    // Returns the metrics for a single line of text
+    /// Returns the metrics for a single line of text
     virtual TextMetrics textMetrics(const char *textUTF8, const Font& font,
                                     PaintMode mode = kPaintFill) const = 0;
 
-    // Multiplies point by the current transformation matrix and returns
-    // the point in context pixel coordinates. Note that the pixel coordinates
-    // are native to the underlying operating system not portable. In fact, they
-    // may even be different between a bitmap and a window on the same system.
+    /// Multiplies point by the current transformation matrix and returns
+    /// the point in context pixel coordinates. Note that the pixel coordinates
+    /// are native to the underlying operating system not portable. In fact, they
+    /// may even be different between a bitmap and a window on the same system.
     virtual void calcContextPixel(const Point& point, float *x, float *y) = 0;
 
 protected:

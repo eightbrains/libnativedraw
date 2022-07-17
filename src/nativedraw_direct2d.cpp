@@ -216,6 +216,9 @@ public:
                 return nullptr;
             }
             err = path->Open(&sink);
+            if (isFilled) {
+                sink->SetFillMode(D2D1_FILL_MODE_WINDING);  // D2D defaults to D2D1_FILL_MODE_ALTERNATE
+            }
 
             auto d2dFilled = (isFilled ? D2D1_FIGURE_BEGIN_FILLED
                                        : D2D1_FIGURE_BEGIN_HOLLOW);
@@ -1768,6 +1771,8 @@ public:
             case D2D1_CAP_STYLE_SQUARE:
                 return kEndCapSquare;
         }
+        assert(false);
+        return kEndCapButt;
     }
 
     JoinStyle strokeJoinStyle() const override
@@ -1780,6 +1785,8 @@ public:
             case D2D1_LINE_JOIN_BEVEL:
                 return kJoinBevel;
         }
+        assert(false);
+        return kJoinMiter;
     }
 
     void setFillColor(const Color& color) override

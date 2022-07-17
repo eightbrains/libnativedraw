@@ -130,6 +130,9 @@ struct BezierPath::Impl
                     assert(false);  // path is closed, there is no usable end point
                     return Point::kZero;
             }
+            // Should not get here. We are not using a default case above
+            // so that we can get warnings about unused cases.
+            return Point::kZero;
         }
     };
 

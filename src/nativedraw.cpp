@@ -1111,6 +1111,7 @@ PicaPt DrawContext::offsetPixelForStroke(const PicaPt& p, const PicaPt& strokeWi
     if (n & 0x1) {  // odd lines need to add half a pixel
         return p + 0.5f * onePx;
     }
+    return p;
 }
 
 void DrawContext::setInitialState()

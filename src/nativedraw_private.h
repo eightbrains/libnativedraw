@@ -115,6 +115,25 @@ struct BezierPath::Impl
         {
             assert(c == kCubicTo);
         }
+
+        const Point& endPt() const
+        {
+            switch (this->cmd) {
+                case Action::kMoveTo:
+                case Action::kLineTo:
+                    return this->p1;
+                case Action::kQuadraticTo:
+                    return this->p2;
+                case Action::kCubicTo:
+                    return this->p3;
+                case Action::kClose:
+                    assert(false);  // path is closed, there is no usable end point
+                    return Point::kZero;
+            }
+            // Should not get here. We are not using a default case above
+            // so that we can get warnings about unused cases.
+            return Point::kZero;
+        }
     };
 
     std::vector<Command> commands;

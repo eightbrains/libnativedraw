@@ -958,6 +958,22 @@ void BezierPath::cubicTo(const Point& cp1, const Point& cp2, const Point& end)
     mImpl->commands.emplace_back(BezierPath::Impl::Command::kCubicTo, cp1, cp2, end);
 }
 
+void BezierPath::quarterEllipseTo(const Point& forwardCorner, const Point& endPt)
+{
+    // This is the weight for control points for a 4-curve sphere.
+    // Normally 4 cubic splines use 0.55228475, but a better number was
+    // computed by http://www.tinaja.com/glib/ellipse4.pdf.
+    // It has an error of .76 px/in at 1200 DPI (0.0633%).
+    float tangentWeight = 0.551784f;
+    Point start = mImpl->commands.back().endPt();
+    Point side1dir = forwardCorner - start;
+    Point side2dir = endPt - forwardCorner;
+
+    Point cp1 = start + tangentWeight * (forwardCorner - start);
+    Point cp2 = endPt - tangentWeight * (endPt - forwardCorner);
+    mImpl->commands.emplace_back(BezierPath::Impl::Command::kCubicTo, cp1, cp2, endPt);
+}
+
 void BezierPath::close()
 {
     mImpl->commands.emplace_back(BezierPath::Impl::Command::kClose);
@@ -1051,6 +1067,11 @@ void BezierPath::addEllipse(const Rect& r)
     close();
 }
 
+void BezierPath::addCircle(const Point& center, const PicaPt& radius)
+{
+    addEllipse(Rect(center.x - radius, center.y - radius, 2.0f * radius, 2.0f * radius));
+}
+
 //-----------------------------------------------------------------------------
 DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi, float nativeDPI)
     : mNativeDC(nativeDC), mWidth(width), mHeight(height), mDPI(dpi), mNativeDPI(nativeDPI)
@@ -1065,22 +1086,32 @@ PicaPt DrawContext::onePixel() const
 PicaPt DrawContext::floorToNearestPixel(const PicaPt& p) const
 {
     auto onePx = onePixel();
-    float n = std::floor(p.asFloat() / onePx.asFloat());
+    float n = std::floor(p.toPixels(mNativeDPI) / onePx.toPixels(mNativeDPI));
     return PicaPt(n * onePx);
 }
 
 PicaPt DrawContext::roundToNearestPixel(const PicaPt& p) const
 {
     auto onePx = onePixel();
-    float n = std::round(p.asFloat() / onePx.asFloat());
+    float n = std::round(p.toPixels(mNativeDPI) / onePx.toPixels(mNativeDPI));
     return PicaPt(n * onePx);
 }
 
 PicaPt DrawContext::ceilToNearestPixel(const PicaPt& p) const
 {
     auto onePx = onePixel();
-    float n = std::ceil(p.asFloat() / onePx.asFloat());
+    float n = std::ceil(p.toPixels(mNativeDPI) / onePx.toPixels(mNativeDPI));
     return PicaPt(n * onePx);
+}
+
+PicaPt DrawContext::offsetPixelForStroke(const PicaPt& p, const PicaPt& strokeWidth) const
+{
+    auto onePx = onePixel();
+    int n = int(std::round(p.toPixels(mNativeDPI) / onePx.toPixels(mNativeDPI)));
+    if (n & 0x1) {  // odd lines need to add half a pixel
+        return p + 0.5f * onePx;
+    }
+    return p;
 }
 
 void DrawContext::setInitialState()

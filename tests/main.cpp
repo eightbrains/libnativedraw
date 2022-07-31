@@ -1009,10 +1009,16 @@ public:
             }
         }
 
-        float acceptableError = 0.125f * float(mRadius);  // 0.1 is okay for macOS/win, cairo needs 0.125
+#if defined(_WIN32) || defined(_WIN64)
+        // Using D2D1_FILL_MODE_WINDING is much less less precise.
+        // D2D1_FILL_MODE_ALTERNATE is the same error level as macOS
+        float acceptableError = 0.7f * float(mRadius);
+#else
+        float acceptableError = 0.125f * float(mRadius);  // 0.1 is okay for macOS, cairo needs 0.125
+#endif // _WIN32 || _WIN64
         float quarterCircle = 0.25f * 3.141592f * float(mRadius * mRadius);
-        float squareMinusQuarterCricle = float(mRadius * mRadius) - quarterCircle;
-        float expectedArea = r.width.toPixels(dpi) * r.height.toPixels(dpi) - 4.0f * squareMinusQuarterCricle;
+        float squareMinusQuarterCircle = float(mRadius * mRadius) - quarterCircle;
+        float expectedArea = r.width.toPixels(dpi) * r.height.toPixels(dpi) - 4.0f * squareMinusQuarterCircle;
         if (std::abs(total - expectedArea) > acceptableError) {
             return createFloatError("wrong area", expectedArea, total, "px^2");
         }

@@ -642,7 +642,6 @@ public:
         CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 1), &origin);
 
         CGContextRef gc = (CGContextRef)dc.nativeDC();
-        CGContextSaveGState(gc);
         // CTFrameDraw does not reset graphics state, also text needs y-axis inverted
         CGContextSaveGState(gc);
         CGContextSetTextMatrix(gc, CGAffineTransformIdentity);
@@ -662,6 +661,7 @@ public:
         // so we have to do these ourselves. macOS appears to draw underlines on top of the text,
         // which I think is not great, but at least it is convenient for this.
         if (!mLines.empty()) {
+            CGContextSaveGState(gc);
             CGContextTranslateCTM(gc, topLeft.x.toPixels(dpi), topLeft.y.toPixels(dpi));
             CGContextSetLineCap(gc, kCGLineCapButt);
             CGContextSetLineDash(gc, 0.0, nullptr, 0);
@@ -699,8 +699,8 @@ public:
                     }
                 }
             }
+            CGContextRestoreGState(gc);
         }
-        CGContextRestoreGState(gc);
     }
 
 private:

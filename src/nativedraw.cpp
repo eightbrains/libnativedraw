@@ -189,8 +189,17 @@ Point operator*(float lhs, const Point& rhs)
 
 //-----------------------------------------------------------------------------
 const Point Point::kZero;
-const Rect Rect::kZero;
 const Size Size::kZero;
+const Rect Rect::kZero;
+
+Rect Rect::intersectedWith(const Rect& r) const
+{
+    auto xMin = std::max(this->x, r.x);
+    auto xMax = std::min(this->x + this->width, r.x + r.width);
+    auto yMin = std::max(this->y, r.y);
+    auto yMax = std::min(this->y + this->height, r.y + r.height);
+    return Rect(xMin, yMin, std::max(PicaPt::kZero, xMax - xMin), std::max(PicaPt::kZero, yMax - yMin));
+}
 
 //-----------------------------------------------------------------------------
 const Color Color::kTransparent(0.0f, 0.0f, 0.0f, 0.0f);

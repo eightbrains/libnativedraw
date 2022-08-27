@@ -210,6 +210,8 @@ struct Rect
         return r;
     }
 
+    Rect intersectedWith(const Rect& r) const;
+
     Rect operator+(const Point& rhs) const
         { return Rect(x + rhs.x, y + rhs.y, width, height); }
     Rect& operator+=(const Point& rhs)

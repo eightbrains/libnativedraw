@@ -825,6 +825,10 @@ public:
     /// be treated as 2 pixels, and a 2.8 px line would be treated as 3 pixels.
     PicaPt offsetPixelForStroke(const PicaPt& p, const PicaPt& strokeWidth) const;
 
+    /// Returns the size of a "standard pixel", that is, 1 px at 96 dpi, which
+    /// was the standard DPI for monitors for many years.
+    PicaPt oneStandardPixel() const { return PicaPt::fromPixels(1.0f, 96.0f); }
+
     virtual void beginDraw() = 0;
     virtual void endDraw() = 0;
 

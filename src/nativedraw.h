@@ -59,8 +59,15 @@ struct PicaPt
         return PicaPt(pixels * 72.0f / dpi);
     }
 
+    /// Returns the size of a "standard pixel", that is, 1 px at 96 dpi, which
+    /// was the standard DPI for monitors for many years.
+    static PicaPt fromStandardPixels(float pixels) {
+        return fromPixels(pixels, 96.0f);
+    }
+
     float asFloat() const { return pt; }
     float toPixels(float dpi) const { return pt * dpi / 72.0f; }
+    float toStandardPixels() const { return toPixels(96.0f); }
 
     PicaPt operator-() const { return PicaPt(-pt); }
     PicaPt operator+(const PicaPt& v) const { return PicaPt(pt + v.pt); }
@@ -825,9 +832,9 @@ public:
     /// be treated as 2 pixels, and a 2.8 px line would be treated as 3 pixels.
     PicaPt offsetPixelForStroke(const PicaPt& p, const PicaPt& strokeWidth) const;
 
-    /// Returns the size of a "standard pixel", that is, 1 px at 96 dpi, which
-    /// was the standard DPI for monitors for many years.
-    PicaPt oneStandardPixel() const { return PicaPt::fromPixels(1.0f, 96.0f); }
+    /// Convenience function for PicaPt::fromStandardPixels(), as it contrasts
+    /// with onePixel();
+    PicaPt oneStandardPixel() const { return PicaPt::fromStandardPixels(1.0f); }
 
     virtual void beginDraw() = 0;
     virtual void endDraw() = 0;

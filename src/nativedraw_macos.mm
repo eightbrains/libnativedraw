@@ -612,7 +612,7 @@ public:
                     PicaPt hPt = PicaPt::fromPixels(ascent + descent, mDPI);
                     for (int g = 0;  g < n;  ++g) {
                         if (!mGlyphs.empty()) {
-                            mGlyphs.back().indexOfNext = indices[g];
+                            mGlyphs.back().indexOfNext = mUTF16To8[indices[g]];
                         }
                         mGlyphs.push_back({
                             mUTF16To8[indices[g]], i,

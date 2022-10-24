@@ -260,6 +260,51 @@ protected:
     Color mBGColor;
 };
 
+class HSVTest : public BitmapTest
+{
+public:
+    HSVTest() : BitmapTest("HSVColor() test", 1, 1) {}
+
+    std::string run() override
+    {
+        mBitmap->beginDraw();
+        mBitmap->setFillColor(Color::kBlack);
+        mBitmap->drawRect(Rect(PicaPt::kZero, PicaPt::kZero,
+                               PicaPt::fromPixels(mWidth, mBitmap->dpi()),
+                               PicaPt::fromPixels(mHeight, mBitmap->dpi())), kPaintFill);
+        mBitmap->endDraw();
+
+        std::string err;
+        // white
+        if (!testHsvToRgb(HSVColor(0.0f, 0.0f, 1.0f), 0xffffffff, &err)) { return err; }
+        if (!testHsvToRgb(HSVColor(180.0f, 0.0f, 1.0f), 0xffffffff, &err)) { return err; }
+        // black
+        if (!testHsvToRgb(HSVColor(0.0f, 1.0f, 0.0f), 0x000000ff, &err)) { return err; }
+        if (!testHsvToRgb(HSVColor(180.0f, 1.0f, 0.0f), 0x000000ff, &err)) { return err; }
+        // color
+        if (!testHsvToRgb(HSVColor(0.0f, 1.0f, 1.0f), 0xff0000ff, &err)) { return err; }
+        if (!testHsvToRgb(HSVColor(60.0f, 1.0f, 1.0f), 0xffff00ff, &err)) { return err; }
+        if (!testHsvToRgb(HSVColor(120.0f, 1.0f, 1.0f), 0x00ff00ff, &err)) { return err; }
+        if (!testHsvToRgb(HSVColor(180.0f, 1.0f, 1.0f), 0x00ffffff, &err)) { return err; }
+        if (!testHsvToRgb(HSVColor(240.0f, 1.0f, 1.0f), 0x0000ffff, &err)) { return err; }
+        if (!testHsvToRgb(HSVColor(300.0f, 1.0f, 1.0f), 0xff00ffff, &err)) { return err; }
+
+        return "";
+    }
+
+    bool testHsvToRgb(const HSVColor& hsv, int expectedRgba, std::string *err)
+    {
+        Color rgb = hsv.toColor();
+        if (rgb.toRGBA() != expectedRgba) {
+            std::stringstream e;
+            e << "hsv(" << hsv.hueDeg() << ", " << hsv.saturation() << ", " << hsv.value() << ") -> color: expected rgb 0x" << std::hex << expectedRgba << ", got 0x" << rgb.toRGBA();
+            *err = e.str();
+            return false;
+        }
+        return true;
+    }
+};
+
 class CoordinateTest : public BitmapTest
 {
 public:
@@ -3084,6 +3129,7 @@ int main(int argc, char *argv[])
 #endif
 
     std::vector<std::shared_ptr<Test>> test = {
+        std::make_shared<HSVTest>(),
         std::make_shared<CoordinateTest>(),
         std::make_shared<ColorTest>("color readback (RGBA)", kBitmapRGBA),
         std::make_shared<ColorTest>("color readback (RGB)", kBitmapRGB),

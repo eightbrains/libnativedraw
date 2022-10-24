@@ -325,6 +325,31 @@ std::size_t Color::hash() const
 }
 
 //-----------------------------------------------------------------------------
+Color HSVColor::toColor() const
+{
+    float h = _hsva[0] / 60.0f;
+    float s = _hsva[1];
+    float v = _hsva[2];
+    float chroma = s * v;
+    float hMod2 = 2.0f * (h / 2.0f - std::floor(h / 2.0f));
+    float x = chroma * (1.0f - std::abs(hMod2 - 1.0f));
+    float r, g, b;
+    h = std::min(6.0f, std::max(0.0f, h));
+    switch (int(h)) {
+        case 0:  r = chroma;  g = x;       b = 0.0f;    break;
+        case 1:  r = x;       g = chroma;  b = 0.0f;    break;
+        case 2:  r = 0.0f;    g = chroma;  b = x;       break;
+        case 3:  r = 0.0f;    g = x;       b = chroma;  break;
+        case 4:  r = x;       g = 0.0f;    b = chroma;  break;
+        case 5:  // fall through
+        case 6:  r = chroma;  g = 0.0f;    b = x;       break;
+        default:  r = 0.0f; g = 0.0f; b = 0.0f;  assert(false);  break;
+    }
+    float m = v - chroma;
+    return Color(r + m, g + m, b + m, _hsva[3]);
+}
+
+//-----------------------------------------------------------------------------
 #if defined(__APPLE__)
 const Font kDefaultReplacementFont(".AppleSystemUIFont", PicaPt(12.0f)); // San Francisco since iOS9 / macOS 10.11
 #elif defined(_WIN32) || defined(_WIN64)  // _WIN32 covers everything except 64-bit ARM

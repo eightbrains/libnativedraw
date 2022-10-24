@@ -349,6 +349,29 @@ private:
     float _rgba[4];
 };
 
+class HSVColor
+{
+public:
+    /// Hue should be in the range [0, 360], and s, v, a in the range [0, 1]
+    HSVColor(float hueDeg, float s, float v, float a = 1.0f)
+    {
+        _hsva[0] = hueDeg;
+        _hsva[1] = s;
+        _hsva[2] = v;
+        _hsva[3] = a;
+    }
+
+    float hueDeg() const { return _hsva[0]; }
+    float saturation() const { return _hsva[1]; }
+    float value() const { return _hsva[2]; }
+    float alpha() const { return _hsva[3]; }
+
+    Color toColor() const;
+
+private:
+    float _hsva[4];
+};
+
 class DrawContext;
 
 // Design note:

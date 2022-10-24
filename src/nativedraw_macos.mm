@@ -526,6 +526,29 @@ public:
 
     CTFrameRef ctframe() const { return mFrame; }
 
+    // CTLineGetTypographicBounds sometimes gives ridiculous values for descent for
+    // certain fonts ("Khmer MN", "Myanmar MN") in macOS 10.14 (and later?). It turns
+    // out that the function to get the bounds on the *run* works fine. So we write our
+    // own.
+    static void _ctLineGetTypographicBounds(NSArray *lines, int idx,
+                                            CGFloat *ascent, CGFloat *descent, CGFloat *leading)
+    {
+        *ascent = 0.0;
+        *descent = 0.0;
+        *leading = 0.0;
+        NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:0]);
+        int nRuns = runs.count;
+        for (int r = 0;  r < nRuns;  ++r) {
+            CTRunRef run = (__bridge CTRunRef)[runs objectAtIndex:r];
+            CGFloat ascentRun, descentRun, leadingRun;
+            CTRunGetTypographicBounds(run, CFRangeMake(0, 0),
+                                      &ascentRun, &descentRun, &leadingRun);
+            *descent = std::max(*descent, descentRun);
+            *ascent = std::max(*ascent, ascentRun);
+            *leading = std::max(*leading, leadingRun);
+        }
+    }
+
     const TextMetrics& metrics() const override
     {
         if (mMetrics.width >= PicaPt::kZero) {
@@ -550,16 +573,15 @@ public:
             mMetrics.width = std::max(mMetrics.width, PicaPt::fromPixels(width, mDPI));
         }
         mMetrics.advanceX = mMetrics.width;
-        CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:0], &ascent, &descent, &leading);
         if (lines.count == 1) {
+            _ctLineGetTypographicBounds(lines, 0, &ascent, &descent, &leading);
             mMetrics.height = PicaPt::fromPixels(ascent + descent, mDPI);
         } else {
             std::vector<CGPoint> lineOrigins;
             lineOrigins.resize(lines.count);
             CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 0 /* 0=all */), &lineOrigins[0]);  // copies, grr
             CGFloat startY = lineOrigins[0].y + ascent;
-            CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:lines.count - 1],
-                                       &ascent, &descent, &leading);
+            _ctLineGetTypographicBounds(lines, lines.count - 1, &ascent, &descent, &leading);
             CGFloat endY = lineOrigins.back().y - descent;
             // These are OS text coordinates which are flipped: the top of the text is at mFrame.size.height
             // and the bottom of the text is mFrame.size.height - height. So endY < startY.

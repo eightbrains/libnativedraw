@@ -350,11 +350,12 @@ struct FontInfo
     FLOAT d2dSize;
     DWRITE_FONT_STYLE d2dStyle;
     DWRITE_FONT_WEIGHT d2dWeight;
+    DWRITE_FONT_STRETCH d2dStretch;
 
     FontInfo() : format(nullptr) {}  // for STL containers
     FontInfo(IDWriteTextFormat* f, const Font::Metrics& fm,
-             FLOAT sz, DWRITE_FONT_STYLE s, DWRITE_FONT_WEIGHT w)
-        : format(f), metrics(fm), d2dSize(sz), d2dStyle(s), d2dWeight(w)
+             FLOAT sz, DWRITE_FONT_STYLE s, DWRITE_FONT_WEIGHT w, DWRITE_FONT_STRETCH fs)
+        : format(f), metrics(fm), d2dSize(sz), d2dStyle(s), d2dWeight(w), d2dStretch(fs)
     {}
 
     // Can't delete here, this object needs to be trivially copyable
@@ -373,22 +374,104 @@ std::wstring getSystemFontName()
 
 FontInfo createFont(const Font& desc, float dpi)
 {
-    int nCharsNeeded = 0;
-    WCHAR* family = gUTF16Cache.get(desc.family(), &nCharsNeeded);
+    IDWriteFactory* factory = Direct2D::instance().writeFactory();
 
-    IDWriteFactory *factory = Direct2D::instance().writeFactory();
-
-    IDWriteFontCollection *collection;
+    IDWriteFontCollection* collection;
     factory->GetSystemFontCollection(&collection, true);
 
     FLOAT d2dSize = toD2D(desc.pointSize());
     DWRITE_FONT_WEIGHT d2dWeight = gWeightToD2D[desc.weight()];
     DWRITE_FONT_STYLE d2dStyle = ((desc.style() & kStyleItalic) ? DWRITE_FONT_STYLE_ITALIC
-                                                                : DWRITE_FONT_STYLE_NORMAL);
+        : DWRITE_FONT_STYLE_NORMAL);
     DWRITE_FONT_STRETCH d2dStretch = DWRITE_FONT_STRETCH_NORMAL;
     WCHAR locale[LOCALE_NAME_MAX_LENGTH];
     GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH);
-    IDWriteTextFormat *format = nullptr;
+    IDWriteTextFormat* format = nullptr;
+
+    BOOL exists = false;
+    UINT32 idx;
+    // EnumFontFamilies[Ex]() and D2D's FindFamilyName() disagree over what constitutes a
+    // family name. The former lists things like "Arial Black" and "Arial Semilight", but
+    // the latter expects just "Arial" with the appropriate weight/style. So detect that
+    // and substitute accordingly. (Google Chrome also used this fix in Blink)
+    std::string fontFamily = desc.family();
+    for (int tryNo = 0; tryNo < 2; ++tryNo) {
+        int nCharsNeeded = 0;
+        WCHAR* family = gUTF16Cache.get(fontFamily, &nCharsNeeded);
+        collection->FindFamilyName(family, &idx, &exists);
+        if (exists) {
+            break;
+        }
+        else if (tryNo == 0) {
+            struct WeightSubstitution {
+                std::string text;
+                DWRITE_FONT_WEIGHT weight;
+            };
+            struct StretchSubstitution {
+                std::string text;
+                DWRITE_FONT_STRETCH stretch;
+            };
+            static std::vector<WeightSubstitution> weightSubstitutions = {
+                { " thin", DWRITE_FONT_WEIGHT_THIN }, // 100
+                { " extralight", DWRITE_FONT_WEIGHT_EXTRA_LIGHT }, // 200
+                { " ultralight", DWRITE_FONT_WEIGHT_ULTRA_LIGHT }, // 200
+                { " light", DWRITE_FONT_WEIGHT_LIGHT }, // 300
+                { " semilight", DWRITE_FONT_WEIGHT_SEMI_LIGHT }, // 350
+                { " normal", DWRITE_FONT_WEIGHT_NORMAL }, // 400
+                { " regular", DWRITE_FONT_WEIGHT_REGULAR }, // 400
+                { " medium", DWRITE_FONT_WEIGHT_MEDIUM }, // 500
+                { " demibold", DWRITE_FONT_WEIGHT_DEMI_BOLD }, // 600
+                { " semibold", DWRITE_FONT_WEIGHT_SEMI_BOLD }, // 600
+                { " bold", DWRITE_FONT_WEIGHT_BOLD }, // 700
+                { " extrabold", DWRITE_FONT_WEIGHT_EXTRA_BOLD }, // 800
+                { " ultrabold", DWRITE_FONT_WEIGHT_ULTRA_BOLD }, // 800
+                { " black", DWRITE_FONT_WEIGHT_BLACK }, // 900
+                { " heavy", DWRITE_FONT_WEIGHT_HEAVY }, // 900
+                { " extrablack", DWRITE_FONT_WEIGHT_EXTRA_BLACK }, // 950
+                { " ultrablack", DWRITE_FONT_WEIGHT_ULTRA_BLACK }, // 950
+            };
+            static std::vector<StretchSubstitution> stretchSubstitutions = {
+                { " ultracondensed", DWRITE_FONT_STRETCH_ULTRA_CONDENSED }, // 1
+                { " extracondensed", DWRITE_FONT_STRETCH_EXTRA_CONDENSED }, // 2
+                { " condensed", DWRITE_FONT_STRETCH_CONDENSED }, // 3
+                { " semicondensed", DWRITE_FONT_STRETCH_SEMI_CONDENSED }, // 4
+                { " semiexpanded", DWRITE_FONT_STRETCH_SEMI_EXPANDED }, // 6
+                { " expanded", DWRITE_FONT_STRETCH_EXPANDED }, // 7
+                { " extraexpanded", DWRITE_FONT_STRETCH_EXTRA_EXPANDED }, // 8
+                { " ultraexpanded", DWRITE_FONT_STRETCH_ULTRA_EXPANDED }, // 9
+            };
+            // tolower: we specifically only want to do ASCII (although the D2D functions
+            // are case insensitive), but unclear what std::tolower() does if locale is not "C".
+            for (auto& c : fontFamily) {
+                if (c >= 'A' && c <= 'Z') {
+                    c += 32;
+                }
+            }
+            // Try font weight substitutions
+            for (const auto& sub : weightSubstitutions) {
+                auto idx = fontFamily.find(sub.text);
+                if (idx != std::string::npos) {
+                    fontFamily.replace(idx, sub.text.size(), "");
+                    d2dWeight = sub.weight;
+                }
+            }
+            // Try font stretch substitutions
+            for (const auto& sub : stretchSubstitutions) {
+                auto idx = fontFamily.find(sub.text);
+                if (idx != std::string::npos) {
+                    fontFamily.replace(idx, sub.text.size(), "");
+                    d2dStretch = sub.stretch;
+                }
+            }
+
+            // Ok, try the new font in the next iteration. If it still does not work,
+            // then it really must not exist. (Do not substitute a known font; a non-existant
+            // font is supposed to return nothing by contract.)
+        }
+    }
+
+    int nCharsNeeded;
+    WCHAR* family = gUTF16Cache.get(fontFamily, &nCharsNeeded);  // this is a ref, do not delete
     HRESULT err = factory->CreateTextFormat(family, collection,
                                             d2dWeight, d2dStyle, d2dStretch,
                                             toD2D(desc.pointSize()), locale,
@@ -399,12 +482,6 @@ FontInfo createFont(const Font& desc, float dpi)
         printError("Error calling CreateTextFormat()", err);
     }
 
-    nCharsNeeded = format->GetFontFamilyNameLength() + 1;
-    family = new WCHAR[nCharsNeeded + 1];
-    format->GetFontFamilyName(family, nCharsNeeded);
-    BOOL exists = false;
-    UINT32 idx;
-    collection->FindFamilyName(family, &idx, &exists);
     Font::Metrics metrics;
     metrics.ascent = PicaPt::kZero;
     metrics.capHeight = PicaPt::kZero;
@@ -436,8 +513,7 @@ FontInfo createFont(const Font& desc, float dpi)
     }
     collection->Release();
     metrics.lineHeight = metrics.ascent + metrics.descent + metrics.leading;
-    delete [] family;
-    return FontInfo(format, metrics, d2dSize, d2dStyle, d2dWeight);
+    return FontInfo(format, metrics, d2dSize, d2dStyle, d2dWeight, d2dStretch);
 }
 
 void destroyFont(FontInfo rsrc)

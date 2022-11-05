@@ -26,8 +26,9 @@
 #include "nativedraw_private.h"
 
 #include <algorithm>
-#include <map>
 #include <iostream>
+#include <map>
+#include <set>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>

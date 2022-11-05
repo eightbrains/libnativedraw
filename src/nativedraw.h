@@ -450,6 +450,15 @@ class Font
     //    rendering paths (say, a high-DPI monitor versus a low-resolution
     //    monitor, which might shape and kern the glyphs differently). In this
     //    case the metrics would depend on the draw context.
+    // Q: Why is font listing here, instead of at a higher, application level?
+    // A: So that we can list only the fonts that we know we can render,
+    //    otherwise the application level needs to know what fonts we cannot do,
+    //    which may vary by platform (DirectX, in particular, has some
+    //    limitations). While application-level wrappers should provide an
+    //    appropriate function which calls our list (such as UITK's
+    //    Application::availableFontFamilies()), users only wanting to draw
+    //    (perhaps a python script outputting a PDF) may still find a list of
+    //    available fonts helpful if they wish to be cross-platform.
 public:
     struct Metrics
     {
@@ -462,6 +471,9 @@ public:
         PicaPt underlineOffset;
         PicaPt underlineThickness;
     };
+
+    // Returns available font families (sorted alphabetically).
+    static std::vector<std::string> availableFontFamilies();
 
     Font();
     Font(const Font& f);

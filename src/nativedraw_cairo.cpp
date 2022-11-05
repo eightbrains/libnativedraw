@@ -31,6 +31,7 @@
 #include <cairo/cairo-xlib-xrender.h>
 #include <pango/pangocairo.h>
 
+#include <algorithm>
 #include <iostream>
 
 #include <assert.h>
@@ -179,6 +180,26 @@ public:
 private:
     std::unordered_map<float, cairo_path_t> mPaths;
 };
+
+//---------------------------------- Font -------------------------------------
+std::vector<std::string> Font::availableFontFamilies()
+{
+    int nFamilies;
+    PangoFontFamily **pffFamilies;
+    std::vector<std::string> families;
+
+    PangoFontMap *fontmap = pango_cairo_font_map_get_default();
+    pango_font_map_list_families(fontmap, &pffFamilies, &nFamilies);
+    families.reserve(nFamilies);
+    for (int i = 0; i < nFamilies; i++) {
+        auto *familyName = pango_font_family_get_name(pffFamilies[i]);
+        families.emplace_back(familyName);
+    }
+    g_free(pffFamilies);
+
+    std::sort(families.begin(), families.end());
+    return families;
+}
 
 //---------------------------------- Fonts ------------------------------------
 namespace {

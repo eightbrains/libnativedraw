@@ -1154,7 +1154,7 @@ void DrawContext::setInitialState()
     setStrokeColor(Color::kBlack);
     setStrokeEndCap(kEndCapButt);
     setStrokeJoinStyle(kJoinMiter);
-    setStrokeWidth(PicaPt(1));  // 1pt line; this is probably different than platform default
+    setStrokeWidth(PicaPt::fromStandardPixels(1));
     setStrokeDashes({}, PicaPt(0));
 }
 

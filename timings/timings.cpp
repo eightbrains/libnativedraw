@@ -232,8 +232,8 @@ void drawBezierTransformed(DrawContext& dc, int n,
 
 void drawImages(DrawContext& dc, int n, std::shared_ptr<Image> img)
 {
-    auto w = PicaPt::fromPixels(img->width(), dc.dpi());
-    auto h = PicaPt::fromPixels(img->height(), dc.dpi());
+    auto w = img->width();
+    auto h = img->height();
     LayoutInfo layout(dc, n, w.toPixels(dc.dpi()), w.toPixels(dc.dpi()));
 
     auto x0 = PicaPt::fromPixels(1, dc.dpi());

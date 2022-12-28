@@ -259,6 +259,14 @@ public:
     static const Color kTextDefault;
 
 public:
+    static Color fromRGBA(uint32_t rgba)
+    {
+        return Color(int((rgba & 0xff000000) >> 24),
+                     int((rgba & 0x00ff0000) >> 16),
+                     int((rgba & 0x0000ff00) >>  8),
+                     int((rgba & 0x000000ff)));
+    }
+
     Color() {
         _rgba[0] = 0.0f;
         _rgba[1] = 0.0f;
@@ -712,17 +720,41 @@ protected:
     std::unique_ptr<Impl> mImpl;
 };
 
+enum ImageFormat {
+    kImageRGBA32,
+    kImageRGBA32_Premultiplied,
+    kImageBGRA32,
+    kImageBGRA32_Premultiplied,
+    kImageARGB32,
+    kImageARGB32_Premultiplied,
+    kImageABGR32,
+    kImageABGR32_Premultiplied,
+    kImageRGBX32,
+    kImageBGRX32,
+    kImageRGB24,  // this is slower on macOS because it must be converted to RGBX32
+    kImageBGR24,  // this is slower on macOS because it must be converted to BGRX32
+    kImageGreyscaleAlpha16,
+    kImageGreyscale8,
+};
+
 class Image
 {
 public:
+    static std::shared_ptr<Image> fromEncoded(const char *bytes, size_t length);
+    static std::shared_ptr<Image> fromBytes(const char* data, int width, int height, ImageFormat format,
+                                            float dpi);
+    static std::shared_ptr<Image> fromNativeHandle(void *nativeHandle, int width, int height, float dpi);
+
     Image(void* nativeHandle, int width, int height, float dpi)
         : mNativeHandle(nativeHandle), mWidth(width), mHeight(height), mDPI(dpi)
     {}
     virtual ~Image() {}
-        
-    int width() const { return mWidth;  }
-    int height() const { return mHeight;  }
+
+    int widthPx() const { return mWidth;  }
+    int heightPx() const { return mHeight;  }
     float dpi() const { return mDPI;  }
+    PicaPt width() const { return PicaPt::fromPixels(mWidth, mDPI); }
+    PicaPt height() const { return PicaPt::fromPixels(mHeight, mDPI); }
 
     virtual void* nativeHandle() const { return mNativeHandle; }
 

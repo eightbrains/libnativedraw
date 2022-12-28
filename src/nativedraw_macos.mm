@@ -782,6 +782,172 @@ public:
     }
 };
 
+std::shared_ptr<Image> Image::fromEncoded(const char *bytes, size_t length)
+{
+    NSData *data = [NSData dataWithBytes:bytes length:length];  // copies bytes (dataWithBytesNoCopy:length: doesn't)
+    NSImage *img = [[NSImage alloc] initWithData:data];
+    // NSImage.size is not the actual pixel size
+    int width = 0, height = 0;
+    CGFloat cgWidth = 0.0;
+    float dpi = 96.0f;
+    for (NSImageRep* rep in img.representations) {
+        if (width > cgWidth) {
+            width = rep.pixelsWide;
+            height = rep.pixelsHigh;
+            cgWidth = rep.size.width;
+            dpi = float(width) / cgWidth * 96.0f;
+        }
+    }
+
+    CGImageRef ref = [img CGImageForProposedRect:nil context:nil hints:nil];
+    CGImageRetain(ref);
+    return std::make_shared<CoreGraphicsImage>(ref, img.size.width, img.size.height, dpi);
+}
+
+void releaseImageProvider_internal(void *info, const void *data, size_t size)
+{
+    delete [] (char*)data;
+}
+
+std::shared_ptr<Image> Image::fromBytes(const char* data, int width, int height,
+                                        ImageFormat format, float dpi)
+{
+    int bitsPerChannel, bitsPerPixel;
+    CGBitmapInfo info = kCGImageAlphaNone;
+
+    switch (format) {
+        case kImageRGBA32:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            info = kCGImageAlphaLast | kCGBitmapByteOrder32Big;
+            break;
+        case kImageRGBA32_Premultiplied:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            info = kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big;
+            break;
+        case kImageBGRA32:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            info = kCGImageAlphaFirst | kCGBitmapByteOrder32Little;
+            break;
+        case kImageBGRA32_Premultiplied:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            // Alpha is last, but because the endianness is reversed, it becomes first
+            info = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
+            break;
+        case kImageARGB32:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            // Alpha is last, but because the endianness is reversed, it becomes first
+            info = kCGImageAlphaFirst | kCGBitmapByteOrder32Big;
+            break;
+        case kImageARGB32_Premultiplied:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            info = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Big;
+            break;
+        case kImageABGR32:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            // Alpha is first, but because the endianness is reversed, it becomes last
+            info = kCGImageAlphaLast | kCGBitmapByteOrder32Little;
+            break;
+        case kImageABGR32_Premultiplied:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            // Alpha is first, but because the endianness is reversed, it becomes last
+            info = kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Little;
+            break;
+        case kImageRGBX32:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            info = kCGImageAlphaNoneSkipLast | kCGBitmapByteOrder32Big;
+            break;
+        case kImageBGRX32:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            // Alpha is last, but because the endianness is reversed, it becomes first
+            info = kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little;
+            break;
+        case kImageRGB24:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            info = kCGImageAlphaNoneSkipLast | kCGBitmapByteOrder32Big;
+            break;
+        case kImageBGR24:
+            bitsPerChannel = 8;
+            bitsPerPixel = 32;
+            // Alpha is last, but because the endianness is reversed, it becomes first
+            info = kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little;
+            break;
+        case kImageGreyscaleAlpha16:
+            bitsPerChannel = 8;
+            bitsPerPixel = 16;
+            info = kCGImageAlphaLast | kCGBitmapByteOrderDefault;
+            break;
+        case kImageGreyscale8:
+            bitsPerChannel = 8;
+            bitsPerPixel = 8;
+            info = kCGImageAlphaNone | kCGBitmapByteOrderDefault;
+            break;
+    }
+    size_t bytesPerRow = size_t(width) * size_t(bitsPerPixel / 8);
+    size_t length = bytesPerRow * size_t(height);
+    char* dataCopy = new char[length];
+    if (format != kImageRGB24 && format != kImageBGR24) {
+        memcpy(dataCopy, data, length);
+    } else {
+        auto *src = data;
+        auto *dst = dataCopy;
+        auto *end = src + 3 * width * height;
+        while (src < end) {
+            *dst++ = *src++;
+            *dst++ = *src++;
+            *dst++ = *src++;
+            *dst++ = (char)0x0;
+        }
+        assert(src == end);
+        assert(dst == dataCopy + length);
+    }
+
+    CGDataProviderRef dataProvider = CGDataProviderCreateWithData(nullptr, // info for release callback
+                                                                  dataCopy, // data pointer
+                                                                  length,
+                                                                  releaseImageProvider_internal);
+    CGColorSpaceRef colorspace;
+    if (format == kImageGreyscaleAlpha16 || format == kImageGreyscale8)  {
+        colorspace = CGColorSpaceCreateDeviceGray();
+    } else {
+        colorspace = CGColorSpaceCreateDeviceRGB();
+    }
+    auto img = std::make_shared<CoreGraphicsImage>(
+                    CGImageCreate(width, height, bitsPerChannel, bitsPerPixel, bytesPerRow,                             colorspace,
+                                  info,
+                                  dataProvider,
+                                  nullptr, // decode array
+                                  true,  // should interpolate when drawing to higher resolution
+                                  // On the assumption the default intent is faster, we only use the
+                                  // perceptual intent (which the docs say is good for photos) for "large"
+                                  // images, so that icon images will be faster.
+                                  (width < 256 || height < 256)
+                                      ? kCGRenderingIntentDefault
+                                      : kCGRenderingIntentPerceptual),
+                    width, height, dpi);
+    CGDataProviderRelease(dataProvider); // CGImageCreate retains, but we still need to release
+    CGColorSpaceRelease(colorspace);
+    return img;
+}
+
+std::shared_ptr<Image> Image::fromNativeHandle(void *nativeHandle, int width, int height, float dpi)
+{
+    // Note that we do NOT want a shared_ptr<CoreGraphicsImage> here!! We do not own this
+    // handle, so we should not destroy it. The other from*() functions create a handle,
+    // so they also need to destroy it.
+    return std::make_shared<Image>(nativeHandle, width, height, dpi);
+}
+
 //----------------------- CoreGraphicsContext ---------------------------------
 // Apple really makes it difficult to draw text without using NSAttributedString.
 // This requires that we know the color, stroke color, and stroke width at the
@@ -1084,14 +1250,20 @@ public:
 
     void drawImage(std::shared_ptr<Image> image, const Rect& destRect) override
     {
-        CGContextRef gc = (CGContextRef)mNativeDC;
-        auto cgrect = CGRectMake(destRect.x.toPixels(mDPI), destRect.y.toPixels(mDPI),
-                                 destRect.width.toPixels(mDPI), destRect.height.toPixels(mDPI));
         // We need to flip coordinates, as the blit will just write directly
-        // into the bitmap. Note that we've scaled the coordinates so that
-        // one unit is one PicaPt, not one pixel.
+        // into the context's buffer, whose +y is opposite to ours (namely up from
+        // lower left instead of down from top right). The context may have all
+        // kinds of transformations so we cannot use mHeight or anything. So:
+        // 1) translate the coordinate system by the height of the bitmap, so that
+        //    the rect will start from the "bottom" and end at the "top".
+        // 2) flip the y direction so that the bitmap will draw right-side up
+        //    in the (flipped) internal buffer.
+        // 3) offset by -destRect.y, since +y is flipped.
+        CGContextRef gc = (CGContextRef)mNativeDC;
+        auto cgrect = CGRectMake(destRect.x.toPixels(mDPI), -destRect.y.toPixels(mDPI),
+                                 destRect.width.toPixels(mDPI), destRect.height.toPixels(mDPI));
         CGContextSaveGState(gc);
-        CGContextTranslateCTM(gc, 0, /*PicaPt::fromPixels(mHeight, mDPI).asFloat()*/mHeight);
+        CGContextTranslateCTM(gc, 0, destRect.height.toPixels(mDPI));
         CGContextScaleCTM(gc, 1, -1);
         CGContextDrawImage(gc, cgrect, (CGImageRef)image->nativeHandle());
         CGContextRestoreGState(gc);

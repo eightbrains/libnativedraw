@@ -22,6 +22,8 @@
 
 #include "images.h"
 
+#include <assert.h>
+
 namespace {
 
 // Q: Why are these files embedded as data?

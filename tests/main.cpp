@@ -3147,15 +3147,18 @@ public:
         auto dpi = mBitmap->dpi();
         std::shared_ptr<Image> img;
         if (mTestImage == TestImage::kNone) {
-            img = Image::fromBytes((char*)imgData.data(), width, height, mFormat, dpi);
+            img = mBitmap->createImageFromBytes(imgData.data(), width, height, mFormat, dpi);
         } else {
             auto src = loadImage(mTestImage);
-            img = Image::fromEncoded((const char *)src.data(), src.size());
+            img = mBitmap->createImageFromEncodedData(src.data(), src.size());
 
             // JPEG is a little lossy
             if (mTestImage == TestImage::kJPEG || mTestImage == TestImage::kJPEG_Progressive) {
                 allowedError = 2;
             }
+        }
+        if (!img || img->widthPx() == 0) {
+            return "Could not create image";
         }
 
         auto imgRect = Rect::fromPixels(1, 1, width, height, dpi);

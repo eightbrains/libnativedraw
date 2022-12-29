@@ -724,7 +724,7 @@ enum ImageFormat {
     kImageRGBA32,
     kImageRGBA32_Premultiplied,
     kImageBGRA32,
-    kImageBGRA32_Premultiplied,
+    kImageBGRA32_Premultiplied,  // this is the fastest path for macOS and Windows
     kImageARGB32,
     kImageARGB32_Premultiplied,
     kImageABGR32,
@@ -740,11 +740,8 @@ enum ImageFormat {
 class Image
 {
 public:
-    static std::shared_ptr<Image> fromEncoded(const char *bytes, size_t length);
-    static std::shared_ptr<Image> fromBytes(const char* data, int width, int height, ImageFormat format,
-                                            float dpi);
-    static std::shared_ptr<Image> fromNativeHandle(void *nativeHandle, int width, int height, float dpi);
-
+    /// Creates an image from the native handle. Does NOT take ownership of the
+    /// handle, which must remain valid for the lifetime of the image.
     Image(void* nativeHandle, int width, int height, float dpi)
         : mNativeHandle(nativeHandle), mWidth(width), mHeight(height), mDPI(dpi)
     {}
@@ -753,8 +750,8 @@ public:
     int widthPx() const { return mWidth;  }
     int heightPx() const { return mHeight;  }
     float dpi() const { return mDPI;  }
-    PicaPt width() const { return PicaPt::fromPixels(mWidth, mDPI); }
-    PicaPt height() const { return PicaPt::fromPixels(mHeight, mDPI); }
+    PicaPt width() const { return PicaPt::fromPixels(float(mWidth), mDPI); }
+    PicaPt height() const { return PicaPt::fromPixels(float(mHeight), mDPI); }
 
     virtual void* nativeHandle() const { return mNativeHandle; }
 
@@ -851,6 +848,21 @@ public:
     /// context (for instance, if you are creating a bitmap for a window).
     virtual std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
                                                       float dpi = 72.0f) = 0;
+
+    /// Creates an image from the encoded image data (such as might be read from
+    /// and JPEG or PNG file). The bytes are only needed during the function call.
+    /// The image format will be auto-detected. An image of size (0, 0) will be returned
+    /// if the image could not be decoded. Operating systems support different file
+    /// formats:
+    ///   macOS:       PNG, JPEG, GIF, plus others
+    ///   Window 10:   PNG, JPEG, GIF, TIFF, BMP, WMP, ICO
+    ///   Linux, WASM: PNG, JPEG, GIF
+    virtual std::shared_ptr<Image> createImageFromEncodedData(const unsigned char* bytes, size_t length) const = 0;
+
+    /// Creates an image from the data provided. The function copies the data, so
+    /// it is not needed after the call completes.
+    virtual std::shared_ptr<Image> createImageFromBytes(
+        const unsigned char* data, int width, int height, ImageFormat format, float dpi) const = 0;
 
     virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
     /// Creates a text layout. If width is non-zero, the text will wrap to the

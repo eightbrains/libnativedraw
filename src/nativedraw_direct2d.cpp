@@ -46,6 +46,7 @@
 #include <dwrite_1.h>
 #include <dwrite_3.h>
 #include <stringapiset.h>
+#include <wincodec.h>
 
 namespace ND_NAMESPACE {
 namespace {
@@ -112,6 +113,7 @@ public:
     IDWriteFactory* writeFactory() { return mWriteFactory; }
     IDXGIDevice* dxgiDevice() { return mDXGIDevice; }
     ID3D11DeviceContext* d3d11DeviceContext() { return mD3DDeviceContext; }
+    IWICImagingFactory* wicFactory() { return mWicFactory; }
 
     ID2D1DeviceContext* createDeviceContext()
     {
@@ -126,6 +128,22 @@ public:
     Direct2D()
     {
         HRESULT err;
+
+        err = CoCreateInstance(CLSID_WICImagingFactory,
+                               NULL,
+                               CLSCTX_INPROC_SERVER,
+                               IID_PPV_ARGS(&mWicFactory));
+        if (err == CO_E_NOTINITIALIZED) {
+            CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+            err = CoCreateInstance(CLSID_WICImagingFactory,
+                NULL,
+                CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&mWicFactory));
+        }
+        if (err != S_OK) {
+            printError("fatal: Could not create WICImagingFactory!", err);
+            return;
+        }
 
         // Create factories first; they don't depend on anything.
         err = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
@@ -183,11 +201,13 @@ public:
         if (mD3DDevice) { mD3DDevice->Release(); }
         if (mD2DFactory) { mD2DFactory->Release(); }
         if (mWriteFactory) { mWriteFactory->Release(); }
+        if (mWicFactory) { mWicFactory->Release(); }
     }
 
 private:
     static std::unique_ptr<Direct2D> gInstance;
-    ID2D1Factory1 *mD2DFactory = nullptr;
+    IWICImagingFactory *mWicFactory = nullptr;
+    ID2D1Factory1* mD2DFactory = nullptr;
     IDWriteFactory *mWriteFactory = nullptr;
     ID3D11Device *mD3DDevice = nullptr;
     ID3D11DeviceContext* mD3DDeviceContext = nullptr;
@@ -1268,8 +1288,8 @@ public:
             assert(run.font.isSet);
             assert(run.color.isSet);
             DWRITE_TEXT_RANGE range = {
-                utf8to16[run.startIndex],
-                utf8to16[run.startIndex + run.length] - utf8to16[run.startIndex]  };
+                UINT32(utf8to16[run.startIndex]),
+                UINT32(utf8to16[run.startIndex + run.length] - utf8to16[run.startIndex]) };
 
             bool hasSuperscript = (run.superscript.isSet && run.superscript.value);
             bool hasSubscript = (run.subscript.isSet && run.subscript.value);
@@ -1625,6 +1645,7 @@ public:
             ((NativeType)mNativeHandle)->Release();
         }
     }
+
 };
 
 //-------------------------- Direct2DContext ----------------------------------
@@ -1694,6 +1715,260 @@ public:
                                               float dpi /*= 72.0f*/) override
     {
         return DrawContext::createDirect2DBitmap(type, width, height, dpi);
+    }
+
+    std::shared_ptr<Image> createImageFromEncodedData(const unsigned char* bytes, size_t length) const override
+    {
+        HRESULT err;
+        IWICStream* stream = nullptr;
+        err = Direct2D::instance().wicFactory()->CreateStream(&stream);
+        if (err != S_OK) {
+            // Most errors here indicate a programming error, so try to write them out
+            printError("Could not create IWICStream", err);
+            return std::make_shared<Direct2DImage>(nullptr, 0, 0, mDPI);
+        }
+        err = stream->InitializeFromMemory((WICInProcPointer)bytes, DWORD(length));  // WICInProcPointer = BYTE* = unsigned char*
+        if (err != S_OK) {
+            printError("Could not initalize stream from buffer", err);
+            return std::make_shared<Direct2DImage>(nullptr, 0, 0, mDPI);
+        }
+
+        IWICBitmapDecoder* decoder = nullptr;
+        if (err == S_OK) {
+            err = Direct2D::instance().wicFactory()->CreateDecoderFromStream(
+                stream, NULL, WICDecodeMetadataCacheOnLoad, &decoder);
+            // An error here means this is not a decodable file
+        }
+        IWICBitmapFrameDecode* frame = nullptr;
+        if (err == S_OK) {
+            err = decoder->GetFrame(0, &frame);
+        }
+        IWICFormatConverter* converter = nullptr;
+        if (err == S_OK) {
+            err = Direct2D::instance().wicFactory()->CreateFormatConverter(&converter);
+        }
+        if (err == S_OK) {
+            err = converter->Initialize(frame,
+                                        GUID_WICPixelFormat32bppPBGRA,
+                                        WICBitmapDitherTypeNone,
+                                        NULL,                            // no particular palette 
+                                        0.0f,                            // alpha threshold
+                                        WICBitmapPaletteTypeCustom);
+        }
+        ID2D1Bitmap1* bitmap = nullptr;
+        if (err == S_OK) {
+            err = ((ID2D1DeviceContext*)mNativeDC)->CreateBitmapFromWicBitmap(converter, &bitmap);
+        }
+        if (converter) { converter->Release(); }
+        if (frame) { frame->Release(); }
+        if (decoder) { decoder->Release(); }
+        if (stream) { stream->Release(); }
+
+        if (bitmap) {
+            float dpiX, dpiY;
+            bitmap->GetDpi(&dpiX, &dpiY);
+            auto size = bitmap->GetPixelSize();
+            return std::make_shared<Direct2DImage>(bitmap, size.width, size.height, dpiX);
+        } else {
+            return std::make_shared<Direct2DImage>(nullptr, 0, 0, mDPI);
+        }
+    }
+
+    std::shared_ptr<Image> createImageFromBytes(const unsigned char* data, int width, int height,
+                                                ImageFormat format, float dpi) const override
+    {
+        // Direct 2D appears to only support BGRA-premultiplied and BGRX natively.
+        // Of course, there are constants for most of the rest of the formats you would want.
+        // You just get a bad-pixel-format error if you try to use them.
+        // Naturally, Direct2D could not do any of the conversion for us, so that every
+        // developer would not have to re-write the same code. No, Direct2D is all about
+        // making the developer experience as painful as possible. At least we do not have
+        // to create an extra data source object or something.
+
+        auto createBGRAFromABGR = [](const uint8_t *src, int width, int height) {
+             uint8_t* out = new uint8_t[4 * width * height];
+             uint8_t* dst = out;
+             const uint8_t* srcEnd = src + 4 * width * height;
+             uint8_t alpha;
+             while (src < srcEnd) {
+                 alpha = *src++;
+                 *dst++ = *src++;
+                 *dst++ = *src++;
+                 *dst++ = *src++;
+                 *dst++ = alpha;
+             }
+             return out;
+        };
+        auto createBGRAFromRGBA = [](const uint8_t* src, int width, int height) {
+            uint8_t* out = new uint8_t[4 * width * height];
+            uint8_t* dst = out;
+            const uint8_t* srcEnd = src + 4 * width * height;
+            while (src < srcEnd) {
+                dst[2] = *src++;
+                dst[1] = *src++;
+                dst[0] = *src++;
+                dst[3] = *src++;
+                dst += 4;
+            }
+            return out;
+        };
+        auto createBGRAFromARGB = [](const uint8_t* src, int width, int height) {
+            uint8_t* out = new uint8_t[4 * width * height];
+            uint8_t* dst = out;
+            const uint8_t* srcEnd = src + 4 * width * height;
+            while (src < srcEnd) {
+                dst[3] = *src++;
+                dst[2] = *src++;
+                dst[1] = *src++;
+                dst[0] = *src++;
+                dst += 4;
+            }
+            return out;
+        };
+        auto createBGRAFromRGB = [](const uint8_t* src, int width, int height) {
+            uint8_t* out = new uint8_t[4 * width * height];
+            uint8_t* dst = out;
+            const uint8_t* srcEnd = src + 3 * width * height;
+            while (src < srcEnd) {
+                dst[2] = *src++;
+                dst[1] = *src++;
+                dst[0] = *src++;
+                dst[3] = 0xff;
+                dst += 4;
+            }
+            return out;
+        };
+        auto createBGRAFromBGR = [](const uint8_t* src, int width, int height) {
+            uint8_t* out = new uint8_t[4 * width * height];
+            uint8_t* dst = out;
+            const uint8_t* srcEnd = src + 3 * width * height;
+            while (src < srcEnd) {
+                *dst++ = *src++;
+                *dst++ = *src++;
+                *dst++ = *src++;
+                *dst++ = 0xff;
+            }
+            return out;
+        };
+
+        auto premultiply = [](uint8_t* bgra, int width, int height) {
+            uint8_t* end = bgra + 4 * width * height;
+            float alpha;
+            while (bgra < end) {
+                if (bgra[3] < 0xff) {  // the common case is alpha = 1.0f, so no work necessary
+                    alpha = float(bgra[3]) / 255.0f;
+                    bgra[0] = uint8_t(std::round(alpha * float(bgra[0])));
+                    bgra[1] = uint8_t(std::round(alpha * float(bgra[1])));
+                    bgra[2] = uint8_t(std::round(alpha * float(bgra[2])));
+                }
+                bgra += 4;
+            }
+        };
+
+        uint8_t* nativeCopy = nullptr;
+
+        int bytesPerPixel = 4;
+        D2D1_PIXEL_FORMAT pixelFormat;
+        pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+
+        switch (format) {
+            case kImageRGBA32:
+                nativeCopy = createBGRAFromRGBA(data, width, height);
+                premultiply(nativeCopy, width, height);
+                break;
+            case kImageRGBA32_Premultiplied:
+                nativeCopy = createBGRAFromRGBA(data, width, height);
+                break;
+            case kImageBGRA32:
+                nativeCopy = new uint8_t[4 * width * height];  // this is sooo close to native...
+                memcpy(nativeCopy, data, 4 * width * height);
+                premultiply(nativeCopy, width, height);
+                break;
+            case kImageBGRA32_Premultiplied:
+                break;  // this is native
+            case kImageARGB32:
+                nativeCopy = createBGRAFromARGB(data, width, height);
+                premultiply(nativeCopy, width, height);
+                break;
+            case kImageARGB32_Premultiplied:
+                nativeCopy = createBGRAFromARGB(data, width, height);
+                break;
+            case kImageABGR32:
+                nativeCopy = createBGRAFromABGR(data, width, height);
+                premultiply(nativeCopy, width, height);
+                break;
+            case kImageABGR32_Premultiplied:
+                nativeCopy = createBGRAFromABGR(data, width, height);
+                break;
+            case kImageRGBX32:
+                pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
+                nativeCopy = createBGRAFromRGBA(data, width, height);
+                break;
+            case kImageBGRX32:
+                pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
+                // this is native
+                break;
+            case kImageRGB24:
+                pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
+                nativeCopy = createBGRAFromRGB(data, width, height);
+                break;
+            case kImageBGR24:
+                pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
+                nativeCopy = createBGRAFromBGR(data, width, height);
+                break;
+            case kImageGreyscaleAlpha16: {
+                nativeCopy = new uint8_t[4 * width * height];
+                const uint8_t *src = data;
+                const uint8_t *srcEnd = src + 2 * width * height;
+                uint8_t* dst = nativeCopy;
+                while (src < srcEnd) {
+                    *dst++ = *src;
+                    *dst++ = *src;
+                    *dst++ = *src++;
+                    *dst++ = *src++;
+                }
+                premultiply(nativeCopy, width, height);
+                break;
+            }
+            case kImageGreyscale8:
+                pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
+                nativeCopy = new uint8_t[4 * width * height];
+                const uint8_t* src = data;
+                const uint8_t* srcEnd = src + 1 * width * height;
+                uint8_t* dst = nativeCopy;
+                while (src < srcEnd) {
+                    *dst++ = *src;
+                    *dst++ = *src;
+                    *dst++ = *src++;
+                    *dst++ = 0xff;
+                }
+                break;
+        }
+
+        const uint8_t *nativeBytes = (nativeCopy ? nativeCopy : data);
+
+        D2D1_BITMAP_PROPERTIES1 bitmapProps;
+        bitmapProps.pixelFormat = pixelFormat;
+        bitmapProps.dpiX = dpi;
+        bitmapProps.dpiY = dpi;
+        bitmapProps.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;  // can use for SetTarget()
+        bitmapProps.colorContext = nullptr;
+
+        ID2D1Bitmap1 *bitmap = nullptr;
+        HRESULT err = ((ID2D1DeviceContext*)mNativeDC)->CreateBitmap(
+                                                    { UINT32(width), UINT32(height) },
+                                                    nativeBytes, bytesPerPixel * width,
+                                                    &bitmapProps, &bitmap);
+        if (nativeCopy) {
+            delete[] nativeCopy;
+        }
+
+        if (err == S_OK) {
+            return std::make_shared<Direct2DImage>(bitmap, width, height, dpi);
+        } else {
+            return std::make_shared<Direct2DImage>(nullptr, 0, 0, 0.0f);
+        }
     }
 
     std::shared_ptr<BezierPath> createBezierPath() const override
@@ -2096,8 +2371,8 @@ public:
         // RectF constructor is RectF(xMin, yMin, xMax, yMax), but if
         // we start at (0, 0) then it is the same as (x, y, w, h).
         auto srcRect = D2D1::RectF(0.0f, 0.0f,
-                                   toD2D(PicaPt::fromPixels(float(image->width()), image->dpi())),
-                                   toD2D(PicaPt::fromPixels(float(image->height()), image->dpi())));
+                                   toD2D(PicaPt::fromPixels(float(image->widthPx()), image->dpi())),
+                                   toD2D(PicaPt::fromPixels(float(image->heightPx()), image->dpi())));
         gc->DrawBitmap((Direct2DImage::NativeType)image->nativeHandle(), destRect,
                        1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, srcRect);
     }
@@ -2464,7 +2739,7 @@ public:
 
             HRESULT err = mDC->CreateBitmap({ UINT32(width), UINT32(height) },
                                             nullptr, 0,
-                                            bitmapProps, &mBitmap);
+                                            &bitmapProps, &mBitmap);
             if (err == S_OK) {
                 mDC->SetTarget(mBitmap);
             }

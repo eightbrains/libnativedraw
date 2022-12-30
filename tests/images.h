@@ -33,6 +33,7 @@ constexpr uint8_t kTestGreyWhite = 0xff;
 
 enum class TestImage {
     kNone = 0,
+    kGIF,
     kPNG_Grey8,
     kPNG_GreyAlpha16,
     kPNG_RGB,

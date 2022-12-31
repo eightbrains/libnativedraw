@@ -721,20 +721,26 @@ protected:
 };
 
 enum ImageFormat {
-    kImageRGBA32,
+    kImageRGBA32 = 1,
     kImageRGBA32_Premultiplied,
     kImageBGRA32,
-    kImageBGRA32_Premultiplied,  // this is a native format for macOS, Windows, and Linux
+    kImageBGRA32_Premultiplied,  /// this is a native format for macOS, Windows, and Linux
     kImageARGB32,
     kImageARGB32_Premultiplied,
     kImageABGR32,
     kImageABGR32_Premultiplied,
     kImageRGBX32,
-    kImageBGRX32,  // this is a native format for macOS, Windows, and Linux
+    kImageBGRX32,  /// this is a native format for macOS, Windows, and Linux
     kImageRGB24,
     kImageBGR24,
     kImageGreyscaleAlpha16,
     kImageGreyscale8,
+
+    /// This is for internal use, and indicates that the data is encoded
+    /// data, not pixel data. This is used on platforms like macOS and
+    /// Windows where we use operating system functions to load images,
+    /// so we go directly from the encoded data to the DrawableImage.
+    kImageEncodedData = 0x10ad,
 };
 
 /// This class contains a bitmap image. An Image is not drawable (despite
@@ -755,6 +761,7 @@ public:
     /// On macOS an image with no directory delimiter and no extension
     /// (e.g. "image") will attempt to find the image in the named resources
     /// first. If it does, it will load using the standard image, image@2x, etc.
+    /// Note that calling data() later will NOT necessary return pixel data!
     static Image fromFile(const char *path);
 
     /// Creates an image from the encoded image data (such as might be read from
@@ -765,6 +772,7 @@ public:
     ///   macOS:       PNG, JPEG, GIF, plus others
     ///   Window 10:   PNG, JPEG, GIF, TIFF, BMP, WMP, ICO
     ///   Linux, WASM: PNG, JPEG, GIF
+    /// Note that calling data() later will NOT necessary return pixel data!
     /// (This is a static function not a constructor so that it is easy to read
     /// code and distinguish between passing in rgba [for example] data and
     /// encoded data.)
@@ -804,8 +812,11 @@ public:
     PicaPt width() const;
     PicaPt height() const;
 
+    /// Note that if the format is kImageEncodedData, this is not pixel data!
     uint8_t* data();
+    /// Note that if the format is kImageEncodedData, this is not pixel data!
     const uint8_t* data() const;
+    size_t size() const;
 
     /// Multiplies the r, g, b components by the alpha component.
     /// This is useful for generating image data: generate by component,
@@ -819,7 +830,7 @@ protected:
     // Takes ownership of bytes, which should be in a native format.
     // Caller should not use the pointer afterwards, and the destructor will
     // delete[] the pointer.
-    Image(uint8_t *bytes, int w, int h, ImageFormat f, float dpi);
+    Image(uint8_t *bytes, size_t size, int w, int h, ImageFormat f, float dpi);
 
 private:
     struct Impl;

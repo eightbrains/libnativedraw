@@ -1108,6 +1108,35 @@ void BezierPath::addCircle(const Point& center, const PicaPt& radius)
 }
 
 //-----------------------------------------------------------------------------
+int calcPixelBytes(ImageFormat format)
+{
+    switch (format) {
+        case kImageRGBA32:
+        case kImageRGBA32_Premultiplied:
+        case kImageBGRA32:
+        case kImageBGRA32_Premultiplied:
+        case kImageARGB32:
+        case kImageARGB32_Premultiplied:
+        case kImageABGR32:
+        case kImageABGR32_Premultiplied:
+        case kImageRGBX32:
+        case kImageBGRX32:
+            return 4;
+        case kImageRGB24:
+        case kImageBGR24:
+            return 3;
+        case kImageGreyscaleAlpha16:
+            return 2;
+        case kImageGreyscale8:
+            return 1;
+        case kImageEncodedData:
+            assert(false);
+            return 4;  // guaranteed to be big enough; almost certainly too large
+    }
+    assert(false);
+    return 0;  // Visual Studio thinks we might get here
+}
+
 struct Image::Impl
 {
     int width;
@@ -1115,10 +1144,11 @@ struct Image::Impl
     float dpi;
     ImageFormat format = (ImageFormat)-1;
     uint8_t *data = nullptr;
+    size_t size = 0;
 
     Impl() {}
-    Impl(uint8_t *dd /* takes ownership */, int w, int h, ImageFormat f, float d)
-        : width(w), height(h), dpi(d), format(f), data(dd)
+    Impl(uint8_t *dd /* takes ownership */, size_t s, int w, int h, ImageFormat f, float d)
+        : width(w), height(h), dpi(d), format(f), data(dd), size(s)
     {}
     ~Impl() { delete [] data; }
 };
@@ -1136,41 +1166,17 @@ Image::Image()
 
 Image::Image(int w, int h, ImageFormat f, float dpi /*= 0*/)
 {
-    uint8_t *data = nullptr;
-    switch (f) {
-        case kImageRGBA32:
-        case kImageRGBA32_Premultiplied:
-        case kImageBGRA32:
-        case kImageBGRA32_Premultiplied:
-        case kImageARGB32:
-        case kImageARGB32_Premultiplied:
-        case kImageABGR32:
-        case kImageABGR32_Premultiplied:
-        case kImageRGBX32:
-        case kImageBGRX32:
-            data = new uint8_t[4 * w * h];
-            break;
-        case kImageRGB24:
-        case kImageBGR24:
-            data = new uint8_t[3 * w * h];
-            break;
-        case kImageGreyscaleAlpha16:
-            data = new uint8_t[2 * w * h];
-            break;
-        case kImageGreyscale8:
-            data = new uint8_t[w * h];
-            break;
-    }
-    assert(data);
+    size_t size = size_t(calcPixelBytes(f) * w * h);
+    uint8_t *data = new uint8_t[size];
 
     if (dpi == 0) { dpi = kDefaultImageDPI; }
-    mImpl = std::make_shared<Impl>(data, w, h, f, dpi);
+    mImpl = std::make_shared<Impl>(data, size, w, h, f, dpi);
 }
 
-Image::Image(uint8_t *bytes, int w, int h, ImageFormat f, float dpi)
+Image::Image(uint8_t *bytes, size_t size, int w, int h, ImageFormat f, float dpi)
 {
     // takes ownership of 'bytes'
-    mImpl = std::make_shared<Impl>(bytes, w, h, f, dpi);
+    mImpl = std::make_shared<Impl>(bytes, size, w, h, f, dpi);
 }
 
 Image::~Image()
@@ -1179,10 +1185,11 @@ Image::~Image()
 
 void Image::reset()
 {
-    mImpl = std::make_shared<Impl>(nullptr, 0, 0, (ImageFormat)-1, 0.0f);
+    mImpl = std::make_shared<Impl>(nullptr, 0, 0, 0, (ImageFormat)-1, 0.0f);
 }
 
-bool Image::isValid() const { return (mImpl->width != 0 && mImpl->height != 0); }
+// If the image is encoded data, width/height will be 0, so check if data is nullptr
+bool Image::isValid() const { return (mImpl->data != nullptr); }
 
 ImageFormat Image::format() const { return mImpl->format; }
 int Image::widthPx() const { return mImpl->width; }
@@ -1194,6 +1201,7 @@ PicaPt Image::height() const
     { return PicaPt::fromPixels(float(mImpl->height), mImpl->dpi); }
 uint8_t* Image::data() { return mImpl->data; }
 const uint8_t* Image::data() const { return mImpl->data; }
+size_t Image::size() const { return mImpl->size; }
 
 void Image::premultiplyAlpha()
 {
@@ -1216,7 +1224,6 @@ uint8_t* createBGRAFromABGR(const uint8_t *src, int width, int height)
     uint8_t* out = new uint8_t[4 * width * height];
     uint8_t* dst = out;
     const uint8_t* srcEnd = src + 4 * width * height;
-    uint8_t alpha;
     while (src < srcEnd) {
         dst[3] = *src++;
         dst[0] = *src++;
@@ -1347,7 +1354,14 @@ void premultiplyARGB(uint8_t* argb, int width, int height)
 std::vector<uint8_t> readFile(const char *path)
 {
     std::vector<uint8_t> data;
+#if defined(_WIN32) || defined(_WIN64)
+    FILE *in = nullptr;
+    if (fopen_s(&in, path, "rb, ccs=UTF-8") != 0) {
+        return data;
+    }
+#else
     FILE *in = fopen(path, "rb");
+#endif
     if (in) {
         fseek(in, 0, SEEK_END);
         auto size = ftell(in);
@@ -1360,6 +1374,13 @@ std::vector<uint8_t> readFile(const char *path)
 
 Image readImage(const uint8_t *imgdata, int size)
 {
+#ifdef __APPLE__
+    assert(false);  // use native functions
+    return Image();
+#elif defined(_WIN32) || defined(_WIN64)
+    assert(false);  // use native functions
+    return Image();
+#else
     Image image;
     // PNG validates very quickly, so test first
     image = readPNG(imgdata, size);
@@ -1376,6 +1397,7 @@ Image readImage(const uint8_t *imgdata, int size)
     if (image.isValid()) {
         return image;
     }
+#endif
 }
 
 //-----------------------------------------------------------------------------

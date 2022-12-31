@@ -32,7 +32,7 @@
 #endif // ND_NAMESPACE
 
 namespace ND_NAMESPACE {
-class Image;
+class DrawableImage;
 class DrawContext;
 }
 

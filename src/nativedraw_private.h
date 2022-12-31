@@ -165,6 +165,7 @@ int nBytesForUtf8Char(const char* utf8);
 // ----- image functions -----
 // NOTE: functions named "create" will new[] memory which the caller needs to
 //       delete[]
+int calcPixelBytes(ImageFormat format);
 uint8_t* createBGRAFromABGR(const uint8_t *src, int width, int height);
 uint8_t* createBGRAFromRGBA(const uint8_t *src, int width, int height);
 uint8_t* createBGRAFromARGB(const uint8_t *src, int width, int height);

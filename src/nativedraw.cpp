@@ -24,6 +24,7 @@
 #include "nativedraw_private.h"
 
 #include <assert.h>
+#include <stdio.h>
 
 #include <algorithm>
 
@@ -1107,6 +1108,109 @@ void BezierPath::addCircle(const Point& center, const PicaPt& radius)
 }
 
 //-----------------------------------------------------------------------------
+struct Image::Impl
+{
+    int width;
+    int height;
+    float dpi;
+    ImageFormat format = (ImageFormat)-1;
+    uint8_t *data = nullptr;
+
+    Impl() {}
+    Impl(uint8_t *dd /* takes ownership */, int w, int h, ImageFormat f, float d)
+        : width(w), height(h), dpi(d), format(f), data(dd)
+    {}
+    ~Impl() { delete [] data; }
+};
+
+// These are implemented in the native files
+//Image Image::fromFile(const char *path);
+//Image Image::fromEncodedData(const uint8_t *encodedImage, int size)
+//Image Image::fromCopyOfBytes(const uint8_t *bytes, int w, int h,
+//                             ImageFormat f, float dpi /*= 0*/)
+
+Image::Image()
+{
+    reset();
+}
+
+Image::Image(int w, int h, ImageFormat f, float dpi /*= 0*/)
+{
+    uint8_t *data = nullptr;
+    switch (f) {
+        case kImageRGBA32:
+        case kImageRGBA32_Premultiplied:
+        case kImageBGRA32:
+        case kImageBGRA32_Premultiplied:
+        case kImageARGB32:
+        case kImageARGB32_Premultiplied:
+        case kImageABGR32:
+        case kImageABGR32_Premultiplied:
+        case kImageRGBX32:
+        case kImageBGRX32:
+            data = new uint8_t[4 * w * h];
+            break;
+        case kImageRGB24:
+        case kImageBGR24:
+            data = new uint8_t[3 * w * h];
+            break;
+        case kImageGreyscaleAlpha16:
+            data = new uint8_t[2 * w * h];
+            break;
+        case kImageGreyscale8:
+            data = new uint8_t[w * h];
+            break;
+    }
+    assert(data);
+
+    if (dpi == 0) { dpi = kDefaultImageDPI; }
+    mImpl = std::make_shared<Impl>(data, w, h, f, dpi);
+}
+
+Image::Image(uint8_t *bytes, int w, int h, ImageFormat f, float dpi)
+{
+    // takes ownership of 'bytes'
+    mImpl = std::make_shared<Impl>(bytes, w, h, f, dpi);
+}
+
+Image::~Image()
+{
+}
+
+void Image::reset()
+{
+    mImpl = std::make_shared<Impl>(nullptr, 0, 0, (ImageFormat)-1, 0.0f);
+}
+
+bool Image::isValid() const { return (mImpl->width != 0 && mImpl->height != 0); }
+
+ImageFormat Image::format() const { return mImpl->format; }
+int Image::widthPx() const { return mImpl->width; }
+int Image::heightPx() const { return mImpl->height; }
+float Image::dpi() const { return mImpl->dpi; }
+PicaPt Image::width() const
+    { return PicaPt::fromPixels(float(mImpl->width), mImpl->dpi); }
+PicaPt Image::height() const
+    { return PicaPt::fromPixels(float(mImpl->height), mImpl->dpi); }
+uint8_t* Image::data() { return mImpl->data; }
+const uint8_t* Image::data() const { return mImpl->data; }
+
+void Image::premultiplyAlpha()
+{
+    if (mImpl->format == kImageRGBA32_Premultiplied ||
+        mImpl->format == kImageBGRA32_Premultiplied) {
+        // BGRA and RGBA are equivalent for the premultiply calculations
+        premultiplyBGRA(mImpl->data, mImpl->width, mImpl->height);
+    } else if (mImpl->format == kImageARGB32_Premultiplied &&
+               mImpl->format == kImageABGR32_Premultiplied) {
+        // ARGB and ABGR are equivalent for the premultiply calculations
+        premultiplyARGB(mImpl->data, mImpl->width, mImpl->height);
+    } else {
+        return;
+    }
+}
+
+//-----------------------------------------------------------------------------
 uint8_t* createBGRAFromABGR(const uint8_t *src, int width, int height)
 {
     uint8_t* out = new uint8_t[4 * width * height];
@@ -1222,6 +1326,55 @@ void premultiplyBGRA(uint8_t* bgra, int width, int height)
             bgra[2] = uint8_t(std::round(alpha * float(bgra[2])));
         }
         bgra += 4;
+    }
+}
+
+void premultiplyARGB(uint8_t* argb, int width, int height)
+{
+    uint8_t* end = argb + 4 * width * height;
+    float alpha;
+    while (argb < end) {
+        if (argb[0] < 0xff) {  // the common case is alpha = 1.0f, so no work necessary
+            alpha = float(argb[0]) / 255.0f;
+            argb[1] = uint8_t(std::round(alpha * float(argb[1])));
+            argb[2] = uint8_t(std::round(alpha * float(argb[2])));
+            argb[3] = uint8_t(std::round(alpha * float(argb[3])));
+        }
+        argb += 4;
+    }
+}
+
+std::vector<uint8_t> readFile(const char *path)
+{
+    std::vector<uint8_t> data;
+    FILE *in = fopen(path, "rb");
+    if (in) {
+        fseek(in, 0, SEEK_END);
+        auto size = ftell(in);
+        fseek(in, 0, SEEK_SET);
+        data.resize(size);
+        fread(data.data(), size, 1, in);
+    }
+    return data;
+}
+
+Image readImage(const uint8_t *imgdata, int size)
+{
+    Image image;
+    // PNG validates very quickly, so test first
+    image = readPNG(imgdata, size);
+    if (image.isValid()) {
+        return image;
+    }
+    // JPEG requires some setup to validate
+    image = readJPEG(imgdata, size);
+    if (image.isValid()) {
+        return image;
+    }
+    // GIF is unlikely, do last
+    image = readGIF(imgdata, size);
+    if (image.isValid()) {
+        return image;
     }
 }
 

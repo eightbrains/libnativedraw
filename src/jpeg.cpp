@@ -27,7 +27,7 @@
 
 namespace ND_NAMESPACE {
 
-std::unique_ptr<ImageData> readJPEG(const uint8_t *jpegdata, int size)
+Image readJPEG(const uint8_t *jpegdata, int size)
 {
     // The default error "handler" calls exit. !!?? That's the last thing we
     // want, so we need to set up our own handler. We also do not want to
@@ -54,7 +54,7 @@ std::unique_ptr<ImageData> readJPEG(const uint8_t *jpegdata, int size)
     if (setjmp(jerr.setjmp_buffer)) {
         // An error happened, and now here we are...
         jpeg_destroy_decompress(&decompress);
-        return std::unique_ptr<ImageData>();  // nullptr
+        return Image();
     }
 
     jpeg_create_decompress(&decompress);
@@ -66,20 +66,20 @@ std::unique_ptr<ImageData> readJPEG(const uint8_t *jpegdata, int size)
     decompress.out_color_space = JCS_EXT_BGRA;
 
     if (!jpeg_start_decompress(&decompress)) {
-        return std::unique_ptr<ImageData>();  // nullptr
+        return Image();
     }
 
     int width = decompress.output_width;
     int height = decompress.output_height;
     // JPEG does not support alpha channels, so use BGRX32, which is native
     // to all platforms.
-    auto imgData = std::make_unique<ImageData>(width, height, kImageBGRX32);
+    Image imgData(width, height, kImageBGRX32);
     int rowStride = 4 * width;
 
     while (decompress.output_scanline < height) {
         // Read one scanline (the function requires an array of pointers,
         // which is cumbersome, and the scanlines might not be in order).
-        uint8_t* outAddrs[1] = { imgData->bgra + decompress.output_scanline * rowStride };
+        uint8_t* outAddrs[1] = { imgData.data() + decompress.output_scanline * rowStride };
         jpeg_read_scanlines(&decompress, outAddrs, 1);
     }
 

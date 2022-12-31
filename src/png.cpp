@@ -28,12 +28,12 @@
 
 namespace ND_NAMESPACE {
 
-std::unique_ptr<ImageData> readPNG(const uint8_t *pngdata, int size)
+Image readPNG(const uint8_t *pngdata, int size)
 {
     // Check if the header is actually a PNG header, for quick failure.
     const png_size_t kPNGSignatureLength = 8;
     if (png_sig_cmp(pngdata, (png_size_t)0, kPNGSignatureLength) != 0) {
-        return std::unique_ptr<ImageData>();
+        return Image();
     }
 
     // libpng 1.6 has a simplified API, but that does not seem to work properly
@@ -67,13 +67,13 @@ std::unique_ptr<ImageData> readPNG(const uint8_t *pngdata, int size)
     auto noWarn = [](png_structp, png_const_charp) {};
     auto png = png_create_read_struct(PNG_LIBPNG_VER_STRING, jmpbuf, noErr, noWarn);
     if (png == NULL) {
-        return std::unique_ptr<ImageData>();
+        return Image();
     }
     auto pngInfo = png_create_info_struct(png);
     if (pngInfo == NULL)
     {
         png_destroy_read_struct(&png, NULL, NULL);
-        return std::unique_ptr<ImageData>();
+        return Image();
     }
 
     // We set our own jump buffer instead of setjmp(png_jmpbuf(png)), since
@@ -82,7 +82,7 @@ std::unique_ptr<ImageData> readPNG(const uint8_t *pngdata, int size)
     if (setjmp(jmpbuf)) {
         // error happened
         png_destroy_read_struct(&png, &pngInfo, NULL);
-        return std::unique_ptr<ImageData>();
+        return Image();
     }
 
     png_set_read_fn(png, &inputData, read);  // read from buffer instead of FILE*
@@ -97,21 +97,26 @@ std::unique_ptr<ImageData> readPNG(const uint8_t *pngdata, int size)
 
     // We have read the entire image, write to our buffer
     // (If we failed, we would have longjmped to the error handling above)
-    auto imgData = std::make_unique<ImageData>(png_get_image_width(png, pngInfo),
-                                               png_get_image_height(png, pngInfo),
-                                               kImageBGRA32_Premultiplied);
+    int width = png_get_image_width(png, pngInfo);
+    int height = png_get_image_height(png, pngInfo);
+    // Do DPI calculation in double since pixels per meter will be large
+    auto dpi = double(png_get_pixels_per_meter(png, pngInfo)) * 2.54 / 100.0;
+    if (std::abs(dpi) < 0.01) {
+        dpi = double(kDefaultImageDPI);
+    }
+    Image imgData(width, height, kImageBGRA32_Premultiplied, float(dpi));
     auto rowStride = png_get_rowbytes(png, pngInfo);
     auto rows = png_get_rows(png, pngInfo);
-    if (rowStride >= 4 * imgData->width) {
-        for (int y = 0;  y < imgData->height;  ++y) {
-            memcpy(imgData->bgra + y * 4 * imgData->width, rows[y],
-                   4 * imgData->width);
+    if (rowStride >= 4 * width) {
+        for (int y = 0;  y < height;  ++y) {
+            memcpy(imgData.data() + y * 4 * width, rows[y],
+                   4 * width);
         }
-        premultiplyBGRA(imgData->bgra, imgData->width, imgData->height);
-    } else if (rowStride >= 3 * imgData->width) {
-        for (int y = 0;  y < imgData->height;  ++y) {
-            auto *bgra = imgData->bgra + y * 4 * imgData->width;
-            for (int x = 0;  x < imgData->width;  ++x) {
+        premultiplyBGRA(imgData.data(), width, height);
+    } else if (rowStride >= 3 * width) {
+        for (int y = 0;  y < height;  ++y) {
+            auto *bgra = imgData.data() + y * 4 * width;
+            for (int x = 0;  x < width;  ++x) {
                 bgra[4 * x    ] = rows[y][3 * x    ];
                 bgra[4 * x + 1] = rows[y][3 * x + 1];
                 bgra[4 * x + 2] = rows[y][3 * x + 2];

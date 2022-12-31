@@ -27,7 +27,7 @@
 
 namespace ND_NAMESPACE {
 
-std::unique_ptr<ImageData> readGIF(const uint8_t *gifdata, int size)
+Image readGIF(const uint8_t *gifdata, int size)
 {
     struct InputData {
         const uint8_t *data;
@@ -51,15 +51,15 @@ std::unique_ptr<ImageData> readGIF(const uint8_t *gifdata, int size)
     int err;
     GifFileType* gif = DGifOpen(&inputData, read, &err);
     if (!gif) {
-        return std::unique_ptr<ImageData>();
+        return Image();
     }
     if (DGifSlurp(gif) == GIF_ERROR) {
         DGifCloseFile(gif, &err);
-        return std::unique_ptr<ImageData>();
+        return Image();
     }
     if (gif->ImageCount == 0) {
         DGifCloseFile(gif, &err);
-        return std::unique_ptr<ImageData>();
+        return Image();
     }
 
     ColorMapObject* commonMap = gif->SColorMap;
@@ -75,8 +75,7 @@ std::unique_ptr<ImageData> readGIF(const uint8_t *gifdata, int size)
 
     int width = desc.Width;
     int height = desc.Height;
-    auto imgData = std::make_unique<ImageData>(width, height,
-                                               kImageBGRA32_Premultiplied);
+    Image imgData(width, height, kImageBGRA32_Premultiplied);
     // The documentation at https://giflib.sourceforge.net/gif_lib.html
     // (very bottom) says that gif->SBackGroundColor is an unused feature
     // of the GIF spec. (This is handy, because there is also no documentation
@@ -85,7 +84,7 @@ std::unique_ptr<ImageData> readGIF(const uint8_t *gifdata, int size)
     if (colorMap) {
         auto *src = image.RasterBits;
         auto *srcEnd = src + width * height;
-        uint8_t *bgra = imgData->bgra;
+        uint8_t *bgra = imgData.data();
         while (src < srcEnd) {
             int c = *src++;
             if (c != gcb.TransparentColor) {

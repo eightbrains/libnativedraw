@@ -1088,17 +1088,154 @@ private:
 
 } // namespace
 
-//---------------------------------- Image ------------------------------------
-class CairoImage : public Image
+//-------------------------------- Image ---------------------------------------
+uint8_t* createNativeCopy(const uint8_t *data, int width, int height,
+                          ImageFormat format, cairo_format_t *cairoFormat,
+                          ImageFormat *nativeFormat)
+{
+    // Cairo's native format is mostly premultiplied ARGB32
+    // **in native endian uint32** (!?). In practice, since most systems
+    // will be little-endian (since what all the software uses) this will be
+    // the BGRA32 that all the other platforms use. There is an assert at
+    // the beginning of this file ensuring that the platform actually is
+    // little-endian (no need to run it every call).
+
+    // Since Cairo's enum is confusing, we are going to redefine them
+    const cairo_format_t BGRA32 = CAIRO_FORMAT_ARGB32;
+    const cairo_format_t BGRX32 = CAIRO_FORMAT_RGB24;
+
+    // Cairo has stride requirements, but we only use the 32-bit formats
+    // so hopefully the alignment requirements of the strides happen to
+    // be 32-bit boundaries (that is, a scanline has no padding).
+    // Check this assumption here.
+    // TODO: this probably isn't the case for alpha8
+    assert(cairo_format_stride_for_width(BGRA32, width) == 4 * width);
+
+    cairo_format_t nullPF;
+    if (!cairoFormat) {
+        cairoFormat = &nullPF;
+    }
+    ImageFormat nullFormat;
+    if (!nativeFormat) {
+        nativeFormat = &nullFormat;
+    }
+
+    *cairoFormat = BGRA32;
+    *nativeFormat = kImageBGRA32_Premultiplied;
+    uint8_t *nativeCopy = nullptr;
+    switch (format) {
+        case kImageRGBA32:
+            nativeCopy = createBGRAFromRGBA(data, width, height);
+            premultiplyBGRA(nativeCopy, width, height);
+            break;
+        case kImageRGBA32_Premultiplied:
+            nativeCopy = createBGRAFromRGBA(data, width, height);
+            break;
+        case kImageBGRA32:
+            nativeCopy = new uint8_t[4 * width * height];
+            memcpy(nativeCopy, data, 4 * width * height);
+            premultiplyBGRA(nativeCopy, width, height);
+            break;
+        case kImageBGRA32_Premultiplied:
+            nativeCopy = new uint8_t[4 * width * height];
+            memcpy(nativeCopy, data, 4 * width * height);
+            break;  // this is native
+        case kImageARGB32:
+            nativeCopy = createBGRAFromARGB(data, width, height);
+            premultiplyBGRA(nativeCopy, width, height);
+            break;
+        case kImageARGB32_Premultiplied:
+            nativeCopy = createBGRAFromARGB(data, width, height);
+            break;
+        case kImageABGR32:
+            nativeCopy = createBGRAFromABGR(data, width, height);
+            premultiplyBGRA(nativeCopy, width, height);
+            break;
+        case kImageABGR32_Premultiplied:
+            nativeCopy = createBGRAFromABGR(data, width, height);
+            break;
+        case kImageRGBX32:
+            *cairoFormat = BGRX32;
+            *nativeFormat = kImageBGRX32;
+            nativeCopy = createBGRAFromRGBA(data, width, height);
+            break;
+        case kImageBGRX32:
+            *cairoFormat = BGRX32;
+            *nativeFormat = kImageBGRX32;
+            nativeCopy = new uint8_t[4 * width * height];
+            memcpy(nativeCopy, data, 4 * width * height);
+            break;  // this is native
+        case kImageRGB24:
+            *cairoFormat = BGRX32;
+            *nativeFormat = kImageBGRX32;
+            nativeCopy = createBGRAFromRGB(data, width, height);
+            break;
+        case kImageBGR24:
+            *cairoFormat = BGRX32;
+            *nativeFormat = kImageBGRX32;
+            nativeCopy = createBGRAFromBGR(data, width, height);
+            break;
+        case kImageGreyscaleAlpha16: {
+            nativeCopy = createBGRAFromGreyAlpha(data, width, height);
+            premultiplyBGRA(nativeCopy, width, height);
+            break;
+        }
+        case kImageGreyscale8:
+            *cairoFormat = BGRX32;
+            *nativeFormat = kImageBGRX32;
+            nativeCopy = createBGRAFromGrey(data, width, height);
+            break;
+    }
+    assert(nativeCopy);
+    return nativeCopy;
+}
+
+Image Image::fromFile(const char *file)
+{
+    auto bytes = readFile(file);
+    if (!bytes.empty()) {
+        return fromEncodedData(bytes.data(), bytes.size());
+    } else {
+        return Image();
+    }
+}
+
+Image Image::fromEncodedData(const uint8_t *encodedImage, int length)
+{
+    return readImage(encodedImage, length);
+}
+
+Image Image::fromCopyOfBytes(const uint8_t *bytes, int w, int h,
+                             ImageFormat f, float dpi /*= 0*/)
+{
+    ImageFormat nativeFormat;
+    uint8_t *bgra = createNativeCopy(bytes, w, h, f, nullptr, &nativeFormat);
+    return Image(bgra /* takes ownership */, w, h, nativeFormat,
+                 (dpi != 0 ? dpi : kDefaultImageDPI));
+}
+
+//------------------------------ DrawImage -------------------------------------
+struct CairoImageData
+{
+    int width;
+    int height;
+    uint8_t *bgra;
+
+    CairoImageData(uint8_t *b, int w, int h)
+        : width(w), height(h), bgra(b)
+    {}
+};
+
+class CairoImage : public DrawableImage
 {
 public:
     CairoImage(cairo_surface_t *nativeHandle, int width, int height, float dpi)
-        : Image(nativeHandle, width, height, dpi)
+        : DrawableImage(nativeHandle, width, height, dpi)
     {}
 
     CairoImage(cairo_surface_t *nativeHandle,
-               std::unique_ptr<ImageData>&& image, float dpi)
-        : Image(nativeHandle, image->width, image->height, dpi)
+               std::unique_ptr<CairoImageData>&& image, float dpi)
+        : DrawableImage(nativeHandle, image->width, image->height, dpi)
         , mData(std::move(image))
     {}
 
@@ -1110,7 +1247,7 @@ public:
     }
 
 protected:
-    std::unique_ptr<ImageData> mData;
+    std::unique_ptr<CairoImageData> mData;
 };
 
 //--------------------------- CairoDrawContext --------------------------------
@@ -1131,7 +1268,7 @@ public:
         }
     }
 
-protected:
+
     void setNativeDC(cairo_t *dc)
     {
         mStateStack.clear();
@@ -1188,164 +1325,30 @@ public:
                                          defaultReplacementColor);
     }
 
-    std::shared_ptr<Image> createImageFromEncodedData(
-                const unsigned char* bytes, size_t length) const override
+    std::shared_ptr<DrawableImage> createDrawableImage(const Image& image) const override
     {
-        const float kDefaultDPI = 96.0f;
-
-        std::unique_ptr<ImageData> *image = nullptr;
-        std::unique_ptr<ImageData> pngImage = nullptr;
-        std::unique_ptr<ImageData> jpegImage = nullptr;
-        std::unique_ptr<ImageData> gifImage = nullptr;
-        if (!image) { // PNG validates if is a PNG very quickly, so test first
-            pngImage = readPNG(bytes, length);
-            if (pngImage.get()) {
-                image = &pngImage;
-            }
-        }
-        if (!image) { // JPEG requires some setup to validate
-            jpegImage = readJPEG(bytes, length);
-            if (jpegImage.get()) {
-                image = &jpegImage;
-            }
-        }
-        if (!image) { // GIF is unlikely, do last
-            gifImage = readGIF(bytes, length);
-            if (gifImage.get()) {
-                image = &gifImage;
-            }
-        }
-
-        if (image) {
-            cairo_format_t pixelFormat;
-            if ((*image)->format == kImageBGRA32_Premultiplied) {
-                // ARGB32 for Cairo really means "ARGB32 in little-endian uint32"
-                // which to the rest of us is is BGRA32.
-                pixelFormat = CAIRO_FORMAT_ARGB32;
-            } else if ((*image)->format == kImageBGRX32) {
-                // RGB24 for Cairo really means "XRGB32 in little-endian uint32"
-                // which to the rest of us is is BGRX32.
-                pixelFormat = CAIRO_FORMAT_RGB24;
-            } else {
-                assert(false);
-                // This call will do a copy, and then the unique_ptrs here
-                // will clean up everything here.
-                return createImageFromBytes((*image)->bgra, (*image)->width,
-                                            (*image)->height, (*image)->format,
-                                            kDefaultDPI);
-            }
-            cairo_surface_t *surf = cairo_image_surface_create_for_data(
-                        (*image)->bgra, pixelFormat, (*image)->width,
-                        (*image)->height, 4 * (*image)->width);
-            if (cairo_surface_status(surf) == CAIRO_STATUS_SUCCESS) {
-                return std::make_shared<CairoImage>(surf, std::move(*image), kDefaultDPI);
-            }
-        }
-        // The unique_ptrs ensure that any unmoved data is cleaned up
-        return std::make_shared<CairoImage>(nullptr, 0, 0, 0.0f);
-    }
-
-    std::shared_ptr<Image> createImageFromBytes(
-                const unsigned char* data, int width, int height,
-                ImageFormat format, float dpi) const override
-    {
-        // Cairo's native format is mostly premultiplied ARGB32
-        // **in native endian uint32** (!?). In practice, since most systems
-        // will be little-endian (since what all the software uses) this will be
-        // the BGRA32 that all the other platforms use. There is an assert at
-        // the beginning of this file ensuring that the platform actually is
-        // little-endian (no need to run it every call).
-
-        // Since Cairo's enum is confusing, we are going to redefine them
-        const cairo_format_t BGRA32 = CAIRO_FORMAT_ARGB32;
-        const cairo_format_t BGRX32 = CAIRO_FORMAT_RGB24;
-
-        // Cairo has stride requirements, but we only use the 32-bit formats
-        // so hopefully the alignment requirements of the strides happen to
-        // be 32-bit boundaries (that is, a scanline has no padding).
-        // Check this assumption here.
-        // TODO: this probably isn't the case for alpha8
-        assert(cairo_format_stride_for_width(BGRA32, width) == 4 * width);
-
         // The cairo surface externalizes the data, so we have to keep it
         // around for the duration of the surface. This means we need to
         // always copy.
-        uint8_t* nativeCopy = nullptr;
+        cairo_format_t pixelFormat;
+        int width = image.widthPx();
+        int height = image.heightPx();
+        uint8_t* nativeCopy = createNativeCopy(image.data(), width, height,
+                                               image.format(),
+                                               &pixelFormat, nullptr);
 
-        int bytesPerPixel = 4;
-        cairo_format_t pixelFormat = BGRA32;
+        cairo_surface_t *surf = cairo_image_surface_create_for_data((uint8_t*)nativeCopy, pixelFormat, width, height, 4 * width);
 
-        switch (format) {
-            case kImageRGBA32:
-                nativeCopy = createBGRAFromRGBA(data, width, height);
-                premultiplyBGRA(nativeCopy, width, height);
-                break;
-            case kImageRGBA32_Premultiplied:
-                nativeCopy = createBGRAFromRGBA(data, width, height);
-                break;
-            case kImageBGRA32:
-                nativeCopy = new uint8_t[4 * width * height];
-                memcpy(nativeCopy, data, 4 * width * height);
-                premultiplyBGRA(nativeCopy, width, height);
-                break;
-            case kImageBGRA32_Premultiplied:
-                nativeCopy = new uint8_t[4 * width * height];
-                memcpy(nativeCopy, data, 4 * width * height);
-                break;  // this is native
-            case kImageARGB32:
-                nativeCopy = createBGRAFromARGB(data, width, height);
-                premultiplyBGRA(nativeCopy, width, height);
-                break;
-            case kImageARGB32_Premultiplied:
-                nativeCopy = createBGRAFromARGB(data, width, height);
-                break;
-            case kImageABGR32:
-                nativeCopy = createBGRAFromABGR(data, width, height);
-                premultiplyBGRA(nativeCopy, width, height);
-                break;
-            case kImageABGR32_Premultiplied:
-                nativeCopy = createBGRAFromABGR(data, width, height);
-                break;
-            case kImageRGBX32:
-                pixelFormat = BGRX32;
-                nativeCopy = createBGRAFromRGBA(data, width, height);
-                break;
-            case kImageBGRX32:
-                pixelFormat = BGRX32;
-                nativeCopy = new uint8_t[4 * width * height];
-                memcpy(nativeCopy, data, 4 * width * height);
-                break;  // this is native
-            case kImageRGB24:
-                pixelFormat = BGRX32;
-                nativeCopy = createBGRAFromRGB(data, width, height);
-                break;
-            case kImageBGR24:
-                pixelFormat = BGRX32;
-                nativeCopy = createBGRAFromBGR(data, width, height);
-                break;
-            case kImageGreyscaleAlpha16: {
-                nativeCopy = createBGRAFromGreyAlpha(data, width, height);
-                premultiplyBGRA(nativeCopy, width, height);
-                break;
-            }
-            case kImageGreyscale8:
-                pixelFormat = BGRX32;
-                nativeCopy = createBGRAFromGrey(data, width, height);
-                break;
-        }
-        assert(nativeCopy);
-
-        cairo_surface_t *image = cairo_image_surface_create_for_data((uint8_t*)nativeCopy, pixelFormat, width, height, 4 * width);
-
-        if (cairo_surface_status(image) == CAIRO_STATUS_SUCCESS) {
+        if (cairo_surface_status(surf) == CAIRO_STATUS_SUCCESS) {
             // ImageData(uint8_t*, int, int) takes ownership of the pointer
             // The actual format does not matter, it is only needed when reading
             // from a file.
-            auto data = std::make_unique<ImageData>(nativeCopy, width, height,
-                                                    kImageBGRA32);
-            return std::make_shared<CairoImage>(image, std::move(data), dpi);
+            auto data = std::make_unique<CairoImageData>(
+                                                     nativeCopy, width, height);
+            return std::make_shared<CairoImage>(surf, std::move(data),
+                                                image.dpi());
         } else {
-            cairo_surface_destroy(image);  // image always exists, needs destroy
+            cairo_surface_destroy(surf);  // surf always exists, needs destroy
             delete [] nativeCopy;
             return std::make_shared<CairoImage>(nullptr, 0, 0, 0.0f);
         }
@@ -1566,7 +1569,7 @@ public:
         cairo_restore(gc);
     }
 
-    void drawImage(std::shared_ptr<Image> image, const Rect& destRect) override
+    void drawImage(std::shared_ptr<DrawableImage> image, const Rect& destRect) override
     {
         auto *gc = cairoContext();
         save();
@@ -1620,7 +1623,7 @@ public:
         return Color::kPurple;
     }
 
-    std::shared_ptr<Image> copyToImage() override
+    std::shared_ptr<DrawableImage> copyToImage() override
     {
         assert(false);  // not implemented
         return nullptr;
@@ -1766,7 +1769,7 @@ public:
         }
     }
 
-    std::shared_ptr<Image> copyToImage() override
+    std::shared_ptr<DrawableImage> copyToImage() override
     {
         return std::make_shared<CairoImage>(cairo_surface_reference(mSurface),
                                             width(), height(), dpi());
@@ -1949,7 +1952,7 @@ public:
         return mReadable->pixelAt(x, y);
     }
 
-    std::shared_ptr<Image> copyToImage() override
+    std::shared_ptr<DrawableImage> copyToImage() override
     {
         return std::make_shared<CairoX11Image>(mPixmap, mSurface, width(), height(), dpi());
     }

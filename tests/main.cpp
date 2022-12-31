@@ -2971,7 +2971,7 @@ public:
     }
 
 protected:
-    std::shared_ptr<Image> makeImage(const Color& fill)
+    std::shared_ptr<DrawableImage> makeImage(const Color& fill)
     {
         auto src = createBitmap(kBitmapRGB, mBitmap->width(), mBitmap->height(),
                                 mBitmap->dpi());
@@ -3145,12 +3145,12 @@ public:
         }
 
         auto dpi = mBitmap->dpi();
-        std::shared_ptr<Image> img;
+        Image img;
         if (mTestImage == TestImage::kNone) {
-            img = mBitmap->createImageFromBytes(imgData.data(), width, height, mFormat, dpi);
+            img = Image::fromCopyOfBytes(imgData.data(), width, height, mFormat, dpi);
         } else {
             auto src = loadImage(mTestImage);
-            img = mBitmap->createImageFromEncodedData(src.data(), src.size());
+            img = Image::fromEncodedData(src.data(), src.size());
 
             // JPEG is a little lossy
             if (mTestImage == TestImage::kJPEG || mTestImage == TestImage::kJPEG_Progressive) {
@@ -3161,8 +3161,8 @@ public:
             mTestImage == TestImage::kPNG_bad ||
             mTestImage == TestImage::kJPEG_bad ||
             mTestImage == TestImage::kGIF_bad) {
-            if (img && img->widthPx() == 0) {
-                return "";  // succes: bad image produced no image
+            if (!img.isValid()) {
+                return "";  // success: bad image produced no image
             } else {
                 // clear so error output looks more reasonable
                 mBitmap->beginDraw();
@@ -3171,7 +3171,7 @@ public:
                 return "bad image should produce empty Image";
             }
         } else {
-            if (!img || img->widthPx() == 0) {
+            if (!img.isValid()) {
                 // clear so error output looks more reasonable
                 mBitmap->beginDraw();
                 mBitmap->fill(Color::kBlack);
@@ -3183,7 +3183,7 @@ public:
         auto imgRect = Rect::fromPixels(1, 1, width, height, dpi);
         mBitmap->beginDraw();
         mBitmap->fill(Color::kBlack);
-        mBitmap->drawImage(img, imgRect);
+        mBitmap->drawImage(mBitmap->createDrawableImage(img), imgRect);
         mBitmap->endDraw();
 
         for (int y = 0;  y < mHeight;  ++y) {

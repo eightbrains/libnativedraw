@@ -59,7 +59,7 @@ private:
     std::vector<Run> mRuns;
     int mRunIdx = 0;
 
-    std::shared_ptr<ND_NAMESPACE::Image> mImg100;
+    std::shared_ptr<ND_NAMESPACE::DrawableImage> mImg100;
 
     struct Result {
         int n = 0;

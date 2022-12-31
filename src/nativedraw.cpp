@@ -1107,6 +1107,125 @@ void BezierPath::addCircle(const Point& center, const PicaPt& radius)
 }
 
 //-----------------------------------------------------------------------------
+uint8_t* createBGRAFromABGR(const uint8_t *src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 4 * width * height;
+    uint8_t alpha;
+    while (src < srcEnd) {
+        dst[3] = *src++;
+        dst[0] = *src++;
+        dst[1] = *src++;
+        dst[2] = *src++;
+        dst += 4;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromRGBA(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 4 * width * height;
+    while (src < srcEnd) {
+        dst[2] = *src++;
+        dst[1] = *src++;
+        dst[0] = *src++;
+        dst[3] = *src++;
+        dst += 4;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromARGB(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 4 * width * height;
+    while (src < srcEnd) {
+        dst[3] = *src++;
+        dst[2] = *src++;
+        dst[1] = *src++;
+        dst[0] = *src++;
+        dst += 4;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromRGB(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 3 * width * height;
+    while (src < srcEnd) {
+        dst[2] = *src++;
+        dst[1] = *src++;
+        dst[0] = *src++;
+        dst[3] = 0xff;
+        dst += 4;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromBGR(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 3 * width * height;
+    while (src < srcEnd) {
+        *dst++ = *src++;
+        *dst++ = *src++;
+        *dst++ = *src++;
+        *dst++ = 0xff;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromGreyAlpha(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    const uint8_t *srcEnd = src + 2 * width * height;
+    uint8_t* dst = out;
+    while (src < srcEnd) {
+        *dst++ = *src;
+        *dst++ = *src;
+        *dst++ = *src++;
+        *dst++ = *src++;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromGrey(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    const uint8_t* srcEnd = src + 1 * width * height;
+    uint8_t* dst = out;
+    while (src < srcEnd) {
+        *dst++ = *src;
+        *dst++ = *src;
+        *dst++ = *src++;
+        *dst++ = 0xff;
+    }
+    return out;
+}
+
+void premultiplyBGRA(uint8_t* bgra, int width, int height)
+{
+    uint8_t* end = bgra + 4 * width * height;
+    float alpha;
+    while (bgra < end) {
+        if (bgra[3] < 0xff) {  // the common case is alpha = 1.0f, so no work necessary
+            alpha = float(bgra[3]) / 255.0f;
+            bgra[0] = uint8_t(std::round(alpha * float(bgra[0])));
+            bgra[1] = uint8_t(std::round(alpha * float(bgra[1])));
+            bgra[2] = uint8_t(std::round(alpha * float(bgra[2])));
+        }
+        bgra += 4;
+    }
+}
+
+//-----------------------------------------------------------------------------
 DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi, float nativeDPI)
     : mNativeDC(nativeDC), mWidth(width), mHeight(height), mDPI(dpi), mNativeDPI(nativeDPI)
 {

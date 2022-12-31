@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright 2021 Eight Brains Studios, LLC
+// Copyright 2021 - 2022 Eight Brains Studios, LLC
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -1784,87 +1784,6 @@ public:
         // developer would not have to re-write the same code. No, Direct2D is all about
         // making the developer experience as painful as possible. At least we do not have
         // to create an extra data source object or something.
-
-        auto createBGRAFromABGR = [](const uint8_t *src, int width, int height) {
-             uint8_t* out = new uint8_t[4 * width * height];
-             uint8_t* dst = out;
-             const uint8_t* srcEnd = src + 4 * width * height;
-             uint8_t alpha;
-             while (src < srcEnd) {
-                 alpha = *src++;
-                 *dst++ = *src++;
-                 *dst++ = *src++;
-                 *dst++ = *src++;
-                 *dst++ = alpha;
-             }
-             return out;
-        };
-        auto createBGRAFromRGBA = [](const uint8_t* src, int width, int height) {
-            uint8_t* out = new uint8_t[4 * width * height];
-            uint8_t* dst = out;
-            const uint8_t* srcEnd = src + 4 * width * height;
-            while (src < srcEnd) {
-                dst[2] = *src++;
-                dst[1] = *src++;
-                dst[0] = *src++;
-                dst[3] = *src++;
-                dst += 4;
-            }
-            return out;
-        };
-        auto createBGRAFromARGB = [](const uint8_t* src, int width, int height) {
-            uint8_t* out = new uint8_t[4 * width * height];
-            uint8_t* dst = out;
-            const uint8_t* srcEnd = src + 4 * width * height;
-            while (src < srcEnd) {
-                dst[3] = *src++;
-                dst[2] = *src++;
-                dst[1] = *src++;
-                dst[0] = *src++;
-                dst += 4;
-            }
-            return out;
-        };
-        auto createBGRAFromRGB = [](const uint8_t* src, int width, int height) {
-            uint8_t* out = new uint8_t[4 * width * height];
-            uint8_t* dst = out;
-            const uint8_t* srcEnd = src + 3 * width * height;
-            while (src < srcEnd) {
-                dst[2] = *src++;
-                dst[1] = *src++;
-                dst[0] = *src++;
-                dst[3] = 0xff;
-                dst += 4;
-            }
-            return out;
-        };
-        auto createBGRAFromBGR = [](const uint8_t* src, int width, int height) {
-            uint8_t* out = new uint8_t[4 * width * height];
-            uint8_t* dst = out;
-            const uint8_t* srcEnd = src + 3 * width * height;
-            while (src < srcEnd) {
-                *dst++ = *src++;
-                *dst++ = *src++;
-                *dst++ = *src++;
-                *dst++ = 0xff;
-            }
-            return out;
-        };
-
-        auto premultiply = [](uint8_t* bgra, int width, int height) {
-            uint8_t* end = bgra + 4 * width * height;
-            float alpha;
-            while (bgra < end) {
-                if (bgra[3] < 0xff) {  // the common case is alpha = 1.0f, so no work necessary
-                    alpha = float(bgra[3]) / 255.0f;
-                    bgra[0] = uint8_t(std::round(alpha * float(bgra[0])));
-                    bgra[1] = uint8_t(std::round(alpha * float(bgra[1])));
-                    bgra[2] = uint8_t(std::round(alpha * float(bgra[2])));
-                }
-                bgra += 4;
-            }
-        };
-
         uint8_t* nativeCopy = nullptr;
 
         int bytesPerPixel = 4;
@@ -1875,7 +1794,7 @@ public:
         switch (format) {
             case kImageRGBA32:
                 nativeCopy = createBGRAFromRGBA(data, width, height);
-                premultiply(nativeCopy, width, height);
+                premultiplyBGRA(nativeCopy, width, height);
                 break;
             case kImageRGBA32_Premultiplied:
                 nativeCopy = createBGRAFromRGBA(data, width, height);
@@ -1883,20 +1802,20 @@ public:
             case kImageBGRA32:
                 nativeCopy = new uint8_t[4 * width * height];  // this is sooo close to native...
                 memcpy(nativeCopy, data, 4 * width * height);
-                premultiply(nativeCopy, width, height);
+                premultiplyBGRA(nativeCopy, width, height);
                 break;
             case kImageBGRA32_Premultiplied:
                 break;  // this is native
             case kImageARGB32:
                 nativeCopy = createBGRAFromARGB(data, width, height);
-                premultiply(nativeCopy, width, height);
+                premultiplyBGRA(nativeCopy, width, height);
                 break;
             case kImageARGB32_Premultiplied:
                 nativeCopy = createBGRAFromARGB(data, width, height);
                 break;
             case kImageABGR32:
                 nativeCopy = createBGRAFromABGR(data, width, height);
-                premultiply(nativeCopy, width, height);
+                premultiplyBGRA(nativeCopy, width, height);
                 break;
             case kImageABGR32_Premultiplied:
                 nativeCopy = createBGRAFromABGR(data, width, height);
@@ -1918,31 +1837,13 @@ public:
                 nativeCopy = createBGRAFromBGR(data, width, height);
                 break;
             case kImageGreyscaleAlpha16: {
-                nativeCopy = new uint8_t[4 * width * height];
-                const uint8_t *src = data;
-                const uint8_t *srcEnd = src + 2 * width * height;
-                uint8_t* dst = nativeCopy;
-                while (src < srcEnd) {
-                    *dst++ = *src;
-                    *dst++ = *src;
-                    *dst++ = *src++;
-                    *dst++ = *src++;
-                }
-                premultiply(nativeCopy, width, height);
+                nativeCopy = createBGRAFromGreyAlpha(data, width, height);
+                premultiplyBGRA(nativeCopy, width, height);
                 break;
             }
             case kImageGreyscale8:
                 pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
-                nativeCopy = new uint8_t[4 * width * height];
-                const uint8_t* src = data;
-                const uint8_t* srcEnd = src + 1 * width * height;
-                uint8_t* dst = nativeCopy;
-                while (src < srcEnd) {
-                    *dst++ = *src;
-                    *dst++ = *src;
-                    *dst++ = *src++;
-                    *dst++ = 0xff;
-                }
+                nativeCopy = createBGRAFromGrey(data, width, height);
                 break;
         }
 

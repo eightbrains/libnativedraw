@@ -3157,8 +3157,27 @@ public:
                 allowedError = 2;
             }
         }
-        if (!img || img->widthPx() == 0) {
-            return "Could not create image";
+        if (mTestImage == TestImage::kBadImage ||
+            mTestImage == TestImage::kPNG_bad ||
+            mTestImage == TestImage::kJPEG_bad ||
+            mTestImage == TestImage::kGIF_bad) {
+            if (img && img->widthPx() == 0) {
+                return "";  // succes: bad image produced no image
+            } else {
+                // clear so error output looks more reasonable
+                mBitmap->beginDraw();
+                mBitmap->fill(Color::kBlack);
+                mBitmap->endDraw();
+                return "bad image should produce empty Image";
+            }
+        } else {
+            if (!img || img->widthPx() == 0) {
+                // clear so error output looks more reasonable
+                mBitmap->beginDraw();
+                mBitmap->fill(Color::kBlack);
+                mBitmap->endDraw();
+                return "could not create image";
+            }
         }
 
         auto imgRect = Rect::fromPixels(1, 1, width, height, dpi);
@@ -3429,6 +3448,7 @@ int main(int argc, char *argv[])
         std::make_shared<ImageTest>(kImageBGR24),
         std::make_shared<ImageTest>(kImageGreyscaleAlpha16),
         std::make_shared<ImageTest>(kImageGreyscale8),
+        std::make_shared<ImageTest>("bad.txt", kImageRGBA32, TestImage::kBadImage),
         std::make_shared<ImageTest>("test-grey.png", kImageGreyscale8, TestImage::kPNG_Grey8),
         std::make_shared<ImageTest>("test-greyalpha.png", kImageGreyscaleAlpha16, TestImage::kPNG_GreyAlpha16),
         std::make_shared<ImageTest>("test-rgb.png", kImageRGB24, TestImage::kPNG_RGB),
@@ -3438,8 +3458,12 @@ int main(int argc, char *argv[])
         std::make_shared<ImageTest>("test-greyalpha-16bit.png", kImageGreyscaleAlpha16, TestImage::kPNG_GreyAlpha32),
         std::make_shared<ImageTest>("test-rgb-16bit.png", kImageRGB24, TestImage::kPNG_RGB48),
         std::make_shared<ImageTest>("test-rgba-16bit.png", kImageRGBA32, TestImage::kPNG_RGBA64),
+        std::make_shared<ImageTest>("bad.png", kImageRGBA32, TestImage::kPNG_bad),
         std::make_shared<ImageTest>("test.jpg", kImageRGB24, TestImage::kJPEG),
         std::make_shared<ImageTest>("test-progressive.jpg", kImageRGB24, TestImage::kJPEG_Progressive),
+        std::make_shared<ImageTest>("bad.jpg", kImageRGB24, TestImage::kJPEG_bad),
+        std::make_shared<ImageTest>("test.gif", kImageRGB24, TestImage::kGIF),
+        std::make_shared<ImageTest>("bad.gif", kImageRGB24, TestImage::kGIF_bad),
         std::make_shared<ColorFuncTest>(),
         std::make_shared<TransformTest>()
     };

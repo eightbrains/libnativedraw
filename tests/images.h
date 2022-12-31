@@ -23,6 +23,7 @@
 #ifndef TEST_IMAGES_H
 #define TEST_IMAGES_H
 
+#include <cstdint>
 #include <vector>
 
 // These values appear in the PNG/JPEG image file-data.
@@ -33,7 +34,7 @@ constexpr uint8_t kTestGreyWhite = 0xff;
 
 enum class TestImage {
     kNone = 0,
-    kGIF,
+    kBadImage,
     kPNG_Grey8,
     kPNG_GreyAlpha16,
     kPNG_RGB,
@@ -43,8 +44,12 @@ enum class TestImage {
     kPNG_GreyAlpha32,  // 16 bits per channel
     kPNG_RGB48,        // 16 bits per channel
     kPNG_RGBA64,       // 16 bits per channel
+    kPNG_bad,
     kJPEG,
-    kJPEG_Progressive
+    kJPEG_Progressive,
+    kJPEG_bad,
+    kGIF,
+    kGIF_bad,
 };
 std::vector<uint8_t> loadImage(TestImage img);
 

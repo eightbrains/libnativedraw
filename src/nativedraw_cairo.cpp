@@ -1185,6 +1185,9 @@ uint8_t* createNativeCopy(const uint8_t *data, int width, int height,
             *nativeFormat = kImageBGRX32;
             nativeCopy = createBGRAFromGrey(data, width, height);
             break;
+        case kImageEncodedData:
+            assert(false);
+            break;
     }
     assert(nativeCopy);
     return nativeCopy;
@@ -1210,7 +1213,8 @@ Image Image::fromCopyOfBytes(const uint8_t *bytes, int w, int h,
 {
     ImageFormat nativeFormat;
     uint8_t *bgra = createNativeCopy(bytes, w, h, f, nullptr, &nativeFormat);
-    return Image(bgra /* takes ownership */, w, h, nativeFormat,
+    size_t size = size_t(calcPixelBytes(f) * w * h);
+    return Image(bgra /* takes ownership */, size, w, h, nativeFormat,
                  (dpi != 0 ? dpi : kDefaultImageDPI));
 }
 

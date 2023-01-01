@@ -834,8 +834,7 @@ protected:
     // Caller should not use the pointer afterwards, and the destructor will
     // delete[] the pointer.
     Image(uint8_t *bytes, size_t size, int w, int h, ImageFormat f, float dpi);
-    Image(void *handle, int w, int h, float dpi,
-          std::function<void(void*)> onDestruct);
+    Image(void *handle, int w, int h, float dpi, void (*onDestruct)(void*));
 
 private:
     struct Impl;

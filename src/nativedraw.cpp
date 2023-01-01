@@ -1146,7 +1146,7 @@ struct Image::Impl
     uint8_t *data = nullptr;
     size_t size = 0;
 #ifdef __APPLE__  // no sense making other platforms waste this memory
-    std::function<void(void*)> onDestruct;
+    void (*onDestruct)(void*) = nullptr;
 #endif // __APPLE__
 
     Impl() {}
@@ -1172,7 +1172,9 @@ struct Image::Impl
     // caused by unnecessary leakage of this implementation detail. So we need to store
     // Apple's cooked image. We need to allocate this->data anyway, so that isInvalid()
     // returns true, so we might as well stuff the pointer in there.
-    Impl(void *native, int w, int h, float d, std::function<void(void*)> od)
+    // (Q: why use C's cryptic function pointers instead of std::function?
+    //  A: I want to avoid pulling in std::function to nativedraw.h in the Image ctor.)
+    Impl(void *native, int w, int h, float d, void (*od)(void*))
         : width(w), height(h), dpi(d), format(kImageEncodedData_internal), onDestruct(od)
     {
         this->size = sizeof(void*);
@@ -1207,7 +1209,7 @@ Image::Image(uint8_t *bytes, size_t size, int w, int h, ImageFormat f, float dpi
     mImpl = std::make_shared<Impl>(bytes, size, w, h, f, dpi);
 }
 
-Image::Image(void *handle, int w, int h, float dpi, std::function<void(void*)> onDestruct)
+Image::Image(void *handle, int w, int h, float dpi, void (*onDestruct)(void*))
 {
     mImpl = std::make_shared<Impl>(handle, w, h, dpi, onDestruct);
 }

@@ -313,7 +313,8 @@ public:
     /// alpha value. Blending is done by component, according to:
     ///     this * (1.0f - amount) + dest * amount
     /// Note that this not exactly alpha blending, and is intended to blend
-    /// between two solid colors (although the alpha channels are blended, too).
+    /// between two solid colors (although the alpha channels are blended,
+    /// too).
     Color blend(const Color& dest, float amount);
 
     Color toGrey() const {
@@ -740,7 +741,7 @@ enum ImageFormat {
     /// data, not pixel data. This is used on platforms like macOS and
     /// Windows where we use operating system functions to load images,
     /// so we go directly from the encoded data to the DrawableImage.
-    kImageEncodedData = 0x10ad,
+    kImageEncodedData_internal = 0x10ad,
 };
 
 /// This class contains a bitmap image. An Image is not drawable (despite
@@ -787,7 +788,7 @@ public:
     /// to read the code and know that the pointer is copied and the function
     /// does not take ownership of the pointer.)
     static Image fromCopyOfBytes(const uint8_t *bytes, int w, int h,
-                                 ImageFormat f, float dpi = 0);
+                                 ImageFormat f, float dpi = 0.0f);
 
 
     Image();
@@ -797,7 +798,7 @@ public:
     /// functions without converting the data. The DPI can be specified,
     /// otherwise a default value will be used (currently 96 DPI, which is
     /// the resolution of historical monitors).
-    Image(int w, int h, ImageFormat f, float dpi = 0);
+    Image(int w, int h, ImageFormat f, float dpi = 0.0f);
     virtual ~Image();
 
     /// Same as assigning Image(); releases image data and sets to empty image.
@@ -812,9 +813,11 @@ public:
     PicaPt width() const;
     PicaPt height() const;
 
-    /// Note that if the format is kImageEncodedData, this is not pixel data!
+    /// Note that if the format is kImageEncodedData_internal, this is NOT
+    /// pixel data!
     uint8_t* data();
-    /// Note that if the format is kImageEncodedData, this is not pixel data!
+    /// Note that if the format is kImageEncodedData_internal, this is NOT
+    /// pixel data!
     const uint8_t* data() const;
     size_t size() const;
 
@@ -831,6 +834,8 @@ protected:
     // Caller should not use the pointer afterwards, and the destructor will
     // delete[] the pointer.
     Image(uint8_t *bytes, size_t size, int w, int h, ImageFormat f, float dpi);
+    Image(void *handle, int w, int h, float dpi,
+          std::function<void(void*)> onDestruct);
 
 private:
     struct Impl;

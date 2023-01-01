@@ -1129,7 +1129,7 @@ int calcPixelBytes(ImageFormat format)
             return 2;
         case kImageGreyscale8:
             return 1;
-        case kImageEncodedData:
+        case kImageEncodedData_internal:
             assert(false);
             return 4;  // guaranteed to be big enough; almost certainly too large
     }
@@ -1145,12 +1145,40 @@ struct Image::Impl
     ImageFormat format = (ImageFormat)-1;
     uint8_t *data = nullptr;
     size_t size = 0;
+#ifdef __APPLE__  // no sense making other platforms waste this memory
+    std::function<void(void*)> onDestruct;
+#endif // __APPLE__
 
     Impl() {}
     Impl(uint8_t *dd /* takes ownership */, size_t s, int w, int h, ImageFormat f, float d)
         : width(w), height(h), dpi(d), format(f), data(dd), size(s)
     {}
-    ~Impl() { delete [] data; }
+    ~Impl()
+    {
+#ifdef __APPLE__
+        if (onDestruct) {
+            onDestruct(*(void**)data);
+        }
+#endif // __APPLE__
+        delete [] data;
+    }
+
+    // In the dusty appendix of the tome of magic lies this function. macOS does not
+    // have a way to use the system functions to determine if an image is valid without
+    // reading it. Since an NSImage* is valid globally, we'll just read it and pass it
+    // here. Now, The Right Way (tm) to do this is to inherit from Image, but then
+    // the user of the library needs to deal with pointers (since returning a derived
+    // class as an object of the base class is b.a.d.), which is a major inconvenience
+    // caused by unnecessary leakage of this implementation detail. So we need to store
+    // Apple's cooked image. We need to allocate this->data anyway, so that isInvalid()
+    // returns true, so we might as well stuff the pointer in there.
+    Impl(void *native, int w, int h, float d, std::function<void(void*)> od)
+        : width(w), height(h), dpi(d), format(kImageEncodedData_internal), onDestruct(od)
+    {
+        this->size = sizeof(void*);
+        this->data = new uint8_t[this->size];
+        memcpy(this->data, &native, this->size);
+    }
 };
 
 // These are implemented in the native files
@@ -1177,6 +1205,11 @@ Image::Image(uint8_t *bytes, size_t size, int w, int h, ImageFormat f, float dpi
 {
     // takes ownership of 'bytes'
     mImpl = std::make_shared<Impl>(bytes, size, w, h, f, dpi);
+}
+
+Image::Image(void *handle, int w, int h, float dpi, std::function<void(void*)> onDestruct)
+{
+    mImpl = std::make_shared<Impl>(handle, w, h, dpi, onDestruct);
 }
 
 Image::~Image()

@@ -1185,7 +1185,7 @@ uint8_t* createNativeCopy(const uint8_t *data, int width, int height,
             *nativeFormat = kImageBGRX32;
             nativeCopy = createBGRAFromGrey(data, width, height);
             break;
-        case kImageEncodedData:
+        case kImageEncodedData_internal:
             assert(false);
             break;
     }

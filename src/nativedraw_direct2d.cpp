@@ -1727,9 +1727,9 @@ uint8_t* createNativeCopy(const uint8_t *data, int width, int height, ImageForma
             *nativeFormat = kImageBGRX32;
             nativeCopy = createBGRAFromGrey(data, width, height);
             break;
-        case kImageEncodedData:
+        case kImageEncodedData_internal:
             assert(false);
-            *nativeFormat = kImageEncodedData;
+            *nativeFormat = kImageEncodedData_internal;
             break;
     }
     assert(nativeCopy);
@@ -1779,13 +1779,13 @@ Image Image::fromEncodedData(const uint8_t *encodedData, int size)
 
     uint8_t *copy = new uint8_t[size];
     memcpy(copy, encodedData, size);
-    return Image(copy, size, 0, 0, kImageEncodedData, 0.0f);
+    return Image(copy, size, 0, 0, kImageEncodedData_internal, 0.0f);
 }
 
 Image Image::fromCopyOfBytes(const uint8_t *bytes, int width, int height,
                              ImageFormat format, float dpi /*=0.0f*/)
 {
-    if (format == kImageEncodedData) {
+    if (format == kImageEncodedData_internal) {
         assert(false);
         return Image();
     }
@@ -1867,7 +1867,7 @@ public:
 
     std::shared_ptr<DrawableImage> createDrawableImage(const Image& image) const override
     {
-        if (image.format() == kImageEncodedData) {
+        if (image.format() == kImageEncodedData_internal) {
             HRESULT err;
             IWICStream* stream = nullptr;
             err = Direct2D::instance().wicFactory()->CreateStream(&stream);

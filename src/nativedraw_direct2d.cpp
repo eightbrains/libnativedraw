@@ -1748,7 +1748,13 @@ Image Image::fromFile(const char *path)
 
 Image Image::fromEncodedData(const uint8_t *encodedData, int size)
 {
-    // Check if we will be able to decode this when we do it later
+    // It appears that we need to decode the image in order to get the size and resolution.
+    // Unfortunately, it seems that we cannot cache the frame (IWICBitmapFrameDecode*) and
+    // create the context-specific bitmap. We probably also have to cache the stream, but
+    // Direct2D is such a pain that it is just not worth it. So it is likely that we will
+    // decode twice, although I have hopes that the actual pixels are not decoded until
+    // asked for.
+
     HRESULT err;
     IWICStream* stream = nullptr;
     err = Direct2D::instance().wicFactory()->CreateStream(&stream);
@@ -1768,18 +1774,28 @@ Image Image::fromEncodedData(const uint8_t *encodedData, int size)
     IWICBitmapDecoder* decoder = nullptr;
     if (err == S_OK) {
         err = Direct2D::instance().wicFactory()->CreateDecoderFromStream(
-            stream, NULL, WICDecodeMetadataCacheOnLoad, &decoder);
+            stream, NULL, WICDecodeMetadataCacheOnDemand, &decoder);
         // An error here means this is not a decodable file
     }
+    IWICBitmapFrameDecode* frame = nullptr;
+    UINT width, height;
+    double dpiX, dpiY;
+    if (err == S_OK) {
+        err = decoder->GetFrame(0, &frame);
+        frame->GetSize(&width, &height);
+        frame->GetResolution(&dpiX, &dpiY);
+    }
+
     if (decoder) { decoder->Release(); }
     if (stream) { stream->Release(); }
+    if (frame) { frame->Release(); }
     if (err != S_OK) {
         return Image();
     }
 
     uint8_t *copy = new uint8_t[size];
     memcpy(copy, encodedData, size);
-    return Image(copy, size, 0, 0, kImageEncodedData_internal, 0.0f);
+    return Image(copy, size, int(width), int(height), kImageEncodedData_internal, float(dpiX));
 }
 
 Image Image::fromCopyOfBytes(const uint8_t *bytes, int width, int height,
@@ -1887,7 +1903,7 @@ public:
             IWICBitmapDecoder* decoder = nullptr;
             if (err == S_OK) {
                 err = Direct2D::instance().wicFactory()->CreateDecoderFromStream(
-                    stream, NULL, WICDecodeMetadataCacheOnLoad, &decoder);
+                    stream, NULL, WICDecodeMetadataCacheOnDemand, &decoder);
                 // An error here means this is not a decodable file
             }
             IWICBitmapFrameDecode* frame = nullptr;

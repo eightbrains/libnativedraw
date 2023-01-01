@@ -230,10 +230,10 @@ void drawBezierTransformed(DrawContext& dc, int n,
     dc.endDraw();
 }
 
-void drawImages(DrawContext& dc, int n, std::shared_ptr<Image> img)
+void drawImages(DrawContext& dc, int n, std::shared_ptr<DrawableImage> img)
 {
-    auto w = PicaPt::fromPixels(img->width(), dc.dpi());
-    auto h = PicaPt::fromPixels(img->height(), dc.dpi());
+    auto w = img->width();
+    auto h = img->height();
     LayoutInfo layout(dc, n, w.toPixels(dc.dpi()), w.toPixels(dc.dpi()));
 
     auto x0 = PicaPt::fromPixels(1, dc.dpi());
@@ -366,7 +366,7 @@ std::shared_ptr<BezierPath> createStar10(DrawContext& dc, int radiusPx, const Po
     return createStar(dc, 10, radiusPx, center);
 }
 
-std::shared_ptr<Image> createImage(DrawContext& dc, int w, int h, float dpi)
+std::shared_ptr<DrawableImage> createImage(DrawContext& dc, int w, int h, float dpi)
 {
     auto imgDC = dc.createBitmap(BitmapType::kBitmapRGB, w, h);
     imgDC->beginDraw();

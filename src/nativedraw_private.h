@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright 2021 Eight Brains Studios, LLC
+// Copyright 2021 - 2022 Eight Brains Studios, LLC
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -29,6 +29,13 @@
 #include <unordered_map>
 
 namespace ND_NAMESPACE {
+
+inline bool isLittleEndian()
+{
+    uint8_t data32[4] = { 0x00, 0x00, 0x00, 0x00 };
+    *(uint32_t*)data32 = 0x000000ff;
+    return (data32[0] == 0xff);
+}
 
 // From boost::hash_combine
 template <class T>
@@ -154,6 +161,43 @@ std::vector<int> utf16IndicesForUTF8Indices(const char *utf8);
 // Returns the number of bytes in this code point. (Useful for incrementing
 // over characters if you do not need to know the actual value.)
 int nBytesForUtf8Char(const char* utf8);
+
+// ----- image functions -----
+// NOTE: functions named "create" will new[] memory which the caller needs to
+//       delete[]
+int calcPixelBytes(ImageFormat format);
+uint8_t* createBGRAFromABGR(const uint8_t *src, int width, int height);
+uint8_t* createBGRAFromRGBA(const uint8_t *src, int width, int height);
+uint8_t* createBGRAFromARGB(const uint8_t *src, int width, int height);
+uint8_t* createBGRAFromRGB(const uint8_t *src, int width, int height);
+uint8_t* createBGRAFromBGR(const uint8_t *src, int width, int height);
+uint8_t* createBGRAFromGreyAlpha(const uint8_t *src, int width, int height);
+uint8_t* createBGRAFromGrey(const uint8_t *src, int width, int height);
+void premultiplyBGRA(uint8_t *bgra, int width, int height);
+void premultiplyARGB(uint8_t *bgra, int width, int height);
+
+// ----- image functions -----
+#define kDefaultImageDPI 96.0f
+
+std::vector<uint8_t> readFile(const char *path);
+
+// Requires libpng, giflib, and libjpeg-turbo (libjpeg also works but is slower)
+// Reads an image using the functions below.
+Image readImage(const uint8_t *imgdata, int size);
+
+// Requires libjpeg-turbo (libjpeg will work, too, but is slower)
+// Returns a nullptr if this data is not, in fact, JPEG data.
+// The returned data is BGRX32 (JPEG does not support alpha).
+Image readJPEG(const uint8_t *jpegdata, int size);
+
+// Requires libpng. Returns a nullptr if this data is not, in fact, PNG data.
+// The returned data is BGRA32 premultiplied.
+Image readPNG(const uint8_t *pngdata, int size);
+
+// Requires giflib. Returns a nullptr if this data is not, in fact, PNG data.
+// The returned data is BGRA32 premultiplied (GIFs can have a transparent
+// color, even though they do not have an alpha channel).
+Image readGIF(const uint8_t *gifdata, int size);
 
 } // namespace $ND_NAMESPACE
 #endif // _NATIVE_DRAW_PRIVATE_H

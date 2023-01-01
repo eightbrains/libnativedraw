@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright 2021 Eight Brains Studios, LLC
+// Copyright 2021 - 2022 Eight Brains Studios, LLC
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -26,6 +26,9 @@
 
 #include "../src/nativedraw.h"
 
+#include "images.h"
+
+#include <array>
 #include <cstdlib>  // getenv()
 #include <iostream>
 #include <map>
@@ -53,6 +56,16 @@
 
 using namespace ND_NAMESPACE;
 
+/*std::vector<uint8_t> kPngRGB = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x0c, 0x08, 0x02, 0x00, 0x00, 0x00, 0xd0, 0xfc, 0x6b,
+    0xca, 0x00, 0x00, 0x00, 0x09, 0x70, 0x48, 0x59, 0x73, 0x00, 0x00, 0x2e, 0x23, 0x00, 0x00, 0x2e,
+    0x23, 0x01, 0x78, 0xa5, 0x3f, 0x76, 0x00, 0x00, 0x00, 0x07, 0x74, 0x49, 0x4d, 0x45, 0x07, 0xe6,
+    0x0c, 0x1b, 0x02, 0x11, 0x0f, 0x8e, 0xc3, 0x85, 0x4f, 0x00, 0x00, 0x00, 0x1f, 0x49, 0x44, 0x41,
+    0x54, 0x18, 0xd3, 0x63, 0xfc, 0xcf, 0x80, 0x00, 0x8c, 0x48, 0x1c, 0x26, 0x06, 0x1c, 0x80, 0x1e,
+    0x12, 0x8c, 0x0c, 0x0c, 0x08, 0xa7, 0xfc, 0x1f, 0x2c, 0xae, 0x02, 0x00, 0xf9, 0x05, 0x05, 0x13,
+    0xa0, 0x6e, 0xed, 0x77, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+*/
 std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
                                           float dpi)
 {
@@ -2867,10 +2880,10 @@ public:
     }
 };
 
-class ImageTest : public BitmapTest
+class RenderedImageTest : public BitmapTest
 {
 public:
-    ImageTest() : BitmapTest("image", 13, 15) {}
+    RenderedImageTest() : BitmapTest("image (rendered)", 13, 15) {}
 
     std::string run() override
     {
@@ -2936,10 +2949,10 @@ public:
     }
 };
 
-class ImageCopyTest : public BitmapTest
+class RenderedImageCopyTest : public BitmapTest
 {
 public:
-    ImageCopyTest() : BitmapTest("copyToImage lifetime", 13, 15) {}
+    RenderedImageCopyTest() : BitmapTest("copyToImage lifetime", 13, 15) {}
 
     std::string run() override
     {
@@ -2958,7 +2971,7 @@ public:
     }
 
 protected:
-    std::shared_ptr<Image> makeImage(const Color& fill)
+    std::shared_ptr<DrawableImage> makeImage(const Color& fill)
     {
         auto src = createBitmap(kBitmapRGB, mBitmap->width(), mBitmap->height(),
                                 mBitmap->dpi());
@@ -2969,6 +2982,249 @@ protected:
         // the result of copyToImage() won't work.
         return src->copyToImage();
     }
+};
+
+class ImageTest : public BitmapTest
+{
+public:
+    std::string imageFormatToString(ImageFormat format)
+    {
+        switch (format) {
+            case kImageRGBA32:
+                return "RGBA";
+            case kImageRGBA32_Premultiplied:
+                return "RGBA premultiplied";
+            case kImageBGRA32:
+                return "BGRA";
+            case kImageBGRA32_Premultiplied:
+                return "BGRA premultiplied";
+            case kImageARGB32:
+                return "ARGB";
+            case kImageARGB32_Premultiplied:
+                return "ARGB premultiplied";
+            case kImageABGR32:
+                return "ABGR";
+            case kImageABGR32_Premultiplied:
+                return "ABGR premultiplied";
+            case kImageRGBX32:
+                return "RGBX";
+            case kImageBGRX32:
+                return "BGRX";
+            case kImageRGB24:
+                return "RGB";
+            case kImageBGR24:
+                return "BGR";
+            case kImageGreyscaleAlpha16:
+                return "greyscale with alpha";
+            case kImageGreyscale8:
+                return "greyscale, 8-bit";
+        }
+        return "[invalid image format]";
+    }
+
+    ImageTest(ImageFormat format)
+        : BitmapTest("image (" + imageFormatToString(format) + ")", 10, 14)
+        , mFormat(format)
+    {}
+
+    ImageTest(const std::string& name, ImageFormat format, TestImage src)
+        : BitmapTest("image (" + name + ")", 10, 14)
+        , mFormat(format), mName(name), mTestImage(src)
+    {}
+
+    std::string run() override
+    {
+        int nChannels = 0;
+        std::array<int, 4> rgbaMap = { 0, 0, 0, 0 };
+        bool isColor = (mFormat != kImageGreyscaleAlpha16 && mFormat != kImageGreyscale8);
+        bool hasAlpha = false;
+        bool premult = false;
+        int allowedError = 0;
+        switch (mFormat) {
+            case kImageRGBA32:
+                nChannels = 4;  rgbaMap = { 0, 1, 2, 3 };  hasAlpha = true;  break;
+            case kImageRGBA32_Premultiplied:
+                nChannels = 4;  rgbaMap = { 0, 1, 2, 3 };  hasAlpha = true;  premult = true;  break;
+            case kImageBGRA32:
+                nChannels = 4;  rgbaMap = { 2, 1, 0, 3 };  hasAlpha = true;  break;
+            case kImageBGRA32_Premultiplied:
+                nChannels = 4;  rgbaMap = { 2, 1, 0, 3 };  hasAlpha = true;  premult = true;  break;
+            case kImageARGB32:
+                nChannels = 4;  rgbaMap = { 1, 2, 3, 0 };  hasAlpha = true;  break;
+            case kImageARGB32_Premultiplied:
+                nChannels = 4;  rgbaMap = { 1, 2, 3, 0 };  hasAlpha = true;  premult = true;  break;
+            case kImageABGR32:
+                nChannels = 4;  rgbaMap = { 3, 2, 1, 0 };  hasAlpha = true;  break;
+            case kImageABGR32_Premultiplied:
+                nChannels = 4;  rgbaMap = { 3, 2, 1, 0 };  hasAlpha = true;  premult = true;  break;
+            case kImageRGBX32:
+                nChannels = 4;  rgbaMap = { 0, 1, 2, 3 };  hasAlpha = false;  break;
+            case kImageBGRX32:
+                nChannels = 4;  rgbaMap = { 2, 1, 0, 3 };  hasAlpha = false;  break;
+            case kImageRGB24:
+                nChannels = 3;  rgbaMap = { 0, 1, 2, 3 };  hasAlpha = false;  break;
+            case kImageBGR24:
+                nChannels = 3;  rgbaMap = { 2, 1, 0, 3 };  hasAlpha = false;  break;
+            case kImageGreyscaleAlpha16:
+                nChannels = 2;  rgbaMap = { 0, 0, 0, 1 };  hasAlpha = true;  break;
+            case kImageGreyscale8:
+                nChannels = 1;  rgbaMap = { 0, 0, 0, 0 };  hasAlpha = false;  break;
+        }
+
+        const int blockWidth = 4, blockHeight = 6;
+        const int width = 2 * blockWidth, height = 2 * blockHeight;
+        const int imgOffset = 1;
+        const int RED = 0, GREEN = 1, BLUE = 2, ALPHA = 3;
+        std::vector<uint8_t> imgData(nChannels * width * height, 0);
+        std::vector<int> expected(mWidth * mHeight, 0);
+
+        auto setChannel = [&imgData, &expected, &rgbaMap, nChannels, width, hasAlpha, ALPHA, this](int x, int y, int channel, uint8_t val) {
+            if (channel == ALPHA && !hasAlpha) {
+                return;
+            }
+            imgData[y * nChannels * width + (x * nChannels) + rgbaMap[channel]] = val;
+            expected[(y + 1) * mWidth + (x + 1)] = (int(val) | (channel << 24));
+        };
+
+        uint8_t red = (isColor ? 0xff : kTestGreyRed);
+        for (int y = 0;  y < blockHeight;  ++y) {
+            for (int x = 0;  x < blockWidth;  ++x) {
+                setChannel(x, y, ALPHA, 0xff);  // set alpha first so red overwrites 'expected'
+                setChannel(x, y, RED, red);
+            }
+        }
+
+        uint8_t green = (isColor ? 0xff : kTestGreyGreen);
+        for (int y = 0;  y < blockHeight;  ++y) {
+            for (int x = blockWidth;  x < 2 * blockWidth;  ++x) {
+                setChannel(x, y, ALPHA, 0xff);
+                setChannel(x, y, GREEN, green);
+            }
+        }
+
+        uint8_t blue = (isColor ? 0xff : kTestGreyBlue);
+        for (int y = blockHeight;  y < 2 * blockHeight;  ++y) {
+            for (int x = 0;  x < blockWidth;  ++x) {
+                setChannel(x, y, ALPHA, 0xff);
+                setChannel(x, y, BLUE, blue);
+            }
+        }
+
+        uint8_t white = (isColor ? 0xff : kTestGreyWhite);
+        for (int y = blockHeight;  y < 2 * blockHeight;  ++y) {
+            for (int x = blockWidth;  x < 2 * blockWidth;  ++x) {
+                setChannel(x, y, ALPHA, 0xff);
+                setChannel(x, y, RED, white);
+                setChannel(x, y, GREEN, white);
+                setChannel(x, y, BLUE, white);
+                expected[(y + 1) * mWidth + (x + 1)] |= 0xff000000;
+            }
+        }
+
+        if (hasAlpha) {  // overwrite lower corner of the white with alpha
+            uint8_t alpha = 0x22;
+            for (int y = blockHeight + blockHeight / 2;  y < 2 * blockHeight;  ++y) {
+                for (int x = blockWidth + blockWidth / 2;  x < 2 * blockWidth;  ++x) {
+                    if (premult) {  // premult is (white * alpha); otherwise white is already set from above
+                        setChannel(x, y, RED, alpha);
+                        setChannel(x, y, GREEN, alpha);
+                        setChannel(x, y, BLUE, alpha);
+                    }
+                    setChannel(x, y, ALPHA, alpha);
+                    expected[(y + 1) * mWidth + (x + 1)] |= 0xff000000;
+                }
+            }
+        }
+
+        if (!isColor) {
+            for (int y = 0;  y < height;  ++y) {
+                for (int x = 0;  x < width;  ++x) {
+                    expected[(y + 1) * mWidth + (x + 1)] |= 0xff000000;
+                }
+            }
+        }
+
+        auto dpi = mBitmap->dpi();
+        Image img;
+        if (mTestImage == TestImage::kNone) {
+            img = Image::fromCopyOfBytes(imgData.data(), width, height, mFormat, dpi);
+        } else {
+            auto src = loadImage(mTestImage);
+            img = Image::fromEncodedData(src.data(), src.size());
+
+            // JPEG is a little lossy
+            if (mTestImage == TestImage::kJPEG || mTestImage == TestImage::kJPEG_Progressive) {
+                allowedError = 2;
+            }
+        }
+        if (mTestImage == TestImage::kBadImage ||
+            mTestImage == TestImage::kPNG_bad ||
+            mTestImage == TestImage::kJPEG_bad ||
+            mTestImage == TestImage::kGIF_bad) {
+            if (!img.isValid()) {
+                return "";  // success: bad image produced no image
+            } else {
+                // clear so error output looks more reasonable
+                mBitmap->beginDraw();
+                mBitmap->fill(Color::kBlack);
+                mBitmap->endDraw();
+                return "bad image should produce empty Image";
+            }
+        } else {
+            if (!img.isValid()) {
+                // clear so error output looks more reasonable
+                mBitmap->beginDraw();
+                mBitmap->fill(Color::kBlack);
+                mBitmap->endDraw();
+                return "could not create image";
+            }
+        }
+
+        auto imgRect = Rect::fromPixels(1, 1, width, height, dpi);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawImage(mBitmap->createDrawableImage(img), imgRect);
+        mBitmap->endDraw();
+
+        for (int y = 0;  y < mHeight;  ++y) {
+            for (int x = 0;  x < mWidth;  ++x) {
+                uint32_t rgba = mBitmap->pixelAt(x, y).toRGBA();
+                uint8_t channel = expected[y * mWidth + x] >> 24;
+                int val = expected[y * mWidth + x] & 0x000000ff;
+                uint32_t expectedRGBA = 0x000000ff;
+                if (channel != 0xff) {
+                    expectedRGBA |= (val << ((3 - channel) * 8));
+                } else {
+                    expectedRGBA |= ((val << 24) | (val << 16) | (val << 8));
+                }
+                auto errStr = createColorError("Bad pixel at (" + std::to_string(x) + ", " + std::to_string(y) + ")", Color::fromRGBA(expectedRGBA), Color::fromRGBA(rgba));
+                if (expectedRGBA != rgba) {
+                    if (allowedError > 0) {
+                        auto calcChannelErr = [](uint32_t exp, uint32_t got, int channel) {
+                            uint32_t mask = 0xff << ((3 - channel) * 8);
+                            int e = int((exp & mask) >> ((3 - channel) * 8));
+                            int g = int((got & mask) >> ((3 - channel) * 8));
+                            return std::abs(e - g);
+                        };
+                        int redErr = calcChannelErr(expectedRGBA, rgba, RED);
+                        int greenErr = calcChannelErr(expectedRGBA, rgba, GREEN);
+                        int blueErr = calcChannelErr(expectedRGBA, rgba, BLUE);
+                        if (redErr > allowedError || greenErr > allowedError || blueErr > allowedError) {
+                            return errStr;
+                        }
+                    } else {
+                        return errStr;
+                    }
+                }
+            }
+        }
+        return "";
+    }
+
+private:
+    ImageFormat mFormat;
+    std::string mName;
+    TestImage mTestImage = TestImage::kNone;
 };
 
 class ColorFuncTest : public Test
@@ -3176,8 +3432,38 @@ int main(int argc, char *argv[])
         std::make_shared<BasicTextLayoutTest>(),
         std::make_shared<RichTextRunsTest>(),
         std::make_shared<RichTextTest>(),
-        std::make_shared<ImageTest>(),
-        std::make_shared<ImageCopyTest>(),
+        std::make_shared<RenderedImageTest>(),
+        std::make_shared<RenderedImageCopyTest>(),
+        std::make_shared<ImageTest>(kImageRGBA32),
+        std::make_shared<ImageTest>(kImageRGBA32_Premultiplied),
+        std::make_shared<ImageTest>(kImageBGRA32),
+        std::make_shared<ImageTest>(kImageBGRA32_Premultiplied),
+        std::make_shared<ImageTest>(kImageARGB32),
+        std::make_shared<ImageTest>(kImageARGB32_Premultiplied),
+        std::make_shared<ImageTest>(kImageABGR32),
+        std::make_shared<ImageTest>(kImageABGR32_Premultiplied),
+        std::make_shared<ImageTest>(kImageRGBX32),
+        std::make_shared<ImageTest>(kImageBGRX32),
+        std::make_shared<ImageTest>(kImageRGB24),
+        std::make_shared<ImageTest>(kImageBGR24),
+        std::make_shared<ImageTest>(kImageGreyscaleAlpha16),
+        std::make_shared<ImageTest>(kImageGreyscale8),
+        std::make_shared<ImageTest>("bad.txt", kImageRGBA32, TestImage::kBadImage),
+        std::make_shared<ImageTest>("test-grey.png", kImageGreyscale8, TestImage::kPNG_Grey8),
+        std::make_shared<ImageTest>("test-greyalpha.png", kImageGreyscaleAlpha16, TestImage::kPNG_GreyAlpha16),
+        std::make_shared<ImageTest>("test-rgb.png", kImageRGB24, TestImage::kPNG_RGB),
+        std::make_shared<ImageTest>("test-interlaced.png", kImageRGB24, TestImage::kPNG_RGB_Interlaced),
+        std::make_shared<ImageTest>("test-rgba.png", kImageRGBA32, TestImage::kPNG_RGBA),
+        std::make_shared<ImageTest>("test-grey-16bit.png", kImageGreyscale8, TestImage::kPNG_Grey16),
+        std::make_shared<ImageTest>("test-greyalpha-16bit.png", kImageGreyscaleAlpha16, TestImage::kPNG_GreyAlpha32),
+        std::make_shared<ImageTest>("test-rgb-16bit.png", kImageRGB24, TestImage::kPNG_RGB48),
+        std::make_shared<ImageTest>("test-rgba-16bit.png", kImageRGBA32, TestImage::kPNG_RGBA64),
+        std::make_shared<ImageTest>("bad.png", kImageRGBA32, TestImage::kPNG_bad),
+        std::make_shared<ImageTest>("test.jpg", kImageRGB24, TestImage::kJPEG),
+        std::make_shared<ImageTest>("test-progressive.jpg", kImageRGB24, TestImage::kJPEG_Progressive),
+        std::make_shared<ImageTest>("bad.jpg", kImageRGB24, TestImage::kJPEG_bad),
+        std::make_shared<ImageTest>("test.gif", kImageRGB24, TestImage::kGIF),
+        std::make_shared<ImageTest>("bad.gif", kImageRGB24, TestImage::kGIF_bad),
         std::make_shared<ColorFuncTest>(),
         std::make_shared<TransformTest>()
     };

@@ -24,6 +24,8 @@
 #include "nativedraw_private.h"
 
 #include <assert.h>
+#include <stdio.h>
+#include <string.h>
 
 #include <algorithm>
 
@@ -1107,6 +1109,337 @@ void BezierPath::addCircle(const Point& center, const PicaPt& radius)
 }
 
 //-----------------------------------------------------------------------------
+int calcPixelBytes(ImageFormat format)
+{
+    switch (format) {
+        case kImageRGBA32:
+        case kImageRGBA32_Premultiplied:
+        case kImageBGRA32:
+        case kImageBGRA32_Premultiplied:
+        case kImageARGB32:
+        case kImageARGB32_Premultiplied:
+        case kImageABGR32:
+        case kImageABGR32_Premultiplied:
+        case kImageRGBX32:
+        case kImageBGRX32:
+            return 4;
+        case kImageRGB24:
+        case kImageBGR24:
+            return 3;
+        case kImageGreyscaleAlpha16:
+            return 2;
+        case kImageGreyscale8:
+            return 1;
+        case kImageEncodedData_internal:
+            assert(false);
+            return 4;  // guaranteed to be big enough; almost certainly too large
+    }
+    assert(false);
+    return 0;  // Visual Studio thinks we might get here
+}
+
+struct Image::Impl
+{
+    int width;
+    int height;
+    float dpi;
+    ImageFormat format = (ImageFormat)-1;
+    uint8_t *data = nullptr;
+    size_t size = 0;
+#ifdef __APPLE__  // no sense making other platforms waste this memory
+    void (*onDestruct)(void*) = nullptr;
+#endif // __APPLE__
+
+    Impl() {}
+    Impl(uint8_t *dd /* takes ownership */, size_t s, int w, int h, ImageFormat f, float d)
+        : width(w), height(h), dpi(d), format(f), data(dd), size(s)
+    {}
+    ~Impl()
+    {
+#ifdef __APPLE__
+        if (onDestruct) {
+            onDestruct(*(void**)data);
+        }
+#endif // __APPLE__
+        delete [] data;
+    }
+
+    // In the dusty appendix of the tome of magic lies this function. macOS does not
+    // have a way to use the system functions to determine if an image is valid without
+    // reading it. Since an NSImage* is valid globally, we'll just read it and pass it
+    // here. Now, The Right Way (tm) to do this is to inherit from Image, but then
+    // the user of the library needs to deal with pointers (since returning a derived
+    // class as an object of the base class is b.a.d.), which is a major inconvenience
+    // caused by unnecessary leakage of this implementation detail. So we need to store
+    // Apple's cooked image. We need to allocate this->data anyway, so that isInvalid()
+    // returns true, so we might as well stuff the pointer in there.
+    // (Q: why use C's cryptic function pointers instead of std::function?
+    //  A: I want to avoid pulling in std::function to nativedraw.h in the Image ctor.)
+    Impl(void *native, int w, int h, float d, void (*od)(void*))
+        : width(w), height(h), dpi(d), format(kImageEncodedData_internal)
+#ifdef __APPLE__
+        , onDestruct(od)
+#endif // __APPLE__
+    {
+        this->size = sizeof(void*);
+        this->data = new uint8_t[this->size];
+        memcpy(this->data, &native, this->size);
+    }
+};
+
+// These are implemented in the native files
+//Image Image::fromFile(const char *path);
+//Image Image::fromEncodedData(const uint8_t *encodedImage, int size)
+//Image Image::fromCopyOfBytes(const uint8_t *bytes, int w, int h,
+//                             ImageFormat f, float dpi /*= 0*/)
+
+Image::Image()
+{
+    reset();
+}
+
+Image::Image(int w, int h, ImageFormat f, float dpi /*= 0*/)
+{
+    size_t size = size_t(calcPixelBytes(f) * w * h);
+    uint8_t *data = new uint8_t[size];
+
+    if (dpi == 0) { dpi = kDefaultImageDPI; }
+    mImpl = std::make_shared<Impl>(data, size, w, h, f, dpi);
+}
+
+Image::Image(uint8_t *bytes, size_t size, int w, int h, ImageFormat f, float dpi)
+{
+    // takes ownership of 'bytes'
+    mImpl = std::make_shared<Impl>(bytes, size, w, h, f, dpi);
+}
+
+Image::Image(void *handle, int w, int h, float dpi, void (*onDestruct)(void*))
+{
+    mImpl = std::make_shared<Impl>(handle, w, h, dpi, onDestruct);
+}
+
+Image::~Image()
+{
+}
+
+void Image::reset()
+{
+    mImpl = std::make_shared<Impl>(nullptr, 0, 0, 0, (ImageFormat)-1, 0.0f);
+}
+
+// If the image is encoded data, width/height will be 0, so check if data is nullptr
+bool Image::isValid() const { return (mImpl->data != nullptr); }
+
+ImageFormat Image::format() const { return mImpl->format; }
+int Image::widthPx() const { return mImpl->width; }
+int Image::heightPx() const { return mImpl->height; }
+float Image::dpi() const { return mImpl->dpi; }
+PicaPt Image::width() const
+    { return PicaPt::fromPixels(float(mImpl->width), mImpl->dpi); }
+PicaPt Image::height() const
+    { return PicaPt::fromPixels(float(mImpl->height), mImpl->dpi); }
+uint8_t* Image::data() { return mImpl->data; }
+const uint8_t* Image::data() const { return mImpl->data; }
+size_t Image::size() const { return mImpl->size; }
+
+void Image::premultiplyAlpha()
+{
+    if (mImpl->format == kImageRGBA32_Premultiplied ||
+        mImpl->format == kImageBGRA32_Premultiplied) {
+        // BGRA and RGBA are equivalent for the premultiply calculations
+        premultiplyBGRA(mImpl->data, mImpl->width, mImpl->height);
+    } else if (mImpl->format == kImageARGB32_Premultiplied &&
+               mImpl->format == kImageABGR32_Premultiplied) {
+        // ARGB and ABGR are equivalent for the premultiply calculations
+        premultiplyARGB(mImpl->data, mImpl->width, mImpl->height);
+    } else {
+        return;
+    }
+}
+
+//-----------------------------------------------------------------------------
+uint8_t* createBGRAFromABGR(const uint8_t *src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 4 * width * height;
+    while (src < srcEnd) {
+        dst[3] = *src++;
+        dst[0] = *src++;
+        dst[1] = *src++;
+        dst[2] = *src++;
+        dst += 4;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromRGBA(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 4 * width * height;
+    while (src < srcEnd) {
+        dst[2] = *src++;
+        dst[1] = *src++;
+        dst[0] = *src++;
+        dst[3] = *src++;
+        dst += 4;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromARGB(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 4 * width * height;
+    while (src < srcEnd) {
+        dst[3] = *src++;
+        dst[2] = *src++;
+        dst[1] = *src++;
+        dst[0] = *src++;
+        dst += 4;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromRGB(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 3 * width * height;
+    while (src < srcEnd) {
+        dst[2] = *src++;
+        dst[1] = *src++;
+        dst[0] = *src++;
+        dst[3] = 0xff;
+        dst += 4;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromBGR(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    uint8_t* dst = out;
+    const uint8_t* srcEnd = src + 3 * width * height;
+    while (src < srcEnd) {
+        *dst++ = *src++;
+        *dst++ = *src++;
+        *dst++ = *src++;
+        *dst++ = 0xff;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromGreyAlpha(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    const uint8_t *srcEnd = src + 2 * width * height;
+    uint8_t* dst = out;
+    while (src < srcEnd) {
+        *dst++ = *src;
+        *dst++ = *src;
+        *dst++ = *src++;
+        *dst++ = *src++;
+    }
+    return out;
+}
+
+uint8_t* createBGRAFromGrey(const uint8_t* src, int width, int height)
+{
+    uint8_t* out = new uint8_t[4 * width * height];
+    const uint8_t* srcEnd = src + 1 * width * height;
+    uint8_t* dst = out;
+    while (src < srcEnd) {
+        *dst++ = *src;
+        *dst++ = *src;
+        *dst++ = *src++;
+        *dst++ = 0xff;
+    }
+    return out;
+}
+
+void premultiplyBGRA(uint8_t* bgra, int width, int height)
+{
+    uint8_t* end = bgra + 4 * width * height;
+    float alpha;
+    while (bgra < end) {
+        if (bgra[3] < 0xff) {  // the common case is alpha = 1.0f, so no work necessary
+            alpha = float(bgra[3]) / 255.0f;
+            bgra[0] = uint8_t(std::round(alpha * float(bgra[0])));
+            bgra[1] = uint8_t(std::round(alpha * float(bgra[1])));
+            bgra[2] = uint8_t(std::round(alpha * float(bgra[2])));
+        }
+        bgra += 4;
+    }
+}
+
+void premultiplyARGB(uint8_t* argb, int width, int height)
+{
+    uint8_t* end = argb + 4 * width * height;
+    float alpha;
+    while (argb < end) {
+        if (argb[0] < 0xff) {  // the common case is alpha = 1.0f, so no work necessary
+            alpha = float(argb[0]) / 255.0f;
+            argb[1] = uint8_t(std::round(alpha * float(argb[1])));
+            argb[2] = uint8_t(std::round(alpha * float(argb[2])));
+            argb[3] = uint8_t(std::round(alpha * float(argb[3])));
+        }
+        argb += 4;
+    }
+}
+
+std::vector<uint8_t> readFile(const char *path)
+{
+    std::vector<uint8_t> data;
+#if defined(_WIN32) || defined(_WIN64)
+    FILE *in = nullptr;
+    if (fopen_s(&in, path, "rb, ccs=UTF-8") != 0) {
+        return data;
+    }
+#else
+    FILE *in = fopen(path, "rb");
+#endif
+    if (in) {
+        fseek(in, 0, SEEK_END);
+        auto size = ftell(in);
+        fseek(in, 0, SEEK_SET);
+        data.resize(size);
+        fread(data.data(), size, 1, in);
+    }
+    return data;
+}
+
+Image readImage(const uint8_t *imgdata, int size)
+{
+#ifdef __APPLE__
+    assert(false);  // use native functions
+    return Image();
+#elif defined(_WIN32) || defined(_WIN64)
+    assert(false);  // use native functions
+    return Image();
+#else
+    Image image;
+    // PNG validates very quickly, so test first
+    image = readPNG(imgdata, size);
+    if (image.isValid()) {
+        return image;
+    }
+    // JPEG requires some setup to validate
+    image = readJPEG(imgdata, size);
+    if (image.isValid()) {
+        return image;
+    }
+    // GIF is unlikely, do last
+    image = readGIF(imgdata, size);
+    if (image.isValid()) {
+        return image;
+    }
+#endif
+}
+
+//-----------------------------------------------------------------------------
 DrawContext::DrawContext(void* nativeDC, int width, int height, float dpi, float nativeDPI)
     : mNativeDC(nativeDC), mWidth(width), mHeight(height), mDPI(dpi), mNativeDPI(nativeDPI)
 {
@@ -1154,7 +1487,7 @@ void DrawContext::setInitialState()
     setStrokeColor(Color::kBlack);
     setStrokeEndCap(kEndCapButt);
     setStrokeJoinStyle(kJoinMiter);
-    setStrokeWidth(PicaPt(1));  // 1pt line; this is probably different than platform default
+    setStrokeWidth(PicaPt::fromStandardPixels(1));
     setStrokeDashes({}, PicaPt(0));
 }
 

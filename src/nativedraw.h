@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright 2021 Eight Brains Studios, LLC
+// Copyright 2021 - 2022 Eight Brains Studios, LLC
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -259,6 +259,14 @@ public:
     static const Color kTextDefault;
 
 public:
+    static Color fromRGBA(uint32_t rgba)
+    {
+        return Color(int((rgba & 0xff000000) >> 24),
+                     int((rgba & 0x00ff0000) >> 16),
+                     int((rgba & 0x0000ff00) >>  8),
+                     int((rgba & 0x000000ff)));
+    }
+
     Color() {
         _rgba[0] = 0.0f;
         _rgba[1] = 0.0f;
@@ -305,7 +313,8 @@ public:
     /// alpha value. Blending is done by component, according to:
     ///     this * (1.0f - amount) + dest * amount
     /// Note that this not exactly alpha blending, and is intended to blend
-    /// between two solid colors (although the alpha channels are blended, too).
+    /// between two solid colors (although the alpha channels are blended,
+    /// too).
     Color blend(const Color& dest, float amount);
 
     Color toGrey() const {
@@ -712,17 +721,139 @@ protected:
     std::unique_ptr<Impl> mImpl;
 };
 
+enum ImageFormat {
+    kImageRGBA32 = 1,
+    kImageRGBA32_Premultiplied,
+    kImageBGRA32,
+    kImageBGRA32_Premultiplied,  /// this is a native format for macOS, Windows, and Linux
+    kImageARGB32,
+    kImageARGB32_Premultiplied,
+    kImageABGR32,
+    kImageABGR32_Premultiplied,
+    kImageRGBX32,
+    kImageBGRX32,  /// this is a native format for macOS, Windows, and Linux
+    kImageRGB24,
+    kImageBGR24,
+    kImageGreyscaleAlpha16,
+    kImageGreyscale8,
+
+    /// This is for internal use, and indicates that the data is encoded
+    /// data, not pixel data. This is used on platforms like macOS and
+    /// Windows where we use operating system functions to load images,
+    /// so we go directly from the encoded data to the DrawableImage.
+    kImageEncodedData_internal = 0x10ad,
+};
+
+/// This class contains a bitmap image. An Image is not drawable (despite
+/// the name of DrawContext::drawImage()) because some environments require
+/// window-specific resources. This allows the application to create images
+/// independently of the DrawContext they will be used in (such as before a
+/// window has been created). To draw the image, call
+/// DrawContext::createDrawableImage() and then call DrawContext::drawImage().
+/// Image uses a shared_ptr to store the image contents, so copying is safe
+/// and fast. If you need to force a deallaction, call reset() or assign
+/// and Image().
 class Image
 {
 public:
-    Image(void* nativeHandle, int width, int height, float dpi)
-        : mNativeHandle(nativeHandle), mWidth(width), mHeight(height), mDPI(dpi)
-    {}
-    virtual ~Image() {}
-        
-    int width() const { return mWidth;  }
-    int height() const { return mHeight;  }
-    float dpi() const { return mDPI;  }
+    /// Loads an image from a file. PNG, JPEG, and GIF are supported on all
+    /// platforms, and some platforms may support other formats (see
+    /// fromEncodedData()).
+    /// On macOS an image with no directory delimiter and no extension
+    /// (e.g. "image") will attempt to find the image in the named resources
+    /// first. If it does, it will load using the standard image, image@2x, etc.
+    /// Note that calling data() later will NOT necessary return pixel data!
+    static Image fromFile(const char *path);
+
+    /// Creates an image from the encoded image data (such as might be read from
+    /// and JPEG or PNG file). The bytes are only needed during the function
+    /// call. The image format will be auto-detected. Returns an image of size
+    /// zero if the image could not be decoded. Operating systems support
+    /// different file formats:
+    ///   macOS:       PNG, JPEG, GIF, plus others
+    ///   Window 10:   PNG, JPEG, GIF, TIFF, BMP, WMP, ICO
+    ///   Linux, WASM: PNG, JPEG, GIF
+    /// Note that calling data() later will NOT necessary return pixel data!
+    /// (This is a static function not a constructor so that it is easy to read
+    /// code and distinguish between passing in rgba [for example] data and
+    /// encoded data.)
+    static Image fromEncodedData(const uint8_t *encodedImage, int size);
+
+    /// Returns an image created from the channel data provided in the format
+    /// specified. The format parameter indicates the format of the input data;
+    /// internally the data will be converted to the native format.
+    /// The DPI can be specified, otherwise a default value will be used
+    /// (currently 96 DPI, which is the resolution of historical monitors).
+    /// (This is a static function and not a constructor so that it is easy
+    /// to read the code and know that the pointer is copied and the function
+    /// does not take ownership of the pointer.)
+    static Image fromCopyOfBytes(const uint8_t *bytes, int w, int h,
+                                 ImageFormat f, float dpi = 0.0f);
+
+
+    Image();
+
+    /// Creates an uninitialized image of the format specified. It is most
+    /// efficient to use native formats, as can passed directly to native
+    /// functions without converting the data. The DPI can be specified,
+    /// otherwise a default value will be used (currently 96 DPI, which is
+    /// the resolution of historical monitors).
+    Image(int w, int h, ImageFormat f, float dpi = 0.0f);
+    virtual ~Image();
+
+    /// Same as assigning Image(); releases image data and sets to empty image.
+    void reset();
+
+    bool isValid() const;
+
+    ImageFormat format() const;
+    int widthPx() const;
+    int heightPx() const;
+    float dpi() const;
+    PicaPt width() const;
+    PicaPt height() const;
+
+    /// Note that if the format is kImageEncodedData_internal, this is NOT
+    /// pixel data!
+    uint8_t* data();
+    /// Note that if the format is kImageEncodedData_internal, this is NOT
+    /// pixel data!
+    const uint8_t* data() const;
+    size_t size() const;
+
+    /// Multiplies the r, g, b components by the alpha component.
+    /// This is useful for generating image data: generate by component,
+    /// and then call premultiply afterwards to keep your promise that the
+    /// image format really is premultiplied. Ignored for formats without
+    /// an alpha channel. You should not call this unless you are manually
+    /// creating the data with format as *_Premultiply.
+    void premultiplyAlpha();
+
+protected:
+    // Takes ownership of bytes, which should be in a native format.
+    // Caller should not use the pointer afterwards, and the destructor will
+    // delete[] the pointer.
+    Image(uint8_t *bytes, size_t size, int w, int h, ImageFormat f, float dpi);
+    Image(void *handle, int w, int h, float dpi, void (*onDestruct)(void*));
+
+private:
+    struct Impl;
+    std::shared_ptr<Impl> mImpl;
+};
+
+/// This is the base class for operating-specific classes used to draw images.
+/// Library users should call call the appropriate DrawContext function to
+/// create a DrawableImage.
+class DrawableImage
+{
+public:
+    virtual ~DrawableImage() {}
+
+    int widthPx() const { return mWidth;  }
+    int heightPx() const { return mHeight;  }
+    float dpi() const { return mDPI; }
+    PicaPt width() const { return PicaPt::fromPixels(float(mWidth), mDPI); }
+    PicaPt height() const { return PicaPt::fromPixels(float(mHeight), mDPI); }
 
     virtual void* nativeHandle() const { return mNativeHandle; }
 
@@ -731,6 +862,12 @@ protected:
     int mWidth;
     int mHeight;
     float mDPI;
+
+    /// Creates an image from the native handle. Does NOT take ownership of the
+    /// handle, which must remain valid for the lifetime of the image.
+    DrawableImage(void* nativeHandle, int width, int height, float dpi)
+        : mNativeHandle(nativeHandle), mWidth(width), mHeight(height), mDPI(dpi)
+    {}
 };
 
 enum BitmapType { kBitmapRGB = 0, kBitmapRGBA, kBitmapGreyscale, kBitmapAlpha };
@@ -750,82 +887,98 @@ class DrawContext
 public:
 #if __APPLE__
     // macOS lets the user scale the user interface. If the context represents
-    // a window, `dpi` should be the scaled screen size:  window.screen.frame.size.
+    // a window, `dpi` is the scaled screen size: window.screen.frame.size.
     // PicaPt(1.0f) at native resolution is exactly 1/72 inch.
     // `nativeDPI` is used by onePixel() and ...ToNearestPixel() functions.
 
     /// Returns:
     /// - uiDPI: this is the DPI that macOS is pretending that the UI is using.
-    ///          In actual fact, this uses the native resolution of the screen (but
-    ///          in CGFloat units, unscaled by backingScaleFactor).
-    ///          If the DrawContext's DPI is set to `uiDPI`, then the native resolution
-    ///          will have the correct physical measurements (PicaPt(72) should measure
-    ///          1.0 inches with a ruler) but all other resolutions will scale like all
-    ///          other applications. This is probably what you want for a DrawContext
-    ///          used in an NSWindow.
+    ///          In actual fact, this uses the native resolution of the screen
+    ///          (but in CGFloat units, unscaled by backingScaleFactor).
+    ///          If the DrawContext's DPI is set to `uiDPI`, then the native
+    ///          resolution will have the correct physical measurements
+    ///          (PicaPt(72) should measure 1.0 inches with a ruler) but all
+    ///          other resolutions will scale like all other applications.
+    ///          This is probably what you want for a DrawContext used in an
+    ///          NSWindow.
     /// - cocoaDPI: the DPI of the user interface (the apparent DPI based on the
-    ///          size of the display set in Settings >> Display >> Resolution), in
-    ///          CGFloat units. This is the value `screen.frame.size / physicalSize`,
-    ///          and is the DPI that CGContext is using. `cocoaDPI / uiDPI` gives the
-    ///          scaling factor the user chose in Settings >> Display >> Resolution.
-    ///          If the DrawContext's DPI is set to `cocoaDPI`, then the PicaPt(72)
-    ///          will always be 1 inch physically, which is probably not what you want
+    ///          size of the display set in Settings >> Display >> Resolution),
+    ///          in CGFloat units. This is the value
+    ///          `screen.frame.size / physicalSize`, and is the DPI that
+    ///          CGContext is using. `cocoaDPI / uiDPI` gives the scaling factor
+    ///          the user chose in Settings >> Display >> Resolution. If the
+    ///          DrawContext's DPI is set to `cocoaDPI`, then the PicaPt(72) will
+    ///          always be 1 inch physically, which is probably not what you want
     ///          because it ignores the user's settings.
-    /// - hiresDPI: this is `cocoaDPI * nsscreen.backingScaleFactor`. If you pass this
-    ///          this to the `nativeDPI` parameter of fromCoreGraphics(), onePixel()
-    ///          return a value corresponding to one physical pixel.
+    /// - hiresDPI: this is `cocoaDPI * nsscreen.backingScaleFactor`. If you pass
+    ///          this this to the `nativeDPI` parameter of fromCoreGraphics(),
+    ///          onePixel() return a value corresponding to one physical pixel.
     /// (It is a little counter-intuitive that `uiDPI * nsscreen.backingScaleFactor` is
-    /// the actual native resolution of the screen. This is because Cocoa really wants
-    /// you to pretend that the cocoaDPI is the real resolution, and scales things
-    /// for you underneath.)
-    static void getScreenDPI(void* nsscreen, float *uiDPI, float *cocoaDPI, float *hiresDPI);
+    /// the actual native resolution of the screen. This is because Cocoa really
+    /// wants you to pretend that the cocoaDPI is the real resolution, and
+    /// scales things /// for you underneath.)
+    static void getScreenDPI(void* nsscreen, float *uiDPI, float *cocoaDPI,
+                             float *hiresDPI);
 
     /// Creates a context from a CGContext. If this is from a window, the
     /// CGContext can be retrieved with `NSGraphicsContext.currentContext.CGContext` and
-    /// the DrawContext should NOT live longer than the window's draw callback, as there
-    /// is no guarantee that the context will be the same in the next call.
+    /// the DrawContext should NOT live longer than the window's draw callback,
+    /// as there is no guarantee that the context will be the same in the next
+    /// call.
     /// Note: for a window context, this function should be called with:
     ///   float uiDPI, nativeDPI;
     ///   DrawContext::getScreenDPI((__bridge void*)screen, &uiDPI, nullptr, &hiresDPI);
     ///   auto dc = DrawContext::fromCoreGraphics(cgctxt, w, h, uiDPI, hiresDPI);
     /// This is because macOS allows the user to scale the display in
-    /// Settings >> Display >> Resolution, and the expectation is that the size of the
-    /// UI should scale accordingly. We want pass the native resolution so that
-    /// onePixel() and friends return one actual pixel.
-    /// (We do not provide a fromCoreGraphics(void* nswin) that does this all for you
-    /// because the DrawContext must be recreated on each draw in macOS, and this avoids
-    /// the surprisingly complicated work of figuring out what the scaling factor is.
-    /// You should cache the values of getScreenDPI() for best performance.)
-    static std::shared_ptr<DrawContext> fromCoreGraphics(void* cgcontext, int width, int height, float dpi,
-                                                         float nativeDPI = 0.0f);
-    static std::shared_ptr<DrawContext> createCoreGraphicsBitmap(BitmapType type, int width, int height,
-                                                                 float dpi = 72.0f);
+    /// Settings >> Display >> Resolution, and the expectation is that the size
+    /// of the UI should scale accordingly. We want pass the native resolution so
+    /// that onePixel() and friends return one actual pixel.
+    /// (We do not provide a fromCoreGraphics(void* nswin) that does this all
+    /// for you because the DrawContext must be recreated on each draw in macOS,
+    /// and this avoids the surprisingly complicated work of figuring out what
+    /// the scaling factor is. You should cache the values of getScreenDPI() for
+    /// best performance.)
+    static std::shared_ptr<DrawContext> fromCoreGraphics(
+                void* cgcontext, int width, int height, float dpi,
+                float nativeDPI = 0.0f);
+    static std::shared_ptr<DrawContext> createCoreGraphicsBitmap(
+                BitmapType type, int width, int height, float dpi = 72.0f);
 #elif defined(__unix__)
     /// Note that an Xlib Window is NOT a pointer, so you will need to call this
     /// as fromX11(display, &window, ...). (Window is actually a typedef of
     /// long int, but we do not want to hard-code it, nor do we want to include
     /// Xlib.h in this header.
-    static std::shared_ptr<DrawContext> fromX11(void* display, const void* window, int width, int height, float dpi);
-    static std::shared_ptr<DrawContext> createCairoX11Bitmap(void* display, BitmapType type, int width, int height, float dpi = 72.0f);
+    static std::shared_ptr<DrawContext> fromX11(
+                void* display, const void* window, int width, int height,
+                float dpi);
+    static std::shared_ptr<DrawContext> createCairoX11Bitmap(
+                void* display, BitmapType type, int width, int height,
+                float dpi = 72.0f);
 #elif defined(_WIN32) || defined(_WIN64)
-    static std::shared_ptr<DrawContext> fromHwnd(void* hwnd, int width, int height, float dpi);
-    static std::shared_ptr<DrawContext> createDirect2DBitmap(BitmapType type, int width, int height,
-                                                             float dpi = 72.0f);
+    static std::shared_ptr<DrawContext> fromHwnd(
+                void* hwnd, int width, int height, float dpi);
+    static std::shared_ptr<DrawContext> createDirect2DBitmap(
+                BitmapType type, int width, int height, float dpi = 72.0f);
 #endif
 
     virtual ~DrawContext() {}
 
     /// This is the preferred function to create a bitmap if you already have a
     /// context (for instance, if you are creating a bitmap for a window).
-    virtual std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height,
-                                                      float dpi = 72.0f) = 0;
+    virtual std::shared_ptr<DrawContext> createBitmap(
+                BitmapType type, int width, int height, float dpi = 72.0f) = 0;
+
+    /// Creates an image that can be drawn with drawImage(). The image will be
+    /// copied and can be discarded (if desired) after the call.
+    virtual std::shared_ptr<DrawableImage> createDrawableImage(const Image& image) const = 0;
 
     virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
+
     /// Creates a text layout. If width is non-zero, the text will wrap to the
-    /// width, and the horizontal alignment will be applied. If height is non-zero
-    /// the vertical alignment will be applied. Note that, despite the default
-    /// argument (which exists for non-zero size), a zero-component is the same
-    /// as specifying Alignment::kZero for that component.
+    /// width, and the horizontal alignment will be applied. If height
+    /// is non-zero the vertical alignment will be applied. Note that, despite
+    /// the default argument (which exists for non-zero size), a zero-component
+    /// is the same as specifying Alignment::kZero for that component.
     virtual std::shared_ptr<TextLayout> createTextLayout(
                 const char *utf8, const Font& font, const Color& color,
                 const Size& size = Size::kZero,
@@ -886,7 +1039,8 @@ public:
     virtual void setStrokeWidth(const PicaPt& w) = 0;
     virtual void setStrokeEndCap(EndCapStyle cap) = 0;
     virtual void setStrokeJoinStyle(JoinStyle join) = 0;
-    virtual void setStrokeDashes(const std::vector<PicaPt> lengths, const PicaPt& offset) = 0;
+    virtual void setStrokeDashes(const std::vector<PicaPt> lengths,
+                                 const PicaPt& offset) = 0;
 
     virtual Color fillColor() const = 0;
     virtual Color strokeColor() const = 0;
@@ -916,7 +1070,8 @@ public:
     /// pixel 16.
     /// Note: this recreates a TextLayout every call, so do not use when drawing
     ///       repeatedly, such as when drawing the contents of a widget.
-    virtual void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode) = 0;
+    virtual void drawText(const char *textUTF8, const Point& topLeft,
+                          const Font& font, PaintMode mode) = 0;
 
     /// Draws text within the provided rectangle. Use the values from Alignment
     /// in the alignment parameter (e.g. Alignment::kLeft | Alignment::kVCenter).
@@ -933,21 +1088,26 @@ public:
     /// except in cases like where the window moves to another monitor).
     virtual void drawText(const TextLayout& layout, const Point& topLeft) = 0;
 
-    virtual void drawImage(std::shared_ptr<Image> image, const Rect& destRect) = 0;
+    /// Draws the image scaled to the rectangle provided.
+    virtual void drawImage(std::shared_ptr<DrawableImage> image,
+                           const Rect& destRect) = 0;
 
     virtual void clipToRect(const Rect& rect) = 0;
+
     /// The path will be retained; the caller may let its copy go out of scope.
-    /// (However, reusing same path on the next draw will give better performance,
-    /// since the OS resources will not need to be recreated.)
+    /// (However, reusing same path on the next draw will give better
+    /// performance, since the OS resources will not need to be recreated.)
     virtual void clipToPath(std::shared_ptr<BezierPath> path) = 0;
 
     void* nativeDC() const { return mNativeDC; }
+
     /// Cannot be called within a beginDraw()/endDraw() pair.
     /// Note that this function can be slow.
     // Design note: this is not const because it's easier in Windows that way.
     virtual Color pixelAt(int x, int y) = 0;
+
     /// Cannot be called within a beginDraw()/endDraw() pair.
-    virtual std::shared_ptr<Image> copyToImage() = 0;
+    virtual std::shared_ptr<DrawableImage> copyToImage() = 0;
 
     virtual Font::Metrics fontMetrics(const Font& font) const = 0;
 

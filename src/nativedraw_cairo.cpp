@@ -1228,6 +1228,11 @@ struct CairoImageData
     CairoImageData(uint8_t *b, int w, int h)
         : width(w), height(h), bgra(b)
     {}
+
+    ~CairoImageData()
+    {
+        delete [] bgra;
+    }
 };
 
 class CairoImage : public DrawableImage

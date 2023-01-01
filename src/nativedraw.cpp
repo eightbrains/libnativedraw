@@ -25,6 +25,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <algorithm>
 
@@ -1175,7 +1176,10 @@ struct Image::Impl
     // (Q: why use C's cryptic function pointers instead of std::function?
     //  A: I want to avoid pulling in std::function to nativedraw.h in the Image ctor.)
     Impl(void *native, int w, int h, float d, void (*od)(void*))
-        : width(w), height(h), dpi(d), format(kImageEncodedData_internal), onDestruct(od)
+        : width(w), height(h), dpi(d), format(kImageEncodedData_internal)
+#ifdef __APPLE__
+        , onDestruct(od)
+#endif // __APPLE__
     {
         this->size = sizeof(void*);
         this->data = new uint8_t[this->size];

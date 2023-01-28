@@ -796,7 +796,7 @@ void calcNSImageDetails(NSImage *nsimage, int *width, int *height, float *dpi)
     CGFloat cgWidth = 0.0;
     *dpi = kDefaultImageDPI;
     for (NSImageRep* rep in nsimage.representations) {
-        if (*width > cgWidth) {
+        if (rep.size.width > cgWidth) {
             *width = rep.pixelsWide;
             *height = rep.pixelsHigh;
             cgWidth = rep.size.width;

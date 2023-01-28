@@ -3018,6 +3018,8 @@ public:
                 return "greyscale with alpha";
             case kImageGreyscale8:
                 return "greyscale, 8-bit";
+            case kImageEncodedData_internal:
+                return "internal";
         }
         return "[invalid image format]";
     }
@@ -3069,6 +3071,8 @@ public:
                 nChannels = 2;  rgbaMap = { 0, 0, 0, 1 };  hasAlpha = true;  break;
             case kImageGreyscale8:
                 nChannels = 1;  rgbaMap = { 0, 0, 0, 0 };  hasAlpha = false;  break;
+            case kImageEncodedData_internal:
+                assert(false);  break;
         }
 
         const int blockWidth = 4, blockHeight = 6;

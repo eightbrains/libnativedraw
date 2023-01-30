@@ -1109,6 +1109,15 @@ void BezierPath::addCircle(const Point& center, const PicaPt& radius)
 }
 
 //-----------------------------------------------------------------------------
+Gradient::Gradient()
+{
+}
+
+Gradient::~Gradient()
+{
+}
+
+//-----------------------------------------------------------------------------
 int calcPixelBytes(ImageFormat format)
 {
     switch (format) {

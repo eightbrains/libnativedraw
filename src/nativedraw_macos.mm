@@ -111,6 +111,73 @@ private:
     std::unordered_map<float, CGMutablePathRef> mPaths;
 };
 
+//----------------------------- Gradients -------------------------------------
+class CoreGraphicsGradient;
+std::unordered_map<Gradient::Id, CoreGraphicsGradient*> gGradients;  // this does not own the gradients
+
+class CoreGraphicsGradient : public Gradient
+{
+public:
+    CoreGraphicsGradient(CGGradient *g, const GradientInfo& info)
+        : mInfo(info)
+    {
+        mGradient = g;  // transfers ownership, no retain needed
+        assert(gGradients.find(calcId()) == gGradients.end());
+        gGradients[calcId()] = this;
+    }
+
+    ~CoreGraphicsGradient()
+    {
+        CGGradientRelease(mGradient);
+        mGradient = nullptr;
+        auto it = gGradients.find(calcId());
+        if (it != gGradients.end()) {
+            gGradients.erase(it);
+        }
+    }
+
+    bool isValid() const override { return mGradient != nil; }
+
+    Id id() const override { return calcId(); }
+
+    CGGradient* cgGradient() const { return mGradient; }
+    const GradientInfo& info() const { return mInfo; }
+    
+private:
+    CGGradient *mGradient;
+    GradientInfo mInfo;
+
+    Id calcId() const { return (Id)mGradient; }
+};
+
+CoreGraphicsGradient* createGradient(const GradientInfo& info, float /*dpi*/)
+{
+    std::vector<CGFloat> components;
+    std::vector<CGFloat> locations;
+    components.reserve(4.0f * info.stops.size());
+    locations.reserve(info.stops.size());
+    for (const auto &stop : info.stops) {
+        components.push_back(stop.color.red());
+        components.push_back(stop.color.green());
+        components.push_back(stop.color.blue());
+        components.push_back(stop.color.alpha());
+        locations.push_back(stop.location);
+    }
+    CGGradient *gradient;
+    CGColorSpace *csRGB = CGColorSpaceCreateDeviceRGB();
+    gradient = CGGradientCreateWithColorComponents(csRGB, components.data(),
+                                                   locations.data(), info.stops.size());
+    CGColorSpaceRelease(csRGB);
+    return new CoreGraphicsGradient(gradient, info);  // Create() already did a retain, we transfer ownership here
+}
+
+void destroyGradient(CoreGraphicsGradient* gradient)
+{
+    delete gradient;
+}
+
+static ResourceManager<GradientInfo, CoreGraphicsGradient*> gGradientMgr(createGradient, destroyGradient);
+
 //-------------------------------- Font ---------------------------------------
 std::vector<std::string> Font::availableFontFamilies()
 {
@@ -1060,6 +1127,23 @@ public:
 
     }
 
+    Gradient& getGradient(const std::vector<Gradient::Stop>& stops) override
+    {
+        GradientInfo info = { stops };
+        return *gGradientMgr.get(info, 72.0f);
+    }
+
+    Gradient& getGradient(size_t id) const override
+    {
+        static CoreGraphicsGradient gNullGradient(nullptr, GradientInfo());
+
+        auto it = gGradients.find(id);
+        if (it != gGradients.end()) {
+            return *it->second;
+        }
+        return gNullGradient;
+    }
+
     void setNativeDC(void *nativeDC)
     {
         mNativeDC = nativeDC;
@@ -1266,6 +1350,41 @@ public:
         CGContextRef gc = (CGContextRef)mNativeDC;
         CGContextAddPath(gc, (CGPathRef)path->nativePathForDPI(mDPI, false));
         CGContextDrawPath(gc, calcCGDrawMode(mode));
+    }
+
+    void drawLinearGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
+                                const Point& start, const Point& end) override
+    {
+        CGContextRef gc = (CGContextRef)mNativeDC;
+        if (auto *cgg = dynamic_cast<CoreGraphicsGradient*>(&gradient)) {
+            save();
+            clipToPath(path);
+            CGContextDrawLinearGradient(
+                gc, cgg->cgGradient(),
+                CGPointMake(start.x.toPixels(mDPI), start.y.toPixels(mDPI)),
+                CGPointMake(end.x.toPixels(mDPI), end.y.toPixels(mDPI)),
+                kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
+            restore();
+        }
+    }
+
+    void drawRadialGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
+                                const Point& start, const PicaPt& startRadius,
+                                const Point& end, const PicaPt& endRadius) override
+    {
+        CGContextRef gc = (CGContextRef)mNativeDC;
+        if (auto *cgg = dynamic_cast<CoreGraphicsGradient*>(&gradient)) {
+            save();
+            clipToPath(path);
+            CGContextDrawRadialGradient(
+                gc, cgg->cgGradient(),
+                CGPointMake(start.x.toPixels(mDPI), start.y.toPixels(mDPI)),
+                startRadius.toPixels(mDPI),
+                CGPointMake(end.x.toPixels(mDPI), end.y.toPixels(mDPI)),
+                endRadius.toPixels(mDPI),
+                kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
+            restore();
+        }
     }
 
     void drawText(const char *textUTF8, const Point& topLeft, const Font& font,

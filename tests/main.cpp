@@ -1443,7 +1443,6 @@ protected:
                         (1.0f - endAmount) * startColor.blue() + endAmount * endColor.blue(),
                         1.0f);
                 auto pixel = mBitmap->pixelAt(x, y);
-                std::cout << "[debug] (" << x << ", " << y << "): " << std::abs(pixel.red() - expected.red()) * 255.0f << std::endl;
                 if (std::abs(pixel.red() - expected.red()) > err ||
                     std::abs(pixel.green() - expected.green()) > err ||
                     std::abs(pixel.blue() - expected.blue()) > err ||

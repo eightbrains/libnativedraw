@@ -1561,9 +1561,10 @@ public:
                 }
             }
             lastColor = rowColor;
+            const float kHorizErr = 2.0f / 256.0f;  // macOS needs 2, Windows only 1
             for (int x = 0;  x < mBitmap->width();  ++x) {
                 auto c = mBitmap->pixelAt(x, y);
-                if (std::abs(c.red() - rowColor.red()) > 1.0f / 256.0f) {
+                if (std::abs(c.red() - rowColor.red()) > kHorizErr) {
                     std::stringstream s;
                     s << "black->red (bottom->top): expected red " << rowColor.red() << ", got " << c.red()
                       << " at (" << x << ", " << y << ")";

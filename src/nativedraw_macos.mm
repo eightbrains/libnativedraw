@@ -1129,7 +1129,7 @@ public:
 
     Gradient& getGradient(const std::vector<Gradient::Stop>& stops) override
     {
-        GradientInfo info = { stops };
+        GradientInfo info = { nullptr, stops };  // macOS gradients are global, so DrawContext is nullptr
         return *gGradientMgr.get(info, 72.0f);
     }
 
@@ -1369,8 +1369,8 @@ public:
     }
 
     void drawRadialGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
-                                const Point& start, const PicaPt& startRadius,
-                                const Point& end, const PicaPt& endRadius) override
+                                const Point& center, const PicaPt& startRadius,
+                                const PicaPt& endRadius) override
     {
         CGContextRef gc = (CGContextRef)mNativeDC;
         if (auto *cgg = dynamic_cast<CoreGraphicsGradient*>(&gradient)) {
@@ -1378,9 +1378,9 @@ public:
             clipToPath(path);
             CGContextDrawRadialGradient(
                 gc, cgg->cgGradient(),
-                CGPointMake(start.x.toPixels(mDPI), start.y.toPixels(mDPI)),
+                CGPointMake(center.x.toPixels(mDPI), center.y.toPixels(mDPI)),
                 startRadius.toPixels(mDPI),
-                CGPointMake(end.x.toPixels(mDPI), end.y.toPixels(mDPI)),
+                CGPointMake(center.x.toPixels(mDPI), center.y.toPixels(mDPI)),
                 endRadius.toPixels(mDPI),
                 kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
             restore();

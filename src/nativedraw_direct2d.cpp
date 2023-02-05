@@ -373,6 +373,151 @@ std::vector<std::string> Font::availableFontFamilies()
     return sortedFonts;
 }
 
+//------------------------------ Gradients ------------------------------------
+namespace {
+
+class Direct2DGradient;
+static std::unordered_map<Gradient::Id, Direct2DGradient*> gGradientId2Gradient;
+
+class Direct2DGradient : public Gradient
+{
+public:
+    Direct2DGradient(const GradientInfo& info, bool makeValid = true)
+        : mInfo(info)
+    {
+        if (makeValid) {
+            mId = gNextId++;
+        } else {
+            mId = 0;
+        }
+    }
+
+    ~Direct2DGradient()
+    {
+        if (mLinear) {
+            mLinear->Release();
+            mLinear = nullptr;
+        }
+        for (auto &it : mRadials) {
+            if (it.second) {
+                it.second->Release();
+            }
+        }
+        mRadials.clear();
+    }
+
+    bool isValid() const override { return ((!mLinearFailed || !mRadialFailed) && mId != 0); }
+
+    Id id() const override { return mId; }
+
+    const GradientInfo& info() const { return mInfo; }
+
+    void setInvalid()
+    {
+        mLinear = nullptr;
+        mLinearFailed = true;
+        mRadialFailed = true;
+    }
+
+    ID2D1LinearGradientBrush* linearBrush()
+    {
+        if (!mLinear && !mLinearFailed) {
+            auto *dc = (ID2D1DeviceContext*)mInfo.context->nativeDC();
+            auto *stopCollection = createStops(dc, mInfo.stops);
+            HRESULT err = dc->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(D2D1::Point2F(0.0f, 0.0f), D2D1::Point2F(1.0f, 0.0f)),
+                stopCollection, &mLinear);
+            assert(err == S_OK);
+            if (err != S_OK) {
+                mLinearFailed = true;
+            }
+        }
+        return mLinear;
+    }
+
+    ID2D1RadialGradientBrush* radialBrush(float startRadius)
+    {
+        // Direct2D has limited radial gradients compared to macOS and Cairo.
+        // Although we cannot implement independent start/end points with their own radii,
+        // we can at least implement a non-zero start radius by adjusting the locations.
+
+        // Quantize the float so that floating point error doesn't an entirely
+        // new brush (and presumably, bitmap). In reality this probably isn't necessary,
+        // since most gradients are probably going to be a constant value, but just in case.
+        const float kQuantizations = 8192.0f;
+        assert(startRadius >= 0.0f && startRadius <= 1.0f);
+        uint16_t quantized = uint16_t(std::round(startRadius * kQuantizations));
+        startRadius = float(quantized) / kQuantizations;
+
+        auto it = mRadials.find(startRadius);
+        if (it == mRadials.end() && !mRadialFailed) {
+            auto stops = mInfo.stops;  // copies
+            float newWidth = 1.0f - startRadius;
+            for (auto& s : stops) {
+                s.location = startRadius + s.location * newWidth;
+            }
+
+            auto* dc = (ID2D1DeviceContext*)mInfo.context->nativeDC();
+            auto* stopCollection = createStops(dc, stops);
+            ID2D1RadialGradientBrush* brush = nullptr;
+            HRESULT err = dc->CreateRadialGradientBrush(D2D1::RadialGradientBrushProperties(
+                D2D1::Point2F(0.0f, 0.0f), D2D1::Point2F(0.0f, 0.0f), 1.0f, 1.0f),
+                stopCollection, &brush);
+            assert(err == S_OK);
+            if (err != S_OK) {
+                mRadialFailed = true;
+            }
+            mRadials[startRadius] = brush;
+            it = mRadials.find(startRadius);
+        }
+        return it->second;
+    }
+
+private:
+    ID2D1GradientStopCollection* createStops(ID2D1DeviceContext* context,
+                                             const std::vector<Gradient::Stop>& stops)
+    {
+        std::vector<D2D1_GRADIENT_STOP> d2dStops(stops.size());
+        for (size_t i = 0; i < stops.size(); ++i) {
+            d2dStops[i].color.r = stops[i].color.red();
+            d2dStops[i].color.g = stops[i].color.green();
+            d2dStops[i].color.b = stops[i].color.blue();
+            d2dStops[i].color.a = stops[i].color.alpha();
+            d2dStops[i].position = stops[i].location;
+        }
+        ID2D1GradientStopCollection* stopCollection = nullptr;
+        // We can use an overloaded call to specify more details and get a ID2D1GradientStopCollection1
+        // if we need.
+        HRESULT err = context->CreateGradientStopCollection(d2dStops.data(), (UINT32)d2dStops.size(), &stopCollection);
+        assert(err == S_OK);
+        return stopCollection;
+    }
+
+private:
+    static Id gNextId;
+
+    Id mId;
+    GradientInfo mInfo;
+    ID2D1LinearGradientBrush* mLinear = nullptr;
+    std::unordered_map<float, ID2D1RadialGradientBrush*> mRadials;
+    bool mLinearFailed = false;
+    bool mRadialFailed = false;
+};
+Gradient::Id Direct2DGradient::gNextId = 1;
+
+Direct2DGradient* createGradient(const GradientInfo& info, float /*dpi*/)
+{
+    return new Direct2DGradient(info);
+}
+
+void destroyGradient(Direct2DGradient* gradient)
+{
+    delete gradient;
+}
+
+static ResourceManager<GradientInfo, Direct2DGradient*> gGradientMgr(createGradient, destroyGradient);
+
+} // namepsace
 //-------------------------------- Fonts --------------------------------------
 namespace {
 
@@ -2019,6 +2164,23 @@ public:
                                          defaultReplacementFont, defaultReplacementColor);
     }
 
+    Gradient& getGradient(const std::vector<Gradient::Stop>& stops) override
+    {
+        return *gGradientMgr.get({ this, stops }, mDPI);
+    }
+
+    /// Returns a reference to a gradient.
+    Gradient& getGradient(size_t id) const override
+    {
+        static Direct2DGradient gBad(GradientInfo(), false /* make invalid */);
+
+        auto it = gGradientId2Gradient.find(id);
+        if (it != gGradientId2Gradient.end()) {
+            return *it->second;
+        }
+        return gBad;
+    }
+
 private:
     void cleanup()
     {
@@ -2028,6 +2190,12 @@ private:
             mSolidBrush = nullptr;
         }
         clearStrokeStyle();
+
+        for (auto it = gGradientId2Gradient.begin();  it != gGradientId2Gradient.end();  ++it) {
+            if (it->second->info().context == this) {
+                gGradientMgr.destroy(it->second->info(), mDPI);  // this will also remove from gGradientId2Gradient
+            }
+        }
     }
 
     void clearStrokeStyle()
@@ -2349,6 +2517,95 @@ public:
         }
     }
 
+    void Direct2DContext::drawLinearGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
+                                                 const Point& start, const Point& end) override
+    {
+        auto dx = toD2D(end.x - start.x);
+        auto dy = toD2D(end.y - start.y);
+        auto dist = std::sqrt(dx * dx + dy * dy);
+        auto rotationRad = std::atan2(dy, dx);
+
+        auto* brush = ((Direct2DGradient*)&gradient)->linearBrush();
+        if (!brush || dist < 1e-6) {  // if dist == 0 the gradient will be invisible (and we cannot invert the matrix)
+            return;
+        }
+
+        save();
+        clipToPath(path);
+
+        // We created the brush with the gradient going from (0, 0) to (1, 0). So we can
+        // avoid creating different brushes (which presumably creates a gradient bitmap
+        // for each one) for each start/end that uses the same stops
+        // by just transforming the draw matrix so that drawing from (0, 0) to (1, 0)
+        // gives us the desired result.
+        translate(start.x, start.y);
+        scale(dist, dist);
+        rotate(rotationRad * 180.0f / 3.141592f);
+
+        drawGradient(brush);
+        restore();
+    }
+
+    void Direct2DContext::drawRadialGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
+                                                 const Point& center, const PicaPt& startRadius,
+                                                 const PicaPt& endRadius) override
+    {
+        auto r0 = toD2D(startRadius);
+        auto r1 = toD2D(endRadius);
+        if (r1 < 1e-6) {
+            return;
+        }
+
+        auto* brush = ((Direct2DGradient*)&gradient)->radialBrush(r0 / r1);
+        if (!brush) {
+            return;
+        }
+
+        save();
+        clipToPath(path);
+
+        // We created the brush with the gradient going from (0, 0) to (1, 0). So we can
+        // avoid creating different brushes (which presumably creates a gradient bitmap
+        // for each one) for each start/end that uses the same stops
+        // by just transforming the draw matrix so that drawing from (0, 0) to (1, 0)
+        // gives us the desired result.
+        translate(center.x, center.y);
+        scale(r1, r1);
+
+        drawGradient(brush);
+        restore();
+    }
+
+private:
+    void Direct2DContext::drawGradient(ID2D1Brush* brush)
+    {
+        auto* gc = deviceContext();
+
+        // Draw a rect the size of the entire context using the gradient brush;
+        // the clipping will limit to the path.
+        // Note that while width/height are in pixels, the D2D functions are in DIPs,
+        // so as far as D2D is concerned, the context is not mWidth DIPs wide,
+        // it is mWidth*dpi/96 DIPs.
+        auto ul = D2D1::Point2F(0.0f, 0.0f);
+        auto lr = D2D1::Point2F(toD2D(PicaPt::fromPixels(float(mWidth), mDPI)),
+            toD2D(PicaPt::fromPixels(float(mHeight), mDPI)));
+
+        // We need to transform the upper left and lower right points so that
+        // they are in the same coordinate system as the current transform matrix.
+        // To do that, we transform by the inverse of the transform matrix.
+        D2D1::Matrix3x2F m;
+        gc->GetTransform(&m);
+        auto success = m.Invert();
+        assert(success);  // all translation matrix are invertible (if not, the x or y scale is probably 0)
+        ul = m.TransformPoint(ul);
+        lr = m.TransformPoint(lr);
+
+        // Draw the full-context rect
+        D2D1_RECT_F r{ ul.x, ul.y, lr.x, lr.y };
+        gc->FillRectangle(r, brush);
+    }
+
+public:
     void drawText(const char* textUTF8, const Point& topLeft, const Font& font,
                   PaintMode mode) override
     {

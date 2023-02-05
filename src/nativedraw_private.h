@@ -80,6 +80,17 @@ public:
         return it->second;
     }
 
+    void destroy(const Desc& desc, float dpi)
+    {
+        HashType hash = desc.hash();
+        hash_combine(hash, dpi);
+        auto it = mHash2Rsrc.find(hash);
+        if (it != mHash2Rsrc.end()) {
+            mDestroy(it->second);
+            mHash2Rsrc.erase(it);
+        }
+    }
+
 protected:
     std::unordered_map<HashType, Rsrc> mHash2Rsrc;
     CreateFunc mCreate;
@@ -94,11 +105,13 @@ Font fontSizedForSuperSubscript(const Font& f);
 
 struct GradientInfo
 {
+    DrawContext* context = nullptr;
     std::vector<Gradient::Stop> stops;
 
     size_t hash() const
     {
         size_t seed = 0;
+        hash_combine(seed, context);
         for (auto &s : stops) {
             hash_combine(seed, s.color.hash());
             hash_combine(seed, s.location);

@@ -1073,6 +1073,9 @@ public:
     virtual void restore() = 0;
 
     virtual void translate(const PicaPt& dx, const PicaPt& dy) = 0;
+    /// +deg is counter-clockwise, -deg is clockwise. This is the same as
+    /// in mathematical coordinates where +y is up, to reduce mistakes
+    /// forgetting that +y is not up in bitmaps.
     virtual void rotate(float degrees) = 0;
     virtual void scale(float sx, float sy) = 0;
 
@@ -1105,9 +1108,10 @@ public:
     virtual void drawPath(std::shared_ptr<BezierPath> path, PaintMode mode) = 0;
     virtual void drawLinearGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
                                         const Point& start, const Point& end) = 0;
+    // Direct2D does not support start+radius, end+radius, so we use this simplified interface
     virtual void drawRadialGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
-                                        const Point& start, const PicaPt& startRadius,
-                                        const Point& end, const PicaPt& endRadius) = 0;
+                                        const Point& center, const PicaPt& startRadius,
+                                        const PicaPt& endRadius) = 0;
 
     /// Note that the text sits ON the baseline, which will be aligned with
     /// the vertical pixel boundary. As a result, if the baseline is at y=16,

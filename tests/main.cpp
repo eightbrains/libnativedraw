@@ -1919,18 +1919,19 @@ public:
         auto invalidId = gradientStop.id();
         dc.reset();
         // gradientStop and gradientId are now invalid
-#ifdef __APPLE__
+#if defined(_WIN32) || defined(_WIN64)
+        // don't return, do tests
+#elif defined(__APPLE__)
         return "";  // gradients are global to all contexts on macOS/iOS
 #elif USING_X11
         return "";  // gradients are global to all contexts with Cairo
-#elif defined(__WIN32) || defined(__WIN64)
-        // don't return, do tests
 #else
         return "does this platform have global or context-dependent gradients?";
 #endif
         if (mBitmap->getGradient(invalidId).id() == invalidId) {
             return "gradient was not cleaned up after context was destroyed";
         }
+        return "";
     }
 };
 

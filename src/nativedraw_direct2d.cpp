@@ -387,13 +387,21 @@ public:
     {
         if (makeValid) {
             mId = gNextId++;
+            assert(gGradientId2Gradient.find(mId) == gGradientId2Gradient.end());
+            gGradientId2Gradient[mId] = this;
         } else {
             mId = 0;
+            setInvalid();
         }
     }
 
     ~Direct2DGradient()
     {
+        auto it = gGradientId2Gradient.find(mId);
+        if (it != gGradientId2Gradient.end()) {
+            gGradientId2Gradient.erase(it);
+        }
+
         if (mLinear) {
             mLinear->Release();
             mLinear = nullptr;
@@ -2191,8 +2199,15 @@ private:
         }
         clearStrokeStyle();
 
+        std::vector<Gradient::Id> toErase;
         for (auto it = gGradientId2Gradient.begin();  it != gGradientId2Gradient.end();  ++it) {
             if (it->second->info().context == this) {
+                toErase.push_back(it->first);
+            }
+        }
+        for (auto &id : toErase) {
+            auto it = gGradientId2Gradient.find(id);
+            if (it != gGradientId2Gradient.end()) {
                 gGradientMgr.destroy(it->second->info(), mDPI);  // this will also remove from gGradientId2Gradient
             }
         }

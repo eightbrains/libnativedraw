@@ -1399,7 +1399,10 @@ protected:
         // Radial gradiant using u = x gives < 11/256 (but both endpoints are exact)
         return 11.0f / 256.0f;
 #elif defined(_WIN32) || defined(_WIN64)
-        // Linear gradient works ot 1/256
+        // Linear gradient works at 1/256
+        return 8.0f / 256.0f;
+#elif USING_X11
+        // Cairo: linear gradient works at 1/256
         return 8.0f / 256.0f;
 #else
         return 1.0f / 256.0f;
@@ -1859,6 +1862,75 @@ protected:
         }
 
         return "";
+    }
+};
+
+class GradientMemoryTest : public BitmapTest
+{
+public:
+    GradientMemoryTest()
+        : BitmapTest("gradients (memory)", 10, 10)
+    {
+    }
+
+    std::string run() override
+    {
+        // Clear so that failures look more appropriate
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->endDraw();
+        
+        auto dpi = mBitmap->dpi();
+
+        auto dc = createBitmap(kBitmapRGBA, mWidth, mHeight, dpi);
+
+        std::vector<Gradient::Stop> stops = { { Color::kBlack, 0.0f }, { Color::kRed, 1.0f } };
+        auto &gradientStop = dc->getGradient(stops);
+        auto &gradientId = dc->getGradient(gradientStop.id());
+        if (gradientStop.id() != gradientId.id()) {
+            return "getGradient(getGradient(stops).id()) does not return the same gradient. Probably gradients are not getting registered by id.";
+        }
+
+        auto &bad = dc->getGradient(0);
+        if (bad.id() != 0) {
+            return "getGradient(0) should return a bad gradient with id() = 0";
+        }
+        auto &bad2 = dc->getGradient((Gradient::Id)-1);
+        if (bad2.id() != bad.id()) {
+            return "bad gradients for the same DrawContext should return the same object";
+        }
+
+        Color fg = Color::kGreen; // unlikely for this to be a no-op color
+        mBitmap->beginDraw();
+        mBitmap->fill(fg);
+        auto path = mBitmap->createBezierPath();
+        path->addRect(Rect::fromPixels(2, 2, mWidth - 4, mHeight - 4, dpi));
+        mBitmap->drawLinearGradientPath(path,
+                                        mBitmap->getGradient((Gradient::Id)0),
+                                        Point::kZero,
+                                        Point::fromPixels(mWidth, 0, dpi));
+        mBitmap->endDraw();
+        auto err = verifyRect("err", 0, 0, mWidth, mHeight, fg);
+        if (!err.empty()) {
+            return "bad/invalid gradient should not draw";
+        }
+
+        // for some OSes deleting the context should clean up gradients
+        auto invalidId = gradientStop.id();
+        dc.reset();
+        // gradientStop and gradientId are now invalid
+#ifdef __APPLE__
+        return "";  // gradients are global to all contexts on macOS/iOS
+#elif USING_X11
+        return "";  // gradients are global to all contexts with Cairo
+#elif defined(__WIN32) || defined(__WIN64)
+        // don't return, do tests
+#else
+        return "does this platform have global or context-dependent gradients?";
+#endif
+        if (mBitmap->getGradient(invalidId).id() == invalidId) {
+            return "gradient was not cleaned up after context was destroyed";
+        }
     }
 };
 
@@ -3923,6 +3995,7 @@ int main(int argc, char *argv[])
         std::make_shared<GettersTest>(),
         std::make_shared<LinearGradientTest>(),
         std::make_shared<RadialGradientTest>(),
+        std::make_shared<GradientMemoryTest>(),
         std::make_shared<FontTest>("Arial", 20),
         std::make_shared<FontTest>("Georgia", 20),
         // std::make_shared<FontTest>("Courier New", 20),

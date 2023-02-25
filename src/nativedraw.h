@@ -1106,11 +1106,16 @@ public:
     virtual void drawRoundedRect(const Rect& rect, const PicaPt& radius, PaintMode mode);  // has impl
     virtual void drawEllipse(const Rect& rect, PaintMode mode) = 0;
     virtual void drawPath(std::shared_ptr<BezierPath> path, PaintMode mode) = 0;
-    virtual void drawLinearGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
-                                        const Point& start, const Point& end) = 0;
-    // Direct2D does not support start+radius, end+radius, so we use this simplified interface
-    virtual void drawRadialGradientPath(std::shared_ptr<BezierPath> path, Gradient& gradient,
-                                        const Point& center, const PicaPt& startRadius,
+    virtual void drawLinearGradientPath(std::shared_ptr<BezierPath> path,
+                                        Gradient& gradient,
+                                        const Point& start,
+                                        const Point& end) = 0;
+    // Direct2D does not support start+radius, end+radius (unlike macOS and
+    // cairo), so we use this simplified interface.
+    virtual void drawRadialGradientPath(std::shared_ptr<BezierPath> path,
+                                        Gradient& gradient,
+                                        const Point& center,
+                                        const PicaPt& startRadius,
                                         const PicaPt& endRadius) = 0;
 
     /// Note that the text sits ON the baseline, which will be aligned with

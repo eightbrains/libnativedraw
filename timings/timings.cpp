@@ -42,7 +42,7 @@ static const int kNTimesPerRun = 50;
 // macOS' image blitting is so slow that 50000 would take a long time
 static const int kNObjs = 1000;
 #else
-static const int kNObjs = 10000;
+static const int kNObjs = 1000;
 #endif
 static const Color kBGColor(1.0f, 1.0f, 1.0f);
 
@@ -538,6 +538,11 @@ Timings::Timings()
                           this->mImg100 = createImage(dc, 100, 100, 72.0f);
                       }
                   } },
+              // some platforms like Direct2D take some time to create everything for the
+              // first draw. Since we subtract off the timing for kBaseRunName, we need
+              // it to be representative, so we do a pre-run of nothing before the
+              // actually timed run.
+              Run{"init draw", 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
               Run{kBaseRunName, 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
               Run{"rects (fill)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRects(dc, nObjs, 100, 100,
@@ -618,7 +623,7 @@ Timings::State Timings::runNext(DrawContext *dc)
     auto resultIt = mResults.find(lastRun.name);
     if (resultIt != mResults.end()) {
         auto &result = resultIt->second;
-        result.end = std::chrono::high_resolution_clock::now();
+        result.end = std::chrono::steady_clock::now();
         result.n++;
         if (result.n >= kNTimesPerRun) {
             printResult(lastRun, result);
@@ -637,7 +642,7 @@ Timings::State Timings::runNext(DrawContext *dc)
     }
     auto &result = resultIt->second;
     if (result.n == 0) {
-        result.start = std::chrono::high_resolution_clock::now();
+        result.start = std::chrono::steady_clock::now();
     }
 
     thisRun.func(*dc, thisRun.nObjs);

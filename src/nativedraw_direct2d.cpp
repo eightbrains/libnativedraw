@@ -2603,9 +2603,11 @@ private:
         // it is mWidth*dpi/96 DIPs.
         auto ul = D2D1::Point2F(0.0f, 0.0f);
         auto lr = D2D1::Point2F(toD2D(PicaPt::fromPixels(float(mWidth), mDPI)),
-            toD2D(PicaPt::fromPixels(float(mHeight), mDPI)));
+                                toD2D(PicaPt::fromPixels(float(mHeight), mDPI)));
+        auto ur = D2D1::Point2F(lr.x, 0.0f);
+        auto ll = D2D1::Point2F(0.0, lr.y);
 
-        // We need to transform the upper left and lower right points so that
+        // We need to transform the corners of the context-rect so that
         // they are in the same coordinate system as the current transform matrix.
         // To do that, we transform by the inverse of the transform matrix.
         D2D1::Matrix3x2F m;
@@ -2613,11 +2615,20 @@ private:
         auto success = m.Invert();
         assert(success);  // all translation matrix are invertible (if not, the x or y scale is probably 0)
         ul = m.TransformPoint(ul);
+        ur = m.TransformPoint(ur);
         lr = m.TransformPoint(lr);
+        ll = m.TransformPoint(ll);
 
-        // Draw the full-context rect
-        D2D1_RECT_F r{ ul.x, ul.y, lr.x, lr.y };
-        gc->FillRectangle(r, brush);
+        // Draw the full-context rect. (Direct2D's API is so unweildy it is
+        // easier to convert to PicaPt, use our API [which converts back] than
+        // to do this natively.)
+        auto path = createBezierPath();
+        path->moveTo(Point(fromD2D(ul.x), fromD2D(ul.y)));
+        path->lineTo(Point(fromD2D(ur.x), fromD2D(ur.y)));
+        path->lineTo(Point(fromD2D(lr.x), fromD2D(lr.y)));
+        path->lineTo(Point(fromD2D(ll.x), fromD2D(ll.y)));
+        path->close();
+        gc->FillGeometry((ID2D1PathGeometry*)path->nativePathForDPI(mDPI, true), brush, nullptr);
     }
 
 public:

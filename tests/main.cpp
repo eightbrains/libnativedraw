@@ -1664,6 +1664,14 @@ public:
         path->addRect(rectAll);
         mBitmap->drawLinearGradientPath(path, gradient, rectAll.upperLeft(), rectAll.lowerRight());
         mBitmap->endDraw();
+        for (int y = 0;  y <= mBitmap->height();  ++y) {
+            for (int x = 0;  x <= mBitmap->width();  ++x) {
+                auto pixel = mBitmap->pixelAt(x, y);
+                if (pixel.blue() > 0.0f) {
+                    return "unexpected pixel with blue at (" + std::to_string(x) + ", " + std::to_string(y) + "); gradient is not drawing completely";
+                }
+            }
+        }
 
         return "";
     }
@@ -1898,6 +1906,9 @@ public:
         auto &gradientId = dc->getGradient(gradientStop.id());
         if (gradientStop.id() != gradientId.id()) {
             return "getGradient(getGradient(stops).id()) does not return the same gradient. Probably gradients are not getting registered by id.";
+        }
+        if (dc->getGradient(stops).id() != gradientStop.id()) {
+            return "getGradient(stops) should always return the same object if the stops are the same";
         }
 
         auto &bad = dc->getGradient(0);

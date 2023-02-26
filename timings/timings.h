@@ -63,8 +63,8 @@ private:
 
     struct Result {
         int n = 0;
-        std::chrono::time_point<std::chrono::high_resolution_clock> start;
-        std::chrono::time_point<std::chrono::high_resolution_clock> end;
+        std::chrono::time_point<std::chrono::steady_clock> start;
+        std::chrono::time_point<std::chrono::steady_clock> end;
     };
     std::map<std::string, Result> mResults;
 

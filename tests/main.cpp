@@ -1656,6 +1656,15 @@ public:
             return err;
         }
 
+        // black -> red, 45 deg. This is hard to evaluate, and is here to help
+        // detect incorrect clipping/drawing.
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        mBitmap->drawLinearGradientPath(path, gradient, rectAll.upperLeft(), rectAll.lowerRight());
+        mBitmap->endDraw();
+
         return "";
     }
 };

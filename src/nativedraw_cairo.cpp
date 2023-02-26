@@ -1736,34 +1736,35 @@ private:
     {
         auto *gc = cairoContext();
 
-        // we assume that this is bracketed by save/restore, so that the
+        // We assume that this is bracketed by save/restore, so that the
         // set_source() is undone
         cairo_set_source(gc, pattern);
 
         // Draw a rect the size of the entire context using the gradient brush;
         // the clipping will limit to the path.
         double ulX = 0.0, ulY = 0.0;
+        double urX = double(mWidth), urY = 0.0;
         double lrX = double(mWidth), lrY = double(mHeight);
+        double llX = 0.0, llY = double(mHeight);
 
-        // We need to transform the upper left and lower right points so that
+        // We need to transform the four corners of the context-rect so that
         // they are in the same coordinate system as the current transform
         // matrix. To do that, we transform by the inverse of the transform
         // matrix. Happily, this is exactly what cairo_device_to_user() does.
         cairo_device_to_user(gc, &ulX, &ulY);
+        cairo_device_to_user(gc, &urX, &urY);
         cairo_device_to_user(gc, &lrX, &lrY);
+        cairo_device_to_user(gc, &llX, &llY);
 
-        // Draw the full-context rect
-        double width = lrX - ulX;
-        double height = lrY - ulY;
-        if (width < 0.0) {
-            ulX = lrX;
-            width = -width;
-        }
-        if (height < 0.0) {
-            ulY = lrY;
-            height = -height;
-        }
-        cairo_rectangle(gc, ulX, ulY, width, height);
+        // Draw the full-context rect. Note that this might be rotated, so
+        // we cannot just draw a rectangle from ul to lr.
+        cairo_new_path(gc);
+        cairo_move_to(gc, ulX, ulY);
+        cairo_line_to(gc, urX, urY);
+        cairo_line_to(gc, lrX, lrY);
+        cairo_line_to(gc, llX, llY);
+        cairo_close_path(gc);
+
         cairo_fill(gc);
     }
 

@@ -129,17 +129,18 @@ public:
     {
         HRESULT err;
 
+        // You'd think we could try CoCreateInstance() and if it fails being uninitialized,
+        // call CoInitializeEx() and then try again. However, it seems that if you do that
+        // and then start  a message loop than mWicFactory->Release() will crash.
+        // To my understanding, it is always safe to call CoInitializeEx(), although it
+        // might not return S_OK. The docs say that you need to call CoUnitialize() for
+        // "successful call made to CoInitialze[Ex](), including any call that returns S_FALSE".
+        // It's unclear to me what an unsuccesful call would be?!
+        CoInitialize(0);
         err = CoCreateInstance(CLSID_WICImagingFactory,
                                NULL,
                                CLSCTX_INPROC_SERVER,
                                IID_PPV_ARGS(&mWicFactory));
-        if (err == CO_E_NOTINITIALIZED) {
-            CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-            err = CoCreateInstance(CLSID_WICImagingFactory,
-                                   NULL,
-                                   CLSCTX_INPROC_SERVER,
-                                   IID_PPV_ARGS(&mWicFactory));
-        }
         if (err != S_OK) {
             printError("fatal: Could not create WICImagingFactory!", err);
             return;
@@ -168,8 +169,9 @@ public:
                                 D3D_DRIVER_TYPE_HARDWARE,
                                 NULL,                                 // software rasterizer DLL handle
                                 D3D11_CREATE_DEVICE_SINGLETHREADED    // better performance
-                                  | D3D11_CREATE_DEVICE_BGRA_SUPPORT, // required for Direct2D
-                                featureLevels,
+                                  | D3D11_CREATE_DEVICE_BGRA_SUPPORT  // required for Direct2D
+                                //  | D3D11_CREATE_DEVICE_DEBUG
+                                , featureLevels,
                                 sizeof(featureLevels) / sizeof(D3D_FEATURE_LEVEL),
                                 D3D11_SDK_VERSION,                    // docs say use this
                                 &mD3DDevice,
@@ -202,6 +204,12 @@ public:
         if (mD2DFactory) { mD2DFactory->Release(); }
         if (mWriteFactory) { mWriteFactory->Release(); }
         if (mWicFactory) { mWicFactory->Release(); }
+
+        // The docs say that you need to call CoUnitialize() for every
+        // "successful call made to CoInitialze[Ex](), including any call that
+        // returns S_FALSE". It's unclear to me what an unsuccesful call would be,
+        // then, so always call it.
+        CoUninitialize();
     }
 
 private:
@@ -2658,7 +2666,7 @@ public:
 
         // So now that we've had to MAKE OUR OWN @#$! backing store--if everyone
         // is just going to copy-paste your example, Microsoft, for every window
-        // someone writes, maybe this is something that could be, I don't, made
+        // someone writes, maybe this is something that could be, I don't know, made
         // into a function somewhere?--we can finally hand off our device context
         // to the superclass.
         setNativeDC(mDC);

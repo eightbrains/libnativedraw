@@ -197,6 +197,116 @@ private:
     std::unordered_map<float, cairo_path_t> mPaths;
 };
 
+//----------------------------- Gradients -------------------------------------
+class CairoGradient;
+// this does not own the gradients, it is just a mapping
+std::unordered_map<Gradient::Id, CairoGradient*> gGradientId2Gradient;
+
+class CairoGradient : public Gradient
+{
+public:
+    CairoGradient(const GradientInfo& info, bool makeValid = true)
+        : mInfo(info)
+    {
+        if (makeValid) {
+            mId = gNextId++;
+            assert(gGradientId2Gradient.find(mId) == gGradientId2Gradient.end());
+            gGradientId2Gradient[mId] = this;
+        } else {
+            mId = 0;
+        }
+    }
+
+    ~CairoGradient()
+    {
+        if (mLinearGradient) {
+            cairo_pattern_destroy(mLinearGradient);
+            mLinearGradient = nullptr;
+        }
+        for (auto &g : mRadialGradients) {
+            cairo_pattern_destroy(g.second);
+        }
+        auto it = gGradientId2Gradient.find(mId);
+        if (it != gGradientId2Gradient.end()) {
+            gGradientId2Gradient.erase(it);
+        }
+    }
+
+    bool isValid() const override
+    {
+        return (!mLinearGradient ||
+                cairo_pattern_status(mLinearGradient) == CAIRO_STATUS_SUCCESS);
+    }
+
+    Id id() const override { return mId; }
+
+    cairo_pattern_t* linearPattern()
+    {
+        if (!mLinearGradient) {
+            mLinearGradient = cairo_pattern_create_linear(0.0, 0.0, 1.0, 0.0);
+            for (const auto &stop : mInfo.stops) {
+                cairo_pattern_add_color_stop_rgba(mLinearGradient,
+                                                  stop.location,
+                                                  stop.color.red(),
+                                                  stop.color.green(),
+                                                  stop.color.blue(),
+                                                  stop.color.alpha());
+            }
+        }
+        return mLinearGradient;
+    }
+
+    // It is assumed that endRadius=1.0, so startRadius should be in [0.0, 1.0).
+    // This way we can simply scale to the actual endRadius size and everything
+    // will work out perfectly. It also lets use re-use gradients that use
+    // identical ratios (most probably start=0.0).
+    cairo_pattern_t* radialPattern(float startRadius)
+    {
+        assert(startRadius >= 0.0f && startRadius < 1.0f);
+
+        auto it = mRadialGradients.find(startRadius);
+        if (it == mRadialGradients.end()) {
+            auto *gradient = cairo_pattern_create_radial(0.0, 0.0, startRadius,
+                                                         0.0, 0.0, 1.0);
+            for (const auto &stop : mInfo.stops) {
+                cairo_pattern_add_color_stop_rgba(gradient,
+                                                  stop.location,
+                                                  stop.color.red(),
+                                                  stop.color.green(),
+                                                  stop.color.blue(),
+                                                  stop.color.alpha());
+            }
+            mRadialGradients[startRadius] = gradient;
+            it = mRadialGradients.find(startRadius);
+        }
+        return it->second;
+    }
+
+    const GradientInfo& info() const { return mInfo; }
+    
+private:
+    static Id gNextId;
+
+    Id mId;
+    cairo_pattern_t *mLinearGradient = nullptr;
+    std::unordered_map<float, cairo_pattern_t *> mRadialGradients;
+    GradientInfo mInfo;
+};
+Gradient::Id CairoGradient::gNextId = 1;
+
+CairoGradient* createGradient(const GradientInfo& info, float /*dpi*/)
+{
+    return new CairoGradient(info);
+}
+
+void destroyGradient(CairoGradient* gradient)
+{
+    delete gradient;
+}
+
+// This owns the gradient
+static ResourceManager<GradientInfo, CairoGradient*> gGradientMgr(createGradient, destroyGradient);
+
 //---------------------------------- Font -------------------------------------
 std::vector<std::string> Font::availableFontFamilies()
 {
@@ -1363,6 +1473,22 @@ public:
         }
     }
 
+    Gradient& getGradient(const std::vector<Gradient::Stop>& stops)
+    {
+        return *gGradientMgr.get({ this, stops }, mDPI);
+    }
+
+    Gradient& getGradient(size_t id) const
+    {
+        static CairoGradient gBad(GradientInfo(), false /* make invalid */);
+
+        auto it = gGradientId2Gradient.find(id);
+        if (it != gGradientId2Gradient.end()) {
+            return *it->second;
+        }
+        return gBad;
+    }
+
     void beginDraw() override
     {
         mDrawingState = DrawingState::kDrawing;
@@ -1556,6 +1682,93 @@ public:
         drawCurrentPath(mode);
     }
 
+    void drawLinearGradientPath(std::shared_ptr<BezierPath> path,
+                                Gradient& gradient,
+                                const Point& start, const Point& end)
+    {
+        auto dx = (end.x - start.x).toPixels(mDPI);
+        auto dy = (end.y - start.y).toPixels(mDPI);
+        auto dist = std::sqrt(dx * dx + dy * dy);
+        auto rotationRad = std::atan2(dy, dx);
+
+        // if dist == 0 the gradient will be invisible (and the matrix is not
+        // invertible)
+        if (dist < 1e-6) {
+            return;
+        }
+
+        save();
+        clipToPath(path);
+
+        // We created the brush with the gradient going from (0, 0) to (1, 0).
+        // So we can avoid creating different brushes (which presumably creates
+        // a gradient bitmap for each one) for each start/end that uses the same
+        // stops by just transforming the draw matrix so that drawing from
+        // (0, 0) to (1, 0) gives us the desired result.
+        translate(start.x, start.y);
+        scale(dist, dist);
+        rotate(rotationRad * 180.0f / 3.14159265f);
+
+        drawGradient(((CairoGradient&)gradient).linearPattern());
+        restore();
+    }
+
+    void drawRadialGradientPath(std::shared_ptr<BezierPath> path,
+                                Gradient& gradient,
+                                const Point& center, const PicaPt& startRadius,
+                                const PicaPt& endRadius)
+    {
+        save();
+        clipToPath(path);
+
+        translate(center.x, center.y);
+        float radiusPx = endRadius.toPixels(mDPI);
+        scale(radiusPx, radiusPx);
+
+        auto *pattern = ((CairoGradient&)gradient).radialPattern(startRadius / endRadius);
+        drawGradient(pattern);
+
+        restore();
+    }
+
+private:
+    void drawGradient(cairo_pattern_t *pattern)
+    {
+        auto *gc = cairoContext();
+
+        // We assume that this is bracketed by save/restore, so that the
+        // set_source() is undone
+        cairo_set_source(gc, pattern);
+
+        // Draw a rect the size of the entire context using the gradient brush;
+        // the clipping will limit to the path.
+        double ulX = 0.0, ulY = 0.0;
+        double urX = double(mWidth), urY = 0.0;
+        double lrX = double(mWidth), lrY = double(mHeight);
+        double llX = 0.0, llY = double(mHeight);
+
+        // We need to transform the four corners of the context-rect so that
+        // they are in the same coordinate system as the current transform
+        // matrix. To do that, we transform by the inverse of the transform
+        // matrix. Happily, this is exactly what cairo_device_to_user() does.
+        cairo_device_to_user(gc, &ulX, &ulY);
+        cairo_device_to_user(gc, &urX, &urY);
+        cairo_device_to_user(gc, &lrX, &lrY);
+        cairo_device_to_user(gc, &llX, &llY);
+
+        // Draw the full-context rect. Note that this might be rotated, so
+        // we cannot just draw a rectangle from ul to lr.
+        cairo_new_path(gc);
+        cairo_move_to(gc, ulX, ulY);
+        cairo_line_to(gc, urX, urY);
+        cairo_line_to(gc, lrX, lrY);
+        cairo_line_to(gc, llX, llY);
+        cairo_close_path(gc);
+
+        cairo_fill(gc);
+    }
+
+public:
     void drawText(const char *textUTF8, const Point& topLeft, const Font& font, PaintMode mode) override
     {
         drawText(layoutFromCurrent(textUTF8, font, mode), topLeft);

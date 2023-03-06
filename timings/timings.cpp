@@ -40,9 +40,9 @@ static const int kNTimesPerRun = 50;
 // which also takes 1/60 sec).
 #ifdef __APPLE__
 // macOS' image blitting is so slow that 50000 would take a long time
-static const int kNObjs = 3000;
+static const int kNObjs = 1000;
 #else
-static const int kNObjs = 10000;
+static const int kNObjs = 1000;
 #endif
 static const Color kBGColor(1.0f, 1.0f, 1.0f);
 
@@ -316,6 +316,144 @@ void clipBezier(DrawContext& dc, int n,
     dc.endDraw();
 }
 
+void drawText(DrawContext& dc, int n)
+{
+    int dx = 10;
+    int dy = 10;
+    LayoutInfo layout(dc, n, dx, dy);
+
+    auto x0 = PicaPt::fromPixels(dx, dc.dpi());
+    auto x = x0;
+    auto y = PicaPt::fromPixels(dy, dc.dpi());
+    int col = 0;
+    Font f("Arial", PicaPt(12.0f));
+
+    // macOS: slightly slower as the string gets longer:
+    //        30k items/sec for len=4, 29.5k items/sec for len=6
+    char text[] = { 'a', 'a', 'a', 'a', 'a', 'a', '\0' };  // 4: 470k combinations
+    std::function<void(int)> updateText;
+    updateText = [text=text, &updateText](int idx) {
+        if (text[idx] == '\0') {
+            for (int i = 0;  i < idx;  ++i) {
+                text[i] = 'a';
+            }
+            return;
+        } else if (text[idx] == 'z') {
+            updateText(idx + 1);
+            text[idx] = 'a';
+        } else {
+            text[idx] += 1;
+        }
+    };
+
+    dc.beginDraw();
+    dc.fill(kBGColor);
+    dc.setFillColor(Color(0.5f, 0.5f, 0.5f, 1.0f));
+    for (int i = 0;  i < n;  ++i) {
+        dc.drawText(text, Point(x, y), f, kPaintFill);
+        updateText(0); // change the text so the OS can't cache it
+        x += layout.dx;
+        col++;
+        if (col >= layout.nCols) {
+            col = 0;
+            x = x0;
+            y += layout.dy;
+        }
+    }
+    dc.endDraw();
+}
+
+void drawTextLayout(DrawContext& dc, int n)
+{
+    int dx = 10;
+    int dy = 10;
+    LayoutInfo layout(dc, n, dx, dy);
+
+    auto x0 = PicaPt::fromPixels(dx, dc.dpi());
+    auto x = x0;
+    auto y = PicaPt::fromPixels(dy, dc.dpi());
+    int col = 0;
+
+    Font font("Arial", PicaPt(12.0f));
+    auto textLayout = dc.createTextLayout("abcdef", font, Color(0.5f, 0.5f, 0.5f, 1.0f));
+
+    dc.beginDraw();
+    dc.fill(kBGColor);
+    for (int i = 0;  i < n;  ++i) {
+        dc.drawText(*textLayout, Point(x, y));
+        x += layout.dx;
+        col++;
+        if (col >= layout.nCols) {
+            col = 0;
+            x = x0;
+            y += layout.dy;
+        }
+    }
+    dc.endDraw();
+}
+
+void drawLinearGradient(DrawContext& dc, int n, int sizePx)
+{
+    int dx = 10;
+    int dy = 10;
+    LayoutInfo layout(dc, n, dx, dy);
+
+    auto x0 = PicaPt::fromPixels(dx, dc.dpi());
+    auto x = x0;
+    auto y = PicaPt::fromPixels(dy, dc.dpi());
+    auto size = PicaPt::fromPixels(sizePx, dc.dpi());
+    int col = 0;
+
+    auto &gradient = dc.getGradient({ { Color::kGreen, 0.0f }, { Color::kBlue, 1.0f } });
+
+    dc.beginDraw();
+    dc.fill(kBGColor);
+    for (int i = 0;  i < n;  ++i) {
+        auto path = dc.createBezierPath();
+        path->addRect(Rect(x, y, size, size));
+        dc.drawLinearGradientPath(path, gradient, Point(x, y), Point(x + size, y + size));
+        x += layout.dx;
+        col++;
+        if (col >= layout.nCols) {
+            col = 0;
+            x = x0;
+            y += layout.dy;
+        }
+    }
+    dc.endDraw();
+}
+
+void drawRadialGradient(DrawContext& dc, int n, int sizePx)
+{
+    int dx = 10;
+    int dy = 10;
+    LayoutInfo layout(dc, n, dx, dy);
+
+    auto x0 = PicaPt::fromPixels(dx, dc.dpi());
+    auto x = x0;
+    auto y = PicaPt::fromPixels(dy, dc.dpi());
+    auto size = PicaPt::fromPixels(sizePx, dc.dpi());
+    int col = 0;
+
+    auto &gradient = dc.getGradient({ { Color::kYellow, 0.0f }, { Color::kGreen, 1.0f } });
+
+    dc.beginDraw();
+    dc.fill(kBGColor);
+    for (int i = 0;  i < n;  ++i) {
+        auto path = dc.createBezierPath();
+        path->addEllipse(Rect(x, y, size, size));
+        dc.drawRadialGradientPath(path, gradient, Point(x, y), PicaPt::kZero, 0.5f * size /*radius*/);
+        x += layout.dx;
+        col++;
+        if (col >= layout.nCols) {
+            col = 0;
+            x = x0;
+            y += layout.dy;
+        }
+    }
+    dc.endDraw();
+}
+
 std::shared_ptr<BezierPath> createSquare100(DrawContext& dc, int nPts, const Point& center)
 {
     auto rect = dc.createBezierPath();
@@ -400,6 +538,11 @@ Timings::Timings()
                           this->mImg100 = createImage(dc, 100, 100, 72.0f);
                       }
                   } },
+              // some platforms like Direct2D take some time to create everything for the
+              // first draw. Since we subtract off the timing for kBaseRunName, we need
+              // it to be representative, so we do a pre-run of nothing before the
+              // actually timed run.
+              Run{"init draw", 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
               Run{kBaseRunName, 0, [](DrawContext& dc, int nObjs) { drawNothing(dc); } },
               Run{"rects (fill)", kNObjs,
                   [](DrawContext& dc, int nObjs) { drawRects(dc, nObjs, 100, 100,
@@ -457,6 +600,20 @@ Timings::Timings()
               Run{"clip bezier", kNObjs,
                   [radiusPx](DrawContext& dc, int nObjs) { clipBezier(dc, nObjs, createStar10,
                                                            radiusPx); } },
+
+              Run{"text (no caching)", kNObjs,
+                  [](DrawContext& dc, int nObjs) { drawText(dc, nObjs); } },
+              Run{"text (cached with TextLayout)", kNObjs,
+                  [](DrawContext& dc, int nObjs) { drawText(dc, nObjs); } },
+
+              Run{"linear gradient (10 px)", kNObjs,
+                  [](DrawContext& dc, int nObjs) { drawLinearGradient(dc, nObjs, 100); } },
+              Run{"linear gradient (50 px)", kNObjs,
+                  [](DrawContext& dc, int nObjs) { drawLinearGradient(dc, nObjs, 50); } },
+              Run{"radial gradient (10 px)", kNObjs,
+                  [](DrawContext& dc, int nObjs) { drawRadialGradient(dc, nObjs, 10); } },
+              Run{"radial gradient (50 px)", kNObjs,
+                  [](DrawContext& dc, int nObjs) { drawRadialGradient(dc, nObjs, 50); } },
         };
 }
 
@@ -466,7 +623,7 @@ Timings::State Timings::runNext(DrawContext *dc)
     auto resultIt = mResults.find(lastRun.name);
     if (resultIt != mResults.end()) {
         auto &result = resultIt->second;
-        result.end = std::chrono::high_resolution_clock::now();
+        result.end = std::chrono::steady_clock::now();
         result.n++;
         if (result.n >= kNTimesPerRun) {
             printResult(lastRun, result);
@@ -485,7 +642,7 @@ Timings::State Timings::runNext(DrawContext *dc)
     }
     auto &result = resultIt->second;
     if (result.n == 0) {
-        result.start = std::chrono::high_resolution_clock::now();
+        result.start = std::chrono::steady_clock::now();
     }
 
     thisRun.func(*dc, thisRun.nObjs);

@@ -87,7 +87,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         DispatchMessage(&msg);
     }
 
-    DestroyWindow(w);
+    assert(!gDC);
     gTimings.reset();
 
     // If we are not running a terminal, then we created a console, which
@@ -114,8 +114,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             if (gTimings->runNext(gDC.get()) == Timings::CONTINUE) {
                 InvalidateRect(hwnd, NULL, NULL);
             } else {
-                PostQuitMessage(1);
+                gDC.reset();
+                DestroyWindow(hwnd);
             }
+            return 0;
+        case WM_DESTROY:
+            PostQuitMessage(1);
             return 0;
         default:
             return DefWindowProc(hwnd, message, wParam, lParam);

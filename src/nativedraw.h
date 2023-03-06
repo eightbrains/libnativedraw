@@ -721,6 +721,30 @@ protected:
     std::unique_ptr<Impl> mImpl;
 };
 
+class Gradient
+{
+public:
+    using Id = unsigned long long;
+
+    struct Stop {
+        Color color;
+        float location;  /// in the range [0, 1]
+    };
+
+public:
+    virtual ~Gradient();
+
+    virtual bool isValid() const = 0;
+
+    /// Returns an id that can be used to get this gradient from the
+    /// DrawContext in the future.
+    virtual Id id() const = 0;
+
+protected:
+    Gradient();
+    Gradient& operator=(const Gradient& rhs) = delete;
+};
+
 enum ImageFormat {
     kImageRGBA32 = 1,
     kImageRGBA32_Premultiplied,
@@ -974,6 +998,24 @@ public:
 
     virtual std::shared_ptr<BezierPath> createBezierPath() const = 0;
 
+    /// Returns a linear gradient representing the stops. The stop.location
+    /// values should range from 0 to 1. A stop may be repeated for a sharp
+    /// transition. Gradients may not be pixel-perfect between platforms. The
+    /// DrawContext manages the Gradient objects, as some platforms restrict
+    /// the gradient object to the drawing context in which it was created.
+    /// Since giving out a shared_ptr effectively loses control of the
+    /// object's lifetime, we give out a reference. This reference should NOT
+    /// be chached! (This is why it is a reference instead of a pointer, to
+    /// make that harder.) The gradient will be created and cached, so future
+    /// calls should return the same gradient. You can also call cache
+    /// Gradient::getId() and call getGradient(); this will be marginally
+    /// faster since it is otherwise necessary to iterate over all the stops
+    /// to compute the cache id.
+    virtual Gradient& getGradient(const std::vector<Gradient::Stop>& stops) = 0;
+
+    /// Returns a reference to a gradient.
+    virtual Gradient& getGradient(size_t id) const = 0;
+
     /// Creates a text layout. If width is non-zero, the text will wrap to the
     /// width, and the horizontal alignment will be applied. If height
     /// is non-zero the vertical alignment will be applied. Note that, despite
@@ -1031,6 +1073,9 @@ public:
     virtual void restore() = 0;
 
     virtual void translate(const PicaPt& dx, const PicaPt& dy) = 0;
+    /// +deg is counter-clockwise, -deg is clockwise. This is the same as
+    /// in mathematical coordinates where +y is up, to reduce mistakes
+    /// forgetting that +y is not up in bitmaps.
     virtual void rotate(float degrees) = 0;
     virtual void scale(float sx, float sy) = 0;
 
@@ -1061,6 +1106,18 @@ public:
     virtual void drawRoundedRect(const Rect& rect, const PicaPt& radius, PaintMode mode);  // has impl
     virtual void drawEllipse(const Rect& rect, PaintMode mode) = 0;
     virtual void drawPath(std::shared_ptr<BezierPath> path, PaintMode mode) = 0;
+    virtual void drawLinearGradientPath(std::shared_ptr<BezierPath> path,
+                                        Gradient& gradient,
+                                        const Point& start,
+                                        const Point& end) = 0;
+    // Direct2D does not support start+radius, end+radius (unlike macOS and
+    // cairo), so we use this simplified interface.
+    virtual void drawRadialGradientPath(std::shared_ptr<BezierPath> path,
+                                        Gradient& gradient,
+                                        const Point& center,
+                                        const PicaPt& startRadius,
+                                        const PicaPt& endRadius) = 0;
+
     /// Note that the text sits ON the baseline, which will be aligned with
     /// the vertical pixel boundary. As a result, if the baseline is at y=16,
     /// The ascent of the glyph will end at pixel 15 (since y=16 is in-between

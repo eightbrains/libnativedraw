@@ -256,6 +256,23 @@ public:
         return "";
     }
 
+    std::string verifyRect(const std::string& msg, int xpx, int ypx, int widthpx, int heightpx,
+                           const Color& fg, float allowedErr = 0.0f)
+    {
+        for (int y = ypx; y < ypx + heightpx; ++y) {
+            for (int x = xpx; x < xpx + widthpx; ++x) {
+                auto pixel = mBitmap->pixelAt(x, y);
+                if (std::abs(pixel.red() - fg.red()) > allowedErr ||
+                    std::abs(pixel.green() - fg.green()) > allowedErr ||
+                    std::abs(pixel.blue() - fg.blue()) > allowedErr)
+                {
+                    return createPixelError(msg, x, y, fg, pixel);
+                }
+            }
+        }
+        return "";
+    }
+
     std::string createPixelError(const std::string& msg, int x, int y,
                                  const Color& expected, const Color& got)
     {
@@ -1356,6 +1373,595 @@ public:
             err << "joinStyle(): expected " << int(join) << " but got "
                 << int(mBitmap->strokeJoinStyle());
             return err.str();
+        }
+        return "";
+    }
+};
+
+class GradientTest : public BitmapTest
+{
+public:
+    GradientTest(const std::string& name, int w, int h) : BitmapTest(name, w, h) {}
+
+protected:
+    float acceptableError() const
+    {
+        // macOS can be 0x1 off in the top row, but even worse, it seems like for a
+        // 16 px linear gradient macOS applies 15 steps with the start and end inset
+        // by 1/4 px and then pixel 7 and 8 are only 1/2 a step different.
+        // Probably macOS allocates a 256 pixel, 1-D bitmap, and then shrinks it
+        // down to 16 pixels, which seems like it might produce this result.
+        // We could use a larger bitmap, but then errors will be hard to read, and
+        // besides, gradients are unlikely to be pixel-perfect across platforms, so
+        // this is just a basic correctness test for calling the API correctly.
+#ifdef __APPLE__
+        // Linear gradient using u = x + 0.5 gives < 6/256
+        // Radial gradiant using u = x gives < 11/256 (but both endpoints are exact)
+        return 11.0f / 256.0f;
+#elif defined(_WIN32) || defined(_WIN64)
+        // Linear gradient works at 1/256
+        return 8.0f / 256.0f;
+#elif USING_X11
+        // Cairo: linear gradient works at 1/256
+        return 8.0f / 256.0f;
+#else
+        return 1.0f / 256.0f;
+#endif
+    }
+
+    enum Mode { kGradientHoriz, kGradientRadialX, kGradientRadialY };
+    std::string verifyHorizGradient(const Color& startColor, const Color& endColor,
+                                    int startX, int startY, int width, int height,
+                                    int dx = 1, int dy = 1, Mode mode = kGradientHoriz)
+    {
+        assert(dx == 1 || dx == -1);
+        assert(dy == 1 || dy == -1);
+
+        float err = acceptableError();
+        float x0, x1, y0, y1;
+        x0 = startX;
+        x1 = startX + dx * width;
+        y0 = startY;
+        y1 = startY + dy * height;
+        for (int x = x0;  x != x1;  x += dx) {
+            for (int y = y0;  y != y1;  y += dy) {
+                float u, uLen;
+                // The gradient color is roughly on the center of the pixel.
+                // In radial mode we can get the start on an actual pixel center.
+                switch (mode) {
+                    case kGradientHoriz:
+                        u = float(std::abs(x - x0)) + 0.5f;
+                        uLen = float(width);
+                        break;
+                    case kGradientRadialX:
+                        u = float(std::abs(x - x0));
+                        uLen = float(width);
+                        break;
+                    case kGradientRadialY:
+                        u = float(std::abs(y - y0));
+                        uLen = float(height);
+                        break;
+                }
+                float endAmount = u / uLen;
+                Color expected(
+                        (1.0f - endAmount) * startColor.red() + endAmount * endColor.red(),
+                        (1.0f - endAmount) * startColor.green() + endAmount * endColor.green(),
+                        (1.0f - endAmount) * startColor.blue() + endAmount * endColor.blue(),
+                        1.0f);
+                auto pixel = mBitmap->pixelAt(x, y);
+                if (std::abs(pixel.red() - expected.red()) > err ||
+                    std::abs(pixel.green() - expected.green()) > err ||
+                    std::abs(pixel.blue() - expected.blue()) > err ||
+                    std::abs(pixel.alpha() - expected.alpha()) > err)
+                {
+                    return createPixelError("incorrect gradient value", x, y, expected, pixel);
+                }
+            }
+        }
+        return "";
+    }
+};
+
+class LinearGradientTest : public GradientTest
+{
+public:
+    LinearGradientTest() : GradientTest("linear gradient", 16, 16) {}
+
+    std::string run() override
+    {
+        auto dpi = mBitmap->dpi();
+        auto rectAll = Rect::fromPixels(0, 0, mBitmap->width(), mBitmap->height(), dpi);
+
+        std::vector<Gradient::Stop> stops = { { Color::kBlack, 0.0f }, { Color::kRed, 1.0f } };
+        auto &gradient = mBitmap->getGradient(stops);
+        if (!gradient.isValid()) {
+            return "could not create gradient";
+        }
+
+        // black -> red, left to right
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        auto path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        Point start = Point::kZero;
+        Point end(PicaPt::fromPixels(mBitmap->width(), dpi), PicaPt::kZero);
+        mBitmap->drawLinearGradientPath(path, gradient, start, end);
+        mBitmap->endDraw();
+
+        auto err = verifyHorizGradient(stops[0].color, stops[1].color,
+                                       0, 0, mBitmap->width(), mBitmap->height());
+        if (!err.empty()) {
+            return "left-to-right: " + err;
+        }
+
+        // black -> red, right to left
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        start = Point::kZero;
+        end = Point(PicaPt::fromPixels(mBitmap->width(), dpi), PicaPt::kZero);
+        mBitmap->drawLinearGradientPath(path, gradient, end, start);
+        mBitmap->endDraw();
+
+        err = verifyHorizGradient(stops[1].color, stops[0].color,
+                                  0, 0, mBitmap->width(), mBitmap->height());
+        if (!err.empty()) {
+            return "right-to-left: " + err;
+        }
+
+        // black -> red, right to left (but actually left to right, rotated 180 deg)
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        mBitmap->save();
+        mBitmap->translate(rectAll.midX(), rectAll.midY());
+        mBitmap->rotate(180.0f);
+        mBitmap->translate(-rectAll.midX(), -rectAll.midY());
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        start = Point::kZero;
+        end = Point(PicaPt::fromPixels(mBitmap->width(), dpi), PicaPt::kZero);
+        mBitmap->drawLinearGradientPath(path, gradient, start, end);
+        mBitmap->restore();  // undo rotation so later draws work like we expect
+        mBitmap->endDraw();
+
+        err = verifyHorizGradient(stops[1].color, stops[0].color,
+                                  0, 0, mBitmap->width(), mBitmap->height());
+        if (!err.empty()) {
+            return "left-to-right, rotated 180 deg: " + err;
+        }
+
+        // black -> red, rotated 90 deg (so black is on bottom, red on top)
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        mBitmap->save();
+        mBitmap->translate(rectAll.midX(), rectAll.midY());
+        mBitmap->rotate(90.0f);
+        mBitmap->translate(-rectAll.midX(), -rectAll.midY());
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        start = Point::kZero;
+        end = Point(PicaPt::fromPixels(mBitmap->width(), dpi), PicaPt::kZero);
+        mBitmap->drawLinearGradientPath(path, gradient, start, end);
+        mBitmap->restore();  // undo rotation so later draws work like we expect
+        mBitmap->endDraw();
+
+        Color lastColor;
+        for (int y = 0;  y < mBitmap->height();  ++y) {
+            auto rowColor = mBitmap->pixelAt(1, y);  // in case first pixel is a little squirrely, like on macOS
+            if (y > 0) {
+                if (rowColor.red() >= lastColor.red()) {
+                    std::stringstream s;
+                    s << "black->red (bottom->top): expected red < " << lastColor.red() << ", got "
+                      << rowColor.red() << " at (1, " << y << "1);  maybe rotation is backwards?";
+                    return s.str();
+                }
+                if (rowColor.green() != 0.0 || rowColor.blue() != 0.0f) {
+                    std::stringstream s;
+                    s << "black->red (bottom->top): expected red in [0, 1] and green, blue == 0, got " << rowColor.toHexString()
+                      << " at (1, " << y << ")";
+                    return s.str();
+                }
+            }
+            lastColor = rowColor;
+            const float kHorizErr = 2.0f / 256.0f;  // macOS needs 2, Windows only 1
+            for (int x = 0;  x < mBitmap->width();  ++x) {
+                auto c = mBitmap->pixelAt(x, y);
+                if (std::abs(c.red() - rowColor.red()) > kHorizErr) {
+                    std::stringstream s;
+                    s << "black->red (bottom->top): expected red " << rowColor.red() << ", got " << c.red()
+                      << " at (" << x << ", " << y << ")";
+                    return s.str();
+                }
+                if (rowColor.green() != 0.0 || rowColor.blue() != 0.0f) {
+                    std::stringstream s;
+                    s << "black->red (bottom->top): expected green, blue == 0, got " << c.toHexString()
+                        << " at (" << x << ", " << y << ")";
+                    return s.str();
+                }
+            }
+        }
+
+        // black -> red, using black bg and 0 -> 1 alpha
+        std::vector<Gradient::Stop> alphaStops = { { Color(1.0f, 0.0f, 0.0f, 0.0f), 0.0f },
+                                                   { Color(1.0f, 0.0f, 0.0f, 1.0f), 1.0f } };
+        auto &alphaGradient = mBitmap->getGradient(alphaStops);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        start = Point::kZero;
+        end = Point(PicaPt::fromPixels(mBitmap->width(), dpi), PicaPt::kZero);
+        mBitmap->drawLinearGradientPath(path, alphaGradient, start, end);
+        mBitmap->endDraw();
+
+        err = verifyHorizGradient(Color::kBlack, Color::kRed,
+                                  0, 0, mBitmap->width(), mBitmap->height());
+        if (!err.empty()) {
+            return "left-to-right, alpha: " + err;
+        }
+
+        // two pixels inset on left and right:  should be black on left and red on right
+        const int inset = 2;
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        start = Point(PicaPt::fromPixels(float(inset), dpi), PicaPt::kZero);
+        end = Point(PicaPt::fromPixels(mBitmap->width() - inset, dpi), PicaPt::kZero);
+        mBitmap->drawLinearGradientPath(path, gradient, start, end);
+        mBitmap->endDraw();
+        for (int x = 0;  x < inset;  ++x) {
+            Color expected = stops[0].color;
+            for (int y = 0;  y < mBitmap->height();  ++y) {
+                auto pixel = mBitmap->pixelAt(x, y);
+                if (pixel.toRGBA() != expected.toRGBA()) {
+                    return createPixelError("before gradient start", x, y, expected, pixel);
+                }
+            }
+        }
+        for (int x = mBitmap->width() - inset;  x < mBitmap->width();  ++x) {
+            Color expected = stops[1].color;
+            for (int y = 0;  y < mBitmap->height();  ++y) {
+                auto pixel = mBitmap->pixelAt(x, y);
+                if (pixel.toRGBA() != expected.toRGBA()) {
+                    return createPixelError("after gradient end", x, y, expected, pixel);
+                }
+            }
+        }
+
+        // black | red (discrete)
+        std::vector<Gradient::Stop> discreteStops = { { Color::kBlack, 0.0f },
+                                                      { Color::kBlack, 0.5f },
+                                                      { Color::kRed, 0.5f },
+                                                      { Color::kRed, 1.0f } };
+        auto &discreteGradient = mBitmap->getGradient(discreteStops);
+
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        start = Point::kZero;
+        end = Point(PicaPt::fromPixels(mBitmap->width(), dpi), PicaPt::kZero);
+        mBitmap->drawLinearGradientPath(path, discreteGradient, start, end);
+        mBitmap->endDraw();
+
+        const int halfW = mBitmap->width() / 2;
+        err = verifyRect("discrete[0]", 0, 0, halfW - 1, mBitmap->height(), discreteStops.front().color);
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyRect("discrete[1]", halfW, 0, halfW, mBitmap->height(), discreteStops.back().color);
+        if (!err.empty()) {
+            return err;
+        }
+
+        // black -> red, 45 deg. This is hard to evaluate, and is here to help
+        // detect incorrect clipping/drawing.
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        mBitmap->drawLinearGradientPath(path, gradient, rectAll.upperLeft(), rectAll.lowerRight());
+        mBitmap->endDraw();
+        for (int y = 0;  y < mBitmap->height();  ++y) {
+            for (int x = 0;  x < mBitmap->width();  ++x) {
+                auto pixel = mBitmap->pixelAt(x, y);
+                if (pixel.blue() > 0.0f) {
+                    return "unexpected pixel with blue (" + pixel.toHexString() + ") at (" + std::to_string(x) + ", " + std::to_string(y) + "); gradient is not drawing completely";
+                }
+            }
+        }
+        auto pixel = mBitmap->pixelAt(0, 0);
+        if (pixel.red() >= 1.0f / 16.0f  || pixel.green() > 0.0f || pixel.blue() > 0.0f) {
+            return createPixelError("", 0, 0, Color::kBlack, pixel);
+        }
+        pixel = mBitmap->pixelAt(15, 15);
+        if (pixel.red() < 1.0f / 16.0f  || pixel.green() > 0.0f || pixel.blue() > 0.0f) {
+            return createPixelError("", 15, 15, Color::kRed, pixel);
+        }
+        pixel = mBitmap->pixelAt(0, 15);
+        if (std::abs(pixel.red() - 0.5f) >  0.1f || pixel.green() > 0.0f || pixel.blue() > 0.0f) {
+            return createPixelError("", 0, 15, Color::kRed, pixel);
+        }
+
+        return "";
+    }
+};
+
+class RadialGradientTest : public GradientTest
+{
+public:
+    RadialGradientTest() : GradientTest("radial gradient", 33, 33) {}
+
+    std::string run() override
+    {
+        assert(mBitmap->width() == mBitmap->height());
+        assert(mBitmap->width() % 2 == 1);
+
+        auto dpi = mBitmap->dpi();
+        auto rectAll = Rect::fromPixels(0, 0, mBitmap->width(), mBitmap->height(), dpi);
+
+        std::vector<Gradient::Stop> stops = { { Color::kBlack, 0.0f }, { Color::kRed, 1.0f } };
+        auto &gradient = mBitmap->getGradient(stops);
+        if (!gradient.isValid()) {
+            return "could not create gradient";
+        }
+
+        auto startRadius = PicaPt::kZero;
+        auto endRadius = PicaPt::fromPixels(0.5f * float(mBitmap->width()) + 1.0f, dpi);
+
+        // black -> red
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        auto path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        Point center = rectAll.center();
+        mBitmap->drawRadialGradientPath(path, gradient, center, startRadius, endRadius);
+        mBitmap->endDraw();
+
+        auto err = verifyRadialGradient(stops[0].color, stops[1].color,
+                                        0, 0, mBitmap->width(), mBitmap->height());
+        if (!err.empty()) {
+            return "black->red (from center): " + err;
+        }
+
+        // black -> red (but translated from (0, 0) to center)
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        mBitmap->save();
+        mBitmap->translate(rectAll.midX(), rectAll.midY());
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll.translated(-rectAll.midX(), -rectAll.midY()));
+        center = Point::kZero;
+        mBitmap->drawRadialGradientPath(path, gradient, Point::kZero, startRadius,
+                                        endRadius);
+        mBitmap->restore();  // undo translation so later draws work like we expect
+        mBitmap->endDraw();
+
+        err = verifyRadialGradient(stops[0].color, stops[1].color,
+                                   0, 0, mBitmap->width(), mBitmap->height());
+        if (!err.empty()) {
+            return "black->red (from origin, translated to center): " + err;
+        }
+
+        // black -> red, using black bg and 0 -> 1 alpha
+        std::vector<Gradient::Stop> alphaStops = { { Color(1.0f, 0.0f, 0.0f, 0.0f), 0.0f },
+                                                   { Color(1.0f, 0.0f, 0.0f, 1.0f), 1.0f } };
+        auto &alphaGradient = mBitmap->getGradient(alphaStops);
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        center = rectAll.center();
+        mBitmap->drawRadialGradientPath(path, alphaGradient, center, startRadius, endRadius);
+        mBitmap->endDraw();
+
+        err = verifyRadialGradient(Color::kBlack, Color::kRed,
+                                   0, 0, mBitmap->width(), mBitmap->height());
+        if (!err.empty()) {
+            return "black->red, alpha: " + err;
+        }
+
+        // two pixels inset on inside and and outside:  should be black on inside and red on outside
+        int inset = 2;
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        // keep start, end from above
+        mBitmap->drawRadialGradientPath(path, gradient, center,
+                                        startRadius + PicaPt::fromPixels(inset, dpi),
+                                        endRadius - PicaPt::fromPixels(inset, dpi));
+        mBitmap->endDraw();
+        inset -= 1;  // the gradient isn't very precise (at least on macOS)
+        float allowedErr = acceptableError();
+        float centerX = std::floor(0.5f * float(mBitmap->width()));
+        float centerY = std::floor(0.5f * float(mBitmap->height()));
+        for (int y = centerY - inset; y < centerY + inset; ++y) {
+            for (int x = centerX - inset; x < centerX + inset; ++x) {
+                auto pixel = mBitmap->pixelAt(x, y);
+                if (std::abs(pixel.red() - stops[0].color.red()) > allowedErr ||
+                    std::abs(pixel.green() - stops[0].color.green()) > allowedErr ||
+                    std::abs(pixel.blue() - stops[0].color.blue()) > allowedErr)
+                {
+#ifdef __APPLE__
+                    // For some reason, on 10.14, the very center pixel is transparent, but nowhere else
+                    // before the gradient start. I don't think this is an API call problem.
+                    if (x != centerX && y != centerY) {
+                        return createPixelError("before gradient start", x, y, stops[0].color, pixel);
+                    }
+#else
+                    return createPixelError("before gradient start", x, y, stops[0].color, pixel);
+#endif // __APPLE__
+                }
+            }
+        }
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyRect("after gradient end", 0, 0, inset, mBitmap->height(), stops[1].color, acceptableError());
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyRect("after gradient end", 0, 0, mBitmap->width(), inset, stops[1].color, acceptableError());
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyRect("after gradient end", mBitmap->width() - inset, 0, inset, mBitmap->height(), stops[1].color, acceptableError());
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyRect("after gradient end", 0, mBitmap->height() - inset, mBitmap->width(), inset, stops[1].color, acceptableError());
+        if (!err.empty()) {
+            return err;
+        }
+
+        // black | red (discrete)
+        std::vector<Gradient::Stop> discreteStops = { { Color::kBlack, 0.0f },
+                                                      { Color::kBlack, 0.5f },
+                                                      { Color::kRed, 0.5f },
+                                                      { Color::kRed, 1.0f } };
+        auto &discreteGradient = mBitmap->getGradient(discreteStops);
+
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlue);
+        path = mBitmap->createBezierPath();
+        path->addRect(rectAll);
+        // keep start, end from above
+        mBitmap->drawRadialGradientPath(path, discreteGradient, center, startRadius, endRadius);
+        mBitmap->endDraw();
+
+        // Some platforms blend the transitional pixel, so don't test that one.
+        // (MacOS is a hard transition, at least for this test, Direct2D blends)
+        const int half = mBitmap->width() / 4;
+        err = verifyRect("discrete[0]", 0, centerY, half - 1, 1, discreteStops.back().color);
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyRect("discrete[1]", half + 1, centerY, half - 1, 1, discreteStops.front().color);
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyRect("discrete[0]", centerX, 0, 1, half - 1, discreteStops.back().color);
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyRect("discrete[1]", centerX, half + 1, 1, half - 1, discreteStops.front().color);
+        if (!err.empty()) {
+            return err;
+        }
+
+        return "";
+    }
+
+protected:
+    std::string verifyRadialGradient(const Color& startColor, const Color& endColor,
+                                     int startX, int startY, int width, int height)
+    {
+        int halfW = int(std::floor(0.5f * float(width)));
+        int halfH = int(std::floor(0.5f * float(height)));
+        auto err = verifyHorizGradient(startColor, endColor,
+                                       halfW, halfH,
+                                       halfW + 1, 1,
+                                       -1, 1, kGradientRadialX);
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyHorizGradient(startColor, endColor,
+                                  halfW, halfH,
+                                  halfW + 1, 1,
+                                  1, 1, kGradientRadialX);
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyHorizGradient(startColor, endColor,
+                                  halfW, halfH,
+                                  1, halfH + 1,
+                                  1, 1, kGradientRadialY);
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyHorizGradient(startColor, endColor,
+                                  halfW, halfH,
+                                  1, halfH + 1,
+                                  1, -1, kGradientRadialY);
+        if (!err.empty()) {
+            return err;
+        }
+
+        return "";
+    }
+};
+
+class GradientMemoryTest : public BitmapTest
+{
+public:
+    GradientMemoryTest()
+        : BitmapTest("gradients (memory)", 10, 10)
+    {
+    }
+
+    std::string run() override
+    {
+        // Clear so that failures look more appropriate
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->endDraw();
+        
+        auto dpi = mBitmap->dpi();
+
+        auto dc = createBitmap(kBitmapRGBA, mWidth, mHeight, dpi);
+
+        std::vector<Gradient::Stop> stops = { { Color::kBlack, 0.0f }, { Color::kRed, 1.0f } };
+        auto &gradientStop = dc->getGradient(stops);
+        auto &gradientId = dc->getGradient(gradientStop.id());
+        if (gradientStop.id() != gradientId.id()) {
+            return "getGradient(getGradient(stops).id()) does not return the same gradient. Probably gradients are not getting registered by id.";
+        }
+        if (dc->getGradient(stops).id() != gradientStop.id()) {
+            return "getGradient(stops) should always return the same object if the stops are the same";
+        }
+
+        auto &bad = dc->getGradient(0);
+        if (bad.id() != 0) {
+            return "getGradient(0) should return a bad gradient with id() = 0";
+        }
+        auto &bad2 = dc->getGradient((Gradient::Id)-1);
+        if (bad2.id() != bad.id()) {
+            return "bad gradients for the same DrawContext should return the same object";
+        }
+
+        Color fg = Color::kGreen; // unlikely for this to be a no-op color
+        mBitmap->beginDraw();
+        mBitmap->fill(fg);
+        auto path = mBitmap->createBezierPath();
+        path->addRect(Rect::fromPixels(2, 2, mWidth - 4, mHeight - 4, dpi));
+        mBitmap->drawLinearGradientPath(path,
+                                        mBitmap->getGradient((Gradient::Id)0),
+                                        Point::kZero,
+                                        Point::fromPixels(mWidth, 0, dpi));
+        mBitmap->endDraw();
+        auto err = verifyRect("err", 0, 0, mWidth, mHeight, fg);
+        if (!err.empty()) {
+            return "bad/invalid gradient should not draw";
+        }
+
+        // for some OSes deleting the context should clean up gradients
+        auto invalidId = gradientStop.id();
+        dc.reset();
+        // gradientStop and gradientId are now invalid
+#if defined(_WIN32) || defined(_WIN64)
+        // don't return, do tests
+#elif defined(__APPLE__)
+        return "";  // gradients are global to all contexts on macOS/iOS
+#elif USING_X11
+        return "";  // gradients are global to all contexts with Cairo
+#else
+        return "does this platform have global or context-dependent gradients?";
+#endif
+        if (mBitmap->getGradient(invalidId).id() == invalidId) {
+            return "gradient was not cleaned up after context was destroyed";
         }
         return "";
     }
@@ -3420,6 +4026,9 @@ int main(int argc, char *argv[])
         std::make_shared<ClipPathTest>(),
         std::make_shared<SaveRestoreTest>(),
         std::make_shared<GettersTest>(),
+        std::make_shared<LinearGradientTest>(),
+        std::make_shared<RadialGradientTest>(),
+        std::make_shared<GradientMemoryTest>(),
         std::make_shared<FontTest>("Arial", 20),
         std::make_shared<FontTest>("Georgia", 20),
         // std::make_shared<FontTest>("Courier New", 20),

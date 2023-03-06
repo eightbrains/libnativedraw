@@ -54,6 +54,7 @@ class ResourceManager
 public:
     using CreateFunc = std::function<Rsrc(const Desc&, float)>;  // create(desc, dpi)
     using DestroyFunc = std::function<void(Rsrc)>;               // destroy(rsrc)
+    using HashType = std::size_t;
 
     // Virtual functions are not available in base class
     // destructors, so need to pass the functions as function objs
@@ -79,8 +80,18 @@ public:
         return it->second;
     }
 
+    void destroy(const Desc& desc, float dpi)
+    {
+        HashType hash = desc.hash();
+        hash_combine(hash, dpi);
+        auto it = mHash2Rsrc.find(hash);
+        if (it != mHash2Rsrc.end()) {
+            mDestroy(it->second);
+            mHash2Rsrc.erase(it);
+        }
+    }
+
 protected:
-    using HashType = std::size_t;
     std::unordered_map<HashType, Rsrc> mHash2Rsrc;
     CreateFunc mCreate;
     DestroyFunc mDestroy;
@@ -91,6 +102,23 @@ extern const Color kDefaultReplacementColor;
 bool isFamilyDefault(const Font& f);
 bool isPointSizeDefault(const Font& f);
 Font fontSizedForSuperSubscript(const Font& f);
+
+struct GradientInfo
+{
+    DrawContext* context = nullptr;
+    std::vector<Gradient::Stop> stops;
+
+    size_t hash() const
+    {
+        size_t seed = 0;
+        hash_combine(seed, context);
+        for (auto &s : stops) {
+            hash_combine(seed, s.color.hash());
+            hash_combine(seed, s.location);
+        }
+        return seed;
+    }
+};
 
 struct BezierPath::Impl
 {

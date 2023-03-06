@@ -2555,7 +2555,7 @@ public:
         // gives us the desired result.
         translate(start.x, start.y);
         scale(dist, dist);
-        rotate(rotationRad * 180.0f / 3.14159265f);
+        rotate(-rotationRad * 180.0f / 3.14159265f);
 
         drawGradient(brush);
         restore();

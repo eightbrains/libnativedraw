@@ -1664,13 +1664,25 @@ public:
         path->addRect(rectAll);
         mBitmap->drawLinearGradientPath(path, gradient, rectAll.upperLeft(), rectAll.lowerRight());
         mBitmap->endDraw();
-        for (int y = 0;  y <= mBitmap->height();  ++y) {
-            for (int x = 0;  x <= mBitmap->width();  ++x) {
+        for (int y = 0;  y < mBitmap->height();  ++y) {
+            for (int x = 0;  x < mBitmap->width();  ++x) {
                 auto pixel = mBitmap->pixelAt(x, y);
                 if (pixel.blue() > 0.0f) {
-                    return "unexpected pixel with blue at (" + std::to_string(x) + ", " + std::to_string(y) + "); gradient is not drawing completely";
+                    return "unexpected pixel with blue (" + pixel.toHexString() + ") at (" + std::to_string(x) + ", " + std::to_string(y) + "); gradient is not drawing completely";
                 }
             }
+        }
+        auto pixel = mBitmap->pixelAt(0, 0);
+        if (pixel.red() >= 1.0f / 16.0f  || pixel.green() > 0.0f || pixel.blue() > 0.0f) {
+            return createPixelError("", 0, 0, Color::kBlack, pixel);
+        }
+        pixel = mBitmap->pixelAt(15, 15);
+        if (pixel.red() < 1.0f / 16.0f  || pixel.green() > 0.0f || pixel.blue() > 0.0f) {
+            return createPixelError("", 15, 15, Color::kRed, pixel);
+        }
+        pixel = mBitmap->pixelAt(0, 15);
+        if (std::abs(pixel.red() - 0.5f) >  0.1f || pixel.green() > 0.0f || pixel.blue() > 0.0f) {
+            return createPixelError("", 0, 15, Color::kRed, pixel);
         }
 
         return "";

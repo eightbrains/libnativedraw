@@ -447,6 +447,7 @@ public:
             if (err != S_OK) {
                 mLinearFailed = true;
             }
+            stopCollection->Release();
         }
         return mLinear;
     }
@@ -483,6 +484,7 @@ public:
             if (err != S_OK) {
                 mRadialFailed = true;
             }
+            stopCollection->Release();
             mRadials[startRadius] = brush;
             it = mRadials.find(startRadius);
         }

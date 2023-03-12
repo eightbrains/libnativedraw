@@ -256,13 +256,17 @@ public:
         return mLinearGradient;
     }
 
-    // It is assumed that endRadius=1.0, so startRadius should be in [0.0, 1.0).
+    // It is assumed that endRadius=1.0, so startRadius should be in [0.0, 1.0].
     // This way we can simply scale to the actual endRadius size and everything
     // will work out perfectly. It also lets use re-use gradients that use
     // identical ratios (most probably start=0.0).
     cairo_pattern_t* radialPattern(float startRadius)
     {
-        assert(startRadius >= 0.0f && startRadius < 1.0f);
+        assert(startRadius >= 0.0f && startRadius <= 1.0f);
+        // The other platforms are fine with startRadius = 1.0, but cairo
+        // (or at least how we're using it) draws nothing.
+        startRadius = std::min(startRadius, 0.999f);
+        
 
         auto it = mRadialGradients.find(startRadius);
         if (it == mRadialGradients.end()) {
@@ -1707,7 +1711,7 @@ public:
         // (0, 0) to (1, 0) gives us the desired result.
         translate(start.x, start.y);
         scale(dist, dist);
-        rotate(rotationRad * 180.0f / 3.14159265f);
+        rotate(-rotationRad * 180.0f / 3.14159265f);
 
         drawGradient(((CairoGradient&)gradient).linearPattern());
         restore();

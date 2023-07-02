@@ -1372,6 +1372,9 @@ public:
                                 const Point& center, const PicaPt& startRadius,
                                 const PicaPt& endRadius) override
     {
+        PicaPt r1 = std::min(std::max(PicaPt::kZero, startRadius), endRadius - PicaPt(0.001f));
+        PicaPt r2 = endRadius;
+
         CGContextRef gc = (CGContextRef)mNativeDC;
         if (auto *cgg = dynamic_cast<CoreGraphicsGradient*>(&gradient)) {
             save();
@@ -1379,9 +1382,9 @@ public:
             CGContextDrawRadialGradient(
                 gc, cgg->cgGradient(),
                 CGPointMake(center.x.toPixels(mDPI), center.y.toPixels(mDPI)),
-                startRadius.toPixels(mDPI),
+                r1.toPixels(mDPI),
                 CGPointMake(center.x.toPixels(mDPI), center.y.toPixels(mDPI)),
-                endRadius.toPixels(mDPI),
+                r2.toPixels(mDPI),
                 kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
             restore();
         }

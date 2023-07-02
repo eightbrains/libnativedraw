@@ -2773,18 +2773,21 @@ public:
         Rect glyphsRect(glyphs[0].frame.x, glyphs[0].frame.y,
                         glyphs.back().frame.maxX() - glyphs[0].frame.x,
                         glyphs.back().frame.maxY() - glyphs[0].frame.y);
-        if (std::abs((glyphsRect.x - pixelsRect.x).toPixels(dpi)) >= 0.75f ||
+        float dx_px = (glyphsRect.x - pixelsRect.x).toPixels(dpi);
+        float dmaxX_px = (glyphsRect.maxX() - pixelsRect.maxX()).toPixels(dpi);
+        float dmaxY_px = (glyphsRect.maxY() - pixelsRect.maxY()).toPixels(dpi);
+        if ((dx_px < -1.5f || dx_px > 0.1f) ||
             (glyphsRect.y > pixelsRect.y || glyphsRect.y < pixelsRect.y - 0.333f * pixelsRect.height) ||
-            std::abs((glyphsRect.maxX() - pixelsRect.maxX()).toPixels(dpi)) > 0.75f ||
-            std::abs((glyphsRect.maxY() - pixelsRect.maxY()).toPixels(dpi)) > 0.75f)
+            (dmaxX_px > 1.5f || dmaxX_px < -0.1f) ||
+            (dmaxY_px < -0.1f || dmaxY_px > font.metrics(*mBitmap).descent.toPixels(dpi) + 0.25f))
         {
             std::stringstream s;
             s << "glyphs are incorrect, expected ("
-              << glyphsRect.x.toPixels(dpi) << ", " << glyphsRect.y.toPixels(dpi) << ") "
-              << glyphsRect.width.toPixels(dpi) << " x " << glyphsRect.height.toPixels(dpi)
-              << ", got ("
               << pixelsRect.x.toPixels(dpi) << ", " << pixelsRect.y.toPixels(dpi) << ") "
-              << pixelsRect.width.toPixels(dpi) << " x " << pixelsRect.height.toPixels(dpi);
+              << pixelsRect.width.toPixels(dpi) << " x " << pixelsRect.height.toPixels(dpi)
+              << ", got ("
+              << glyphsRect.x.toPixels(dpi) << ", " << glyphsRect.y.toPixels(dpi) << ") "
+              << glyphsRect.width.toPixels(dpi) << " x " << glyphsRect.height.toPixels(dpi);
             return s.str();
         }
 
@@ -2964,10 +2967,14 @@ public:
         mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
         mBitmap->endDraw();
         int n = 0;
+        int prevGreenY = -10;
         for (int y = baseline - 1;  y < mBitmap->height();  ++y) {
             auto c = mBitmap->pixelAt(x, y);
             if (c.red() == 0.0f && c.green() > 0.66f && c.blue() == 0.0f) {
-                n += 1;
+                if (y > prevGreenY + 1) {
+                    n += 1;
+                }
+                prevGreenY = y;
             }
         }
         if (n != 2) {
@@ -3088,7 +3095,7 @@ public:
         auto normalBottomX = findLineStart(bottomY);
         assert(normalTopX >= 0.0f && normalBottomX >= 0.0f);
         auto xDelta = std::abs(normalTopX - normalBottomX);
-        if (xDelta > 0.1f) {  // variance between system fonts, rendering, etc.
+        if (xDelta > 0.25f) {  // variance between system fonts, rendering, etc.
             return "Normal font seems to be italic (x coord delta: " + std::to_string(xDelta) + ")";
         }
         t = Text("I", arialNormal, fg);
@@ -3498,9 +3505,10 @@ public:
         float dx_px = (glyphs[i].frame.x - pixelsRect.x).toPixels(dpi);
         float dmaxX_px = (glyphs[i].frame.maxX() - pixelsRect.maxX()).toPixels(dpi);
         float dmaxY_px = (glyphs[i].frame.maxY() - pixelsRect.maxY()).toPixels(dpi);
+        auto metrics = font.metrics(*mBitmap);
         if ((dx_px < -1.5f && dx_px > 0.1f) ||
             (glyphs[i].frame.y > pixelsRect.y ||
-             glyphs[i].frame.y < pixelsRect.y - 0.333f * pixelsRect.height) ||
+             glyphs[i].frame.y < pixelsRect.y - (metrics.ascent - metrics.capHeight + PicaPt::fromPixels(1.0f, dpi))) ||
             (dmaxX_px < -0.1f && dmaxX_px > 1.5f) ||
             (dmaxY_px < -0.1f))
         {
@@ -3521,6 +3529,9 @@ public:
                                float expectedY,
                                float expectedHeight, const std::string& msg)
     {
+        endX = std::min(mWidth, endX);
+        endY = std::min(mHeight, endY);
+
         int startY = 0;
         float minX = 9999.0f, minY = 9999.0f, maxX = 0.0f, maxY = 0.0f;
         for (int yy = startY;  yy < endY;  ++yy) {

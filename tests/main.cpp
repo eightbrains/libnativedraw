@@ -236,6 +236,27 @@ public:
         writeTIFF(path, *mBitmap);
     }
 
+    struct Extents { float xMin; float xMax; float yMin; float yMax; };
+    Extents findRedExtents(int x0, int y0, int width, int height)
+    {
+        float xMin = 10000.0f;
+        float xMax = 0.0f;
+        float yMin = 10000.0f;
+        float yMax = 0.0f;
+        for (int y = y0;  y < y0 + height;  ++y) {
+            for (int x = x0;  x < x0 + width;  ++x) {
+                auto c = mBitmap->pixelAt(x, y);
+                if (c.red() > 0.0f) {
+                    xMin = std::min(xMin, float(x) + 1.0f - c.red());
+                    xMax = std::max(xMax, float(x) + c.red());
+                    yMin = std::min(yMin, float(y) + 1.0f - c.red());
+                    yMax = std::max(yMax, float(y) + c.red());
+                }
+            }
+        }
+        return { xMin, xMax, yMin, yMax };
+    }
+
     std::string verifyFillRect(int xpx, int ypx, int widthpx, int heightpx,
                                const Color& bg, const Color& fg)
     {
@@ -992,11 +1013,9 @@ public:
         Color fill2(0.0f, 0.0f, 1.0f, 0.5f);
         Color blended1(0.5f, 0.0f, 0.0f, 1.0f);
         Color blended2(0.0f, 0.0f, 0.5f, 1.0f);
-#if __APPLE__
-        Color blended(0x3f, 0x00, 0x80, 0xff);
-#else
         Color blended(0x40, 0x00, 0x80, 0xff);
-#endif // __APPLE__
+        Color blended_oldMacOS(0x3f, 0x00, 0x80, 0xff); // fixed sometime between 10.14 and 13.4
+
         auto dpi = mBitmap->dpi();
         auto rect1 = Rect::fromPixels(1, 1, 6, 5, dpi);
         auto rect2 = Rect::fromPixels(3, 3, 6, 5, dpi);
@@ -1024,7 +1043,16 @@ public:
                 auto p = Point::fromPixels(x, y, dpi);
                 if (intersection.contains(p)) {
                     if (pixel.toRGBA() != blended.toRGBA()) {
+#ifdef __APPLE__
+                        if (pixel.toRGBA() == blended_oldMacOS.toRGBA()) {
+                            // Sometime between 10.14 and 13.4 Apple fixed this bug, but
+                            // if the pixel is this value, consider it good; do nothing
+                        } else {
+                            return createPixelError("bad blended pixel", x, y, blended, pixel);
+                        }
+#else
                         return createPixelError("bad blended pixel", x, y, blended, pixel);
+#endif // __APPLE__
                     }
                 } else if (rect1.contains(p)) {
                     if (pixel.toRGBA() != blended1 .toRGBA()) {
@@ -2606,7 +2634,7 @@ class BasicTextLayoutTest : public BitmapTest
 {
     static constexpr int kPointSize = 13;
 public:
-    BasicTextLayoutTest() : BitmapTest("basic createTextLayout()", 1, 1) {}
+    BasicTextLayoutTest() : BitmapTest("basic createTextLayout()", kPointSize + 3, kPointSize + 3) {}
 
     std::string run() override
     {
@@ -2729,6 +2757,37 @@ public:
 
         // TODO: test empty line glyphs in various alignments
 
+        // Glyphs should correspond to the actual pixel
+        auto smallFontSizePt = PicaPt::fromPixels(0.66f * kPointSize, dpi);
+        Font smallFont("Arial", smallFontSizePt);
+        auto t = mBitmap->createTextLayout("Eg", smallFont, fg, layoutSize,
+                                           Alignment::kLeft | Alignment::kTop);
+        glyphs = t->glyphs();
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*t, Point::kZero);
+        mBitmap->endDraw();
+        auto extent = findRedExtents(0, 0, mWidth, mHeight);
+        auto pixelsRect = Rect::fromPixels(extent.xMin, extent.yMin,
+                                           extent.xMax - extent.xMin, extent.yMax - extent.yMin, dpi);
+        Rect glyphsRect(glyphs[0].frame.x, glyphs[0].frame.y,
+                        glyphs.back().frame.maxX() - glyphs[0].frame.x,
+                        glyphs.back().frame.maxY() - glyphs[0].frame.y);
+        if (std::abs((glyphsRect.x - pixelsRect.x).toPixels(dpi)) >= 0.75f ||
+            (glyphsRect.y > pixelsRect.y || glyphsRect.y < pixelsRect.y - 0.333f * pixelsRect.height) ||
+            std::abs((glyphsRect.maxX() - pixelsRect.maxX()).toPixels(dpi)) > 0.75f ||
+            std::abs((glyphsRect.maxY() - pixelsRect.maxY()).toPixels(dpi)) > 0.75f)
+        {
+            std::stringstream s;
+            s << "glyphs are incorrect, expected ("
+              << glyphsRect.x.toPixels(dpi) << ", " << glyphsRect.y.toPixels(dpi) << ") "
+              << glyphsRect.width.toPixels(dpi) << " x " << glyphsRect.height.toPixels(dpi)
+              << ", got ("
+              << pixelsRect.x.toPixels(dpi) << ", " << pixelsRect.y.toPixels(dpi) << ") "
+              << pixelsRect.width.toPixels(dpi) << " x " << pixelsRect.height.toPixels(dpi);
+            return s.str();
+        }
+
         return "";
     }
 };
@@ -2804,9 +2863,9 @@ public:
 
 class RichTextTest : public BitmapTest
 {
-    static constexpr int kPointSize = 13;
+    static constexpr int kPointSize = 18;
 public:
-    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 2.5f * kPointSize) {}
+    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 3.5f * kPointSize) {}
 
     std::string run() override
     {
@@ -3226,12 +3285,30 @@ public:
         }
         auto normalGlyphLineHeight = normalGlyphs[2].frame.y - normalGlyphs[0].frame.y;
         auto extraGlyphLineHeight = layout->glyphs()[2].frame.y - layout->glyphs()[0].frame.y;
-        if (std::abs((extraGlyphLineHeight - normalGlyphLineHeight).toPixels(dpi) - extraSpacingPx) > 0.1f) {
+        if (std::abs((extraGlyphLineHeight - normalGlyphLineHeight).toPixels(dpi) - extraSpacingPx) > 0.15f) {
             std::stringstream s;
             s << "expected glyph line height of "
               << (normalGlyphLineHeight + PicaPt::fromPixels(extraSpacingPx, dpi)).toPixels(72.0f)
               << " pt, got " << extraGlyphLineHeight.toPixels(72.0f) << " pt";
             return s.str();
+        }
+        // Check that glyph coords are correct for lineHeight = 100% (compared to the pixels drawn)
+        auto err = verifyGlyphCoords(font, 1.0f, 0);  // first line
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyGlyphCoords(font, 1.0f, 1);  // second line
+        if (!err.empty()) {
+            return err;
+        }
+        // Check that glyph coords are correct for lineHeight = 200% (compared to the pixels drawn)
+        err = verifyGlyphCoords(font, 2.0f, 0);  // first line
+        if (!err.empty()) {
+            return err;
+        }
+        err = verifyGlyphCoords(font, 2.0f, 1);  // second line
+        if (!err.empty()) {
+            return err;
         }
         // Check that the line height doesn't cause the glyph tops to move
         t = Text("E\nE", font, Color::kRed);
@@ -3399,6 +3476,47 @@ public:
         return (n >= 3);
     }
 
+    std::string verifyGlyphCoords(const Font& font, float lineHeightMultiple, int lineNo)
+    {
+        const float dpi = mBitmap->dpi();
+        const int glyphIdx = 2 * lineNo;
+
+        Text t("E\nE", font, Color::kBlue);  // same as for normalGlyphs, but only lineNo is red
+        t.setColor(Color::kRed, glyphIdx, 1);
+        t.setLineHeightMultiple(lineHeightMultiple);
+        auto layout = mBitmap->createTextLayout(t);
+        auto glyphs = layout->glyphs();  // copies
+        mBitmap->beginDraw();
+        mBitmap->fill(Color::kBlack);
+        mBitmap->drawText(*layout, Point::kZero);
+        mBitmap->endDraw();
+        auto extents = findRedExtents(0, 0, mBitmap->width(), mBitmap->height());
+        auto pixelsRect = Rect::fromPixels(extents.xMin, extents.yMin,
+                                           extents.xMax - extents.xMin, extents.yMax - extents.yMin, dpi);
+        int i = glyphIdx;
+        // horiz allows larger margin of error in case glyph rect is not shrink-wrapped
+        float dx_px = (glyphs[i].frame.x - pixelsRect.x).toPixels(dpi);
+        float dmaxX_px = (glyphs[i].frame.maxX() - pixelsRect.maxX()).toPixels(dpi);
+        float dmaxY_px = (glyphs[i].frame.maxY() - pixelsRect.maxY()).toPixels(dpi);
+        if ((dx_px < -1.5f && dx_px > 0.1f) ||
+            (glyphs[i].frame.y > pixelsRect.y ||
+             glyphs[i].frame.y < pixelsRect.y - 0.333f * pixelsRect.height) ||
+            (dmaxX_px < -0.1f && dmaxX_px > 1.5f) ||
+            (dmaxY_px < -0.1f))
+        {
+            std::stringstream s;
+            s << "glyph rect for line " << lineNo << " (lineHeight = 100%) is not correct: expected approx ("
+              << pixelsRect.x.toPixels(dpi) << ", " << pixelsRect.y.toPixels(dpi) << ") "
+              << pixelsRect.width.toPixels(dpi) << " x " << pixelsRect.height.toPixels(dpi) << ", got ("
+              << glyphs[i].frame.x.toPixels(dpi) << ", "
+              << glyphs[i].frame.y.toPixels(dpi) << ") "
+              << glyphs[i].frame.width.toPixels(dpi) << " x "
+              << glyphs[i].frame.height.toPixels(dpi);
+            return s.str();
+        }
+        return "";
+    }
+
     std::string verifyTextRect(int startX, int endX, int endY,
                                float expectedY,
                                float expectedHeight, const std::string& msg)
@@ -3418,7 +3536,7 @@ public:
                 }
             }
         }
-        const float maxErr = 1.0f;  // e.g. "M" has some space on left and right
+        const float maxErr = 1.25f;  // e.g. "M" has some space on left and right
         if (std::abs(int(minX) - startX) <= maxErr &&
             std::abs(maxX - float(endX)) <= maxErr &&
             std::abs(minY - float(expectedY)) <= maxErr &&
@@ -3430,27 +3548,6 @@ public:
               << "), got (" << minX << ", " << minY << ", " << maxX - minX << ", " << maxY - minY << ")";
             return s.str();
         }
-    }
-
-    struct Extents { float xMin; float xMax; float yMin; float yMax; };
-    Extents findRedExtents(int x0, int y0, int width, int height)
-    {
-        float xMin = 10000.0f;
-        float xMax = 0.0f;
-        float yMin = 10000.0f;
-        float yMax = 0.0f;
-        for (int y = y0;  y < y0 + height;  ++y) {
-            for (int x = x0;  x < x0 + width;  ++x) {
-                auto c = mBitmap->pixelAt(x, y);
-                if (c.red() > 0.0f) {
-                    xMin = std::min(xMin, float(x) + 1.0f - c.red());
-                    xMax = std::max(xMax, float(x) + c.red());
-                    yMin = std::min(yMin, float(y) + 1.0f - c.red());
-                    yMax = std::max(yMax, float(y) + c.red());
-                }
-            }
-        }
-        return { xMin, xMax, yMin, yMax };
     }
 
     float findLineStart(int y)

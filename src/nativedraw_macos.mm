@@ -556,7 +556,10 @@ public:
         // we can reduce the (already-excessive) number of space-eating member variables in
         // this class.
         if (text.lineHeightMultiple() > 0.0) {
-            mFirstLineOffsetForGlyphs = -firstLineMetrics.lineHeight * (text.lineHeightMultiple() - 1.0f);
+            mFirstLineOffsetForGlyphs =
+                    -firstLineMetrics.lineHeight * (text.lineHeightMultiple() - 1.0f) +
+                    // There seems to be about a 1 pixel error for glyph.y, this helps that.
+                    0.5f * (text.lineHeightMultiple() - 1);
         }
 
         if (!lines.empty()) {
@@ -713,19 +716,34 @@ public:
                     const CGSize *advances = CTRunGetAdvancesPtr(run);
                     const CFIndex *indices = CTRunGetStringIndicesPtr(run);
                     CGFloat ascent, descent, leading;
-                    CTRunGetTypographicBounds(run, CFRangeMake(0, 0),
-                                              &ascent, &descent, &leading);
+                    auto runWidth = CTRunGetTypographicBounds(run, CFRangeMake(0, 0),
+                                                              &ascent, &descent, &leading);
                     PicaPt yPt = baselinePt - PicaPt::fromPixels(ascent, mDPI);
                     PicaPt hPt = PicaPt::fromPixels(ascent + descent, mDPI);
                     for (int g = 0;  g < n;  ++g) {
                         if (!mGlyphs.empty()) {
                             mGlyphs.back().indexOfNext = mUTF16To8[indices[g]];
                         }
+                        // Somewhere after 10.14 advances is frequently null.
+                        // We have to be a bit more creative in finding widths if it is.
+                        float widthPx;
+                        if (advances) {
+                            widthPx = advances[g].width;
+                        } else {
+                            if (g < n - 1) {
+                                widthPx = positions[g + 1].x - positions[g].x;
+                            } else {
+                                // If the last character is whitespace, then the typographic
+                                // bounds is less than the position, leading to a negative width.
+                                // Make the width zero in this case.
+                                widthPx = float(std::max(0.0, (positions[0].x + runWidth) - positions[g].x));
+                            }
+                        }
                         mGlyphs.push_back({
                             mUTF16To8[indices[g]], i,
                             Rect(alignmentOffset.x + PicaPt::fromPixels(x + positions[g].x, mDPI),
                                  alignmentOffset.y + yPt,
-                                 PicaPt::fromPixels(advances[g].width, mDPI),
+                                 PicaPt::fromPixels(widthPx, mDPI),
                                  hPt),
                             });
                     }
@@ -1372,6 +1390,9 @@ public:
                                 const Point& center, const PicaPt& startRadius,
                                 const PicaPt& endRadius) override
     {
+        PicaPt r1 = std::min(std::max(PicaPt::kZero, startRadius), endRadius - PicaPt(0.001f));
+        PicaPt r2 = endRadius;
+
         CGContextRef gc = (CGContextRef)mNativeDC;
         if (auto *cgg = dynamic_cast<CoreGraphicsGradient*>(&gradient)) {
             save();
@@ -1379,9 +1400,9 @@ public:
             CGContextDrawRadialGradient(
                 gc, cgg->cgGradient(),
                 CGPointMake(center.x.toPixels(mDPI), center.y.toPixels(mDPI)),
-                startRadius.toPixels(mDPI),
+                r1.toPixels(mDPI),
                 CGPointMake(center.x.toPixels(mDPI), center.y.toPixels(mDPI)),
-                endRadius.toPixels(mDPI),
+                r2.toPixels(mDPI),
                 kCGGradientDrawsBeforeStartLocation | kCGGradientDrawsAfterEndLocation);
             restore();
         }

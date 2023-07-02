@@ -116,6 +116,7 @@ std::vector<float> createWavyLinePoints(float x0, float y0, float x1,
 {
     const float toothHeight = 1.0f * width;
 
+    assert(x0 <= x1);
     int nPoints = int(std::ceil((x1 - x0) / (2.0f * toothHeight))) + 1;
     std::vector<float> xy;
     xy.reserve(2 * (nPoints + 1));

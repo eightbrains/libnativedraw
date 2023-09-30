@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright 2021 - 2022 Eight Brains Studios, LLC
+// Copyright 2021 - 2023 Eight Brains Studios, LLC
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -243,6 +243,7 @@ public:
     static const Color kTransparent;
     static const Color kBlack;
     static const Color kWhite;
+    static const Color kGrey;
     static const Color kRed;
     static const Color kOrange;
     static const Color kYellow;
@@ -295,6 +296,8 @@ public:
         _rgba[3] = a;
     }
 
+    static Color fromCSS(const char *style, bool *success = nullptr);
+
     float red() const { return _rgba[0]; }
     float green() const { return _rgba[1]; }
     float blue() const { return _rgba[2]; }
@@ -306,6 +309,10 @@ public:
     void setBlue(float b) { _rgba[2] = b; }
     void setAlpha(float a) { _rgba[3] = a; }
 
+    Color colorWithAlpha(float alpha) const {
+        return Color(_rgba[0], _rgba[1], _rgba[2], alpha);
+    }
+
     Color lighter(float amount = 0.1f) const;
     Color darker(float amount = 0.1f) const;
 
@@ -315,7 +322,7 @@ public:
     /// Note that this not exactly alpha blending, and is intended to blend
     /// between two solid colors (although the alpha channels are blended,
     /// too).
-    Color blend(const Color& dest, float amount);
+    Color blend(const Color& dest, float amount) const;
 
     Color toGrey() const {
         float grey = 0.2126f * red() + 0.7152f * green() + 0.0722f * blue();
@@ -379,6 +386,29 @@ public:
 
 private:
     float _hsva[4];
+};
+
+class HSLColor
+{
+public:
+    /// Hue should be in the range [0, 360], and s, v, a in the range [0, 1]
+    HSLColor(float hueDeg, float s, float l, float a = 1.0f)
+    {
+        _hsla[0] = hueDeg;
+        _hsla[1] = s;
+        _hsla[2] = l;
+        _hsla[3] = a;
+    }
+
+    float hueDeg() const { return _hsla[0]; }
+    float saturation() const { return _hsla[1]; }
+    float lightness() const { return _hsla[2]; }
+    float alpha() const { return _hsla[3]; }
+
+    Color toColor() const;
+
+private:
+    float _hsla[4];
 };
 
 class DrawContext;
@@ -967,6 +997,10 @@ public:
                 float nativeDPI = 0.0f);
     static std::shared_ptr<DrawContext> createCoreGraphicsBitmap(
                 BitmapType type, int width, int height, float dpi = 72.0f);
+#elif defined(__EMSCRIPTEN__)
+    static std::shared_ptr<DrawContext> fromHTMLCanvas(const char *canvasId);
+    static std::shared_ptr<DrawContext> createOffscreenCanvasBitmap(
+                int width, int height, float dpi = 72.0f);
 #elif defined(__unix__)
     /// Note that an Xlib Window is NOT a pointer, so you will need to call this
     /// as fromX11(display, &window, ...). (Window is actually a typedef of

@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright 2021 Eight Brains Studios, LLC
+// Copyright 2021 - 2023 Eight Brains Studios, LLC
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -28,6 +28,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <map>
 
 #if __APPLE__
 #include <TargetConditionals.h>
@@ -109,6 +110,46 @@ int nBytesForUtf8Char(const char* utf8)
     } else {
         return 4;
     }
+}
+
+const char* nextCodePoint(const char *utf8, uint32_t *utf32ptr)
+{
+    if (!utf32ptr) {
+        return utf8 + nBytesForUtf8Char(utf8);
+    }
+
+    auto c = *utf8;
+    if ((c & 0b10000000) == 0) {
+        *utf32ptr = ((*utf8) & 0b01111111);
+        return utf8 + 1;
+    }
+    else if ((c & 0b11100000) == 0b11000000) {
+        *utf32ptr = (((utf8[0] & 0b00011111) << 6) |
+                     ((utf8[1] & 0b00111111)));
+        return utf8 + 2;
+    }
+    else if ((c & 0b11110000) == 0b11100000) {
+        *utf32ptr = (((utf8[0] & 0b00001111) << 12) |
+                     ((utf8[1] & 0b00111111) << 6) |
+                     ((utf8[2] & 0b00111111)));
+        return utf8 + 3;
+    }
+    else {
+        *utf32ptr = (((utf8[0] & 0b00000111) << 18) |
+                     ((utf8[1] & 0b00111111) << 12) |
+                     ((utf8[2] & 0b00111111) << 6) |
+                     ((utf8[3] & 0b00111111)));
+        return utf8 + 4;
+    }
+}
+
+const char* prevCodePoint(const char *utf8, uint32_t *utf32ptr)
+{
+    do {
+        --utf8;
+    } while (((*utf8) & 0b11000000) != 0);
+    nextCodePoint(utf8, utf32ptr);
+    return utf8;
 }
 
 std::vector<float> createWavyLinePoints(float x0, float y0, float x1,
@@ -207,6 +248,7 @@ Rect Rect::intersectedWith(const Rect& r) const
 const Color Color::kTransparent(0.0f, 0.0f, 0.0f, 0.0f);
 const Color Color::kBlack(0.0f, 0.0f, 0.0f, 1.0f);
 const Color Color::kWhite(1.0f, 1.0f, 1.0f, 1.0f);
+const Color Color::kGrey(0.5f, 0.5f, 0.5f, 1.0f);
 const Color Color::kRed(1.0f, 0.0f, 0.0f, 1.0f);
 const Color Color::kOrange(1.0f, 0.5f, 0.0f, 1.0f);
 const Color Color::kYellow(1.0f, 1.0f, 0.0f, 1.0f);
@@ -307,7 +349,7 @@ Color Color::darker(float amount /*= 0.1f*/) const
     return Color(r, g, b, a);
 }
 
-Color Color::blend(const Color& dest, float amount)
+Color Color::blend(const Color& dest, float amount) const
 {
     float srcAmount = 1.0f - amount;
     return Color(srcAmount * red() + amount * dest.red(),
@@ -324,6 +366,297 @@ std::size_t Color::hash() const
     hash_combine(result, _rgba[2]);
     hash_combine(result, _rgba[3]);
     return result;
+}
+
+Color Color::fromCSS(const char *style, bool *success /*= nullptr*/)
+{
+    static std::map<std::string, const char*> gNamedColors = {
+        { "aliceblue",            "#f0f8ff" },
+        { "antiquewhite",         "#faebd7" },
+        { "aqua",                 "#00ffff" },
+        { "aquamarine",           "#7fffd4" },
+        { "azure",                "#f0ffff" },
+        { "beige",                "#f5f5dc" },
+        { "bisque",               "#ffe4c4" },
+        { "black",                "#000000" },
+        { "blanchedalmond",       "#ffebcd" },
+        { "blue",                 "#0000ff" },
+        { "blueviolet",           "#8a2be2" },
+        { "brown",                "#a52a2a" },
+        { "burlywood",            "#deb887" },
+        { "cadetblue",            "#5f9ea0" },
+        { "chartreuse",           "#7fff00" },
+        { "chocolate",            "#d2691e" },
+        { "coral",                "#ff7f50" },
+        { "cornflowerblue",       "#6495ed" },
+        { "cornsilk",             "#fff8dc" },
+        { "crimson",              "#dc143c" },
+        { "cyan",                 "#00ffff" },
+        { "darkblue",             "#00008b" },
+        { "darkcyan",             "#008b8b" },
+        { "darkgoldenrod",        "#b8860b" },
+        { "darkgray",             "#a9a9a9" },
+        { "darkgreen",            "#006400" },
+        { "darkgrey",             "#a9a9a9" },
+        { "darkkhaki",            "#bdb76b" },
+        { "darkmagenta",          "#8b008b" },
+        { "darkolivegreen",       "#556b2f" },
+        { "darkorange",           "#ff8c00" },
+        { "darkorchid",           "#9932cc" },
+        { "darkred",              "#8b0000" },
+        { "darksalmon",           "#e9967a" },
+        { "darkseagreen",         "#8fbc8f" },
+        { "darkslateblue",        "#483d8b" },
+        { "darkslategray",        "#2f4f4f" },
+        { "darkslategrey",        "#2f4f4f" },
+        { "darkturquoise",        "#00ced1" },
+        { "darkviolet",           "#9400d3" },
+        { "deeppink",             "#ff1493" },
+        { "deepskyblue",          "#00bfff" },
+        { "dimgray",              "#696969" },
+        { "dimgrey",              "#696969" },
+        { "dodgerblue",           "#1e90ff" },
+        { "firebrick",            "#b22222" },
+        { "floralwhite",          "#fffaf0" },
+        { "forestgreen",          "#228b22" },
+        { "fuchsia",              "#ff00ff" },
+        { "gainsboro",            "#dcdcdc" },
+        { "ghostwhite",           "#f8f8ff" },
+        { "gold",                 "#ffd700" },
+        { "goldenrod",            "#daa520" },
+        { "gray",                 "#808080" },
+        { "green",                "#008000" },
+        { "greenyellow",          "#adff2f" },
+        { "grey",                 "#808080" },
+        { "honeydew",             "#f0fff0" },
+        { "hotpink",              "#ff69b4" },
+        { "indianred",            "#cd5c5c" },
+        { "indigo",               "#4b0082" },
+        { "ivory",                "#fffff0" },
+        { "khaki",                "#f0e68c" },
+        { "lavender",             "#e6e6fa" },
+        { "lavenderblush",        "#fff0f5" },
+        { "lawngreen",            "#7cfc00" },
+        { "lemonchiffon",         "#fffacd" },
+        { "lightblue",            "#add8e6" },
+        { "lightcoral",           "#f08080" },
+        { "lightcyan",            "#e0ffff" },
+        { "lightgoldenrodyellow", "#fafad2" },
+        { "lightgray",            "#d3d3d3" },
+        { "lightgreen",           "#90ee90" },
+        { "lightgrey",            "#d3d3d3" },
+        { "lightpink",            "#ffb6c1" },
+        { "lightsalmon",          "#ffa07a" },
+        { "lightseagreen",        "#20b2aa" },
+        { "lightskyblue",         "#87cefa" },
+        { "lightslategray",       "#778899" },
+        { "lightslategrey",       "#778899" },
+        { "lightsteelblue",       "#b0c4de" },
+        { "lightyellow",          "#ffffe0" },
+        { "lime",                 "#00ff00" },
+        { "limegreen",            "#32cd32" },
+        { "linen",                "#faf0e6" },
+        { "magenta",              "#ff00ff" },
+        { "maroon",               "#800000" },
+        { "mediumaquamarine",     "#66cdaa" },
+        { "mediumblue",           "#0000cd" },
+        { "mediumorchid",         "#ba55d3" },
+        { "mediumpurple",         "#9370db" },
+        { "mediumseagreen",       "#3cb371" },
+        { "mediumslateblue",      "#7b68ee" },
+        { "mediumspringgreen",    "#00fa9a" },
+        { "mediumturquoise",      "#48d1cc" },
+        { "mediumvioletred",      "#c71585" },
+        { "midnightblue",         "#191970" },
+        { "mintcream",            "#f5fffa" },
+        { "mistyrose",            "#ffe4e1" },
+        { "moccasin",             "#ffe4b5" },
+        { "navajowhite",          "#ffdead" },
+        { "navy",                 "#000080" },
+        { "oldlace",              "#fdf5e6" },
+        { "olive",                "#808000" },
+        { "olivedrab",            "#6b8e23" },
+        { "orange",               "#ffa500" },
+        { "orangered",            "#ff4500" },
+        { "orchid",               "#da70d6" },
+        { "palegoldenrod",        "#eee8aa" },
+        { "palegreen",            "#98fb98" },
+        { "paleturquoise",        "#afeeee" },
+        { "palevioletred",        "#db7093" },
+        { "papayawhip",           "#ffefd5" },
+        { "peachpuff",            "#ffdab9" },
+        { "peru",                 "#cd853f" },
+        { "pink",                 "#ffc0cb" },
+        { "plum",                 "#dda0dd" },
+        { "powderblue",           "#b0e0e6" },
+        { "purple",               "#800080" },
+        { "rebeccapurple",        "#663399" },
+        { "red",                  "#ff0000" },
+        { "rosybrown",            "#bc8f8f" },
+        { "royalblue",            "#4169e1" },
+        { "saddlebrown",          "#8b4513" },
+        { "salmon",               "#fa8072" },
+        { "sandybrown",           "#f4a460" },
+        { "seagreen",             "#2e8b57" },
+        { "seashell",             "#fff5ee" },
+        { "sienna",               "#a0522d" },
+        { "silver",               "#c0c0c0" },
+        { "skyblue",              "#87ceeb" },
+        { "slateblue",            "#6a5acd" },
+        { "slategray",            "#708090" },
+        { "slategrey",            "#708090" },
+        { "snow",                 "#fffafa" },
+        { "springgreen",          "#00ff7f" },
+        { "steelblue",            "#4682b4" },
+        { "tan",                  "#d2b48c" },
+        { "teal",                 "#008080" },
+        { "thistle",              "#d8bfd8" },
+        { "tomato",               "#ff6347" },
+        { "turquoise",            "#40e0d0" },
+        { "violet",               "#ee82ee" },
+        { "wheat",                "#f5deb3" },
+        { "white",                "#ffffff" },
+        { "whitesmoke",           "#f5f5f5" },
+        { "yellow",               "#ffff00" },
+        { "yellowgreen",          "#9acd32" },
+    };
+    auto hexCharToInt = [](char c) -> int {
+        switch (c) {
+            case '0': return 0;
+            case '1': return 1;
+            case '2': return 2;
+            case '3': return 3;
+            case '4': return 4;
+            case '5': return 5;
+            case '6': return 6;
+            case '7': return 7;
+            case '8': return 8;
+            case '9': return 9;
+            case 'a': return 10;
+            case 'A': return 10;
+            case 'b': return 11;
+            case 'B': return 11;
+            case 'c': return 12;
+            case 'C': return 12;
+            case 'd': return 13;
+            case 'D': return 13;
+            case 'e': return 14;
+            case 'E': return 14;
+            case 'f': return 15;
+            case 'F': return 15;
+            default: return 0;
+        }
+    };
+
+    if (success) {
+        *success = true;
+    }
+
+    // (It is safe to string compare by index because if we get to the end of the
+    // string, style[n] != '\0', so the check will fail and not check anything
+    // afterwards.)
+
+    if (style[0] == '#') {
+        std::string hex(style + 1); // junk the '#'
+        if (hex.size() >= 6) {
+            int alpha = 255;
+            if (hex.size() >= 8) {
+                alpha = (hexCharToInt(hex[6]) << 4) | hexCharToInt(hex[7]);
+            }
+            return Color((hexCharToInt(hex[0]) << 4) | hexCharToInt(hex[1]),
+                         (hexCharToInt(hex[2]) << 4) | hexCharToInt(hex[3]),
+                         (hexCharToInt(hex[4]) << 4) | hexCharToInt(hex[5]),
+                         alpha);
+        } else if (hex.size() >= 3) {
+            return Color((hexCharToInt(hex[0]) << 4) | hexCharToInt(hex[0]),
+                         (hexCharToInt(hex[1]) << 4) | hexCharToInt(hex[1]),
+                         (hexCharToInt(hex[2]) << 4) | hexCharToInt(hex[2]),
+                         255);
+        }
+    }
+    bool isRGB = (style[0] == 'r' && style[1] == 'g' && style[2] == 'b' && (style[3] == '(' || (style[3] == 'a' && style[4] == '(')));
+    bool isHSL = (style[0] == 'h' && style[1] == 's' && style[2] == 'l');
+    if (isRGB || isHSL) {
+        int n = 0;
+        std::string components[4];
+        const char *c = style + 4;  // skip "xyz("
+        if (*c == '(') {  // "rgba" or "hsla"
+            ++c;
+        }
+        while (*c != '\0' && n < 4) {
+            while (*c != '\0' && *c != ' ' && *c != ',' && *c != '/' && *c != ')') {
+                components[n] += *c++;
+            }
+            ++n;
+            while (*c != '\0' && (*c == ' ' || *c == ',' || *c == '/' || *c == ')')) {
+                ++c;
+            }
+        }
+        double channelMax[4] = { 255.0, 255.0, 255.0, 1.0 };
+        if (isHSL) {
+            channelMax[0] = 360.0;
+            channelMax[1] = 1.0;
+            channelMax[2] = 1.0;
+        }
+        double channels[4] = { 0.0, 0.0, 0.0, 1.0 };
+        for (int i = 0;  i < n;  ++i) {
+            size_t nonNumericStartIdx = 0;
+            for (auto c : components[i]) {
+                if ((c >= '0' && c <= '9') || c == '-' || c == '+' ||
+                    c == '.' || c == 'e')
+                    { ++nonNumericStartIdx; }
+                else {
+                    break;
+                }
+            }
+            channels[i] = std::atof(components[i].c_str());  // stops at first non-number
+            if (nonNumericStartIdx < components[i].size()) {
+                auto unit = components[i].substr(nonNumericStartIdx);
+                if (unit[0] == '%') {
+                    channels[i] = channels[i] / 100.0 * channelMax[i];
+                } if (isHSL && i == 0) {
+                    if (unit == "deg") {
+                        // do nothing, already in deg
+                    } else if (unit == "rad") {
+                        channels[i] *= 180.0 / 3.14159265359;
+                    } else if (unit == "turn") {
+                        channels[i] *= 360.0;
+                    }
+                }
+            }
+        }
+        if (isHSL) {
+            channels[0] = std::fmod(channels[0], channelMax[0]);
+            if (channels[0] < 0) {
+                channels[0] += channelMax[0];
+            }
+        } else {
+            channels[0] = std::max(0.0, std::min(channelMax[0], channels[0]));
+        }
+        for (int i = 1;  i < n;  ++i) {
+            channels[i] = std::max(0.0, std::min(channelMax[i], channels[i]));
+        }
+
+        if (isRGB) {
+            return Color(float(channels[0] / 255.0), float(channels[1] / 255.0),
+                         float(channels[2] / 255.0), float(channels[3]));  // channel 4 is NOT [0, 255]
+        } else {
+            return HSLColor(channels[0], channels[1], channels[2], channels[3]).toColor();
+        }
+    } else {
+        auto it = gNamedColors.find(style);
+        if (it != gNamedColors.end()) {
+            return Color::fromCSS(it->second);
+        }
+        if (std::string(style) == std::string("transparent")) {
+            return Color::kTransparent;
+        }
+    }
+    
+    if (success) {
+        *success = false;
+    }
+    return Color::kBlack;
 }
 
 //-----------------------------------------------------------------------------
@@ -349,6 +682,17 @@ Color HSVColor::toColor() const
     }
     float m = v - chroma;
     return Color(r + m, g + m, b + m, _hsva[3]);
+}
+
+//-----------------------------------------------------------------------------
+Color HSLColor::toColor() const
+{
+    float v = lightness() + saturation() * std::min(lightness(), 1.0f - lightness());
+    float s = 0.0f;
+    if (v != 0.0f) {
+        s = 2.0f * (1.0f - lightness() / v);
+    }
+    return HSVColor(hueDeg(), s, v, alpha()).toColor();
 }
 
 //-----------------------------------------------------------------------------
@@ -1399,6 +1743,21 @@ void premultiplyARGB(uint8_t* argb, int width, int height)
     }
 }
 
+void unpremultiplyRGBA(uint8_t *rgba, int width, int height)
+{
+    uint8_t* end = rgba + 4 * width * height;
+    float alpha;
+    while (rgba < end) {
+        if (rgba[0] < 0xff) {  // the common case is alpha = 1.0f, so no work necessary
+            alpha = 255.0f / float(rgba[3]);
+            rgba[0] = uint8_t(std::round(alpha * float(rgba[0])));
+            rgba[1] = uint8_t(std::round(alpha * float(rgba[1])));
+            rgba[2] = uint8_t(std::round(alpha * float(rgba[2])));
+        }
+        rgba += 4;
+    }
+}
+
 std::vector<uint8_t> readFile(const char *path)
 {
     std::vector<uint8_t> data;
@@ -1446,6 +1805,7 @@ Image readImage(const uint8_t *imgdata, int size)
         return image;
     }
 #endif
+    return Image();
 }
 
 //-----------------------------------------------------------------------------

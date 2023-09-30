@@ -1,17 +1,34 @@
 cmake_minimum_required(VERSION 3.10)
 project(libnativedraw)
 
+# Compile flags
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if (EMSCRIPTEN)
+    # Emscripten does not automatically add optimization
+    if (CMAKE_MAKE_TYPE MATCHES "RELEASE")
+       add_compile_options(-O3)
+    endif ()
+    if (CMAKE_MAKE_TYPE MATCHES "Debug")
+       add_compile_options(-g)
+    endif ()
+
+    set(EMSCRIPTEN_LIBS -sUSE_ZLIB=1 -sUSE_LIBPNG=1 -sUSE_LIBJPEG=1 -sUSE_GIFLIB=1)
+    add_compile_options(${EMSCRIPTEN_LIBS})
+    add_link_options(-sOFFSCREENCANVAS_SUPPORT=1 -sWASM=1 -sASYNCIFY ${EMSCRIPTEN_LIBS} --bind -lembind)
+endif()
+
+# Source files
 set(LIB_HEADERS src/nativedraw.h
                 src/nativedraw_private.h)
 set(LIB_SOURCES src/nativedraw.cpp
                 src/nativedraw_direct2d.cpp
-                src/nativedraw_cairo.cpp)
+                src/nativedraw_cairo.cpp
+                src/nativedraw_wasm.cpp)
 if (APPLE)
     list(APPEND LIB_SOURCES src/nativedraw_macos.mm)
-elseif (UNIX)
+elseif (UNIX OR EMSCRIPTEN)
     list(APPEND LIB_SOURCES src/jpeg.cpp)
     list(APPEND LIB_SOURCES src/png.cpp)
     list(APPEND LIB_SOURCES src/gif.cpp)
@@ -32,7 +49,9 @@ if (APPLE)
     target_link_libraries(nativedraw ${APPKIT} ${CORE_GRAPHICS})
 elseif (WIN32)
     target_link_libraries(nativedraw d3d11 d2d1 dwrite)
-elseif (UNIX)  # note that APPLE is UNIX, so need to check that first
+elseif (EMSCRIPTEN)
+    #target_link_libraries(nativedraw )
+elseif (UNIX)  # note that APPLE and EMSCRIPTEN are UNIX, so check those first
     target_compile_options(nativedraw PRIVATE "-Wmissing-noreturn")
     find_package(X11)
     # Find Cairo

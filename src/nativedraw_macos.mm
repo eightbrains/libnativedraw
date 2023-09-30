@@ -655,6 +655,7 @@ public:
         for (int i = 0;  i < lines.count;  ++i) {
             width = CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
                                                &ascent, &descent, &leading);
+            width -= CTLineGetTrailingWhitespaceWidth((CTLineRef)[lines objectAtIndex:i]);
             mMetrics.width = std::max(mMetrics.width, PicaPt::fromPixels(width, mDPI));
         }
         mMetrics.advanceX = mMetrics.width;

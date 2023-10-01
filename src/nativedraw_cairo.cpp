@@ -742,6 +742,7 @@ public:
 
         if (size.width > PicaPt::kZero && wrap != kWrapNone) {
             pango_layout_set_width(mLayout, int(std::ceil(size.width.toPixels(mDPI) * PANGO_SCALE)));
+            pango_layout_set_wrap(mLayout, PANGO_WRAP_WORD_CHAR);
         }
         switch (alignment & Alignment::kHorizMask) {
             default:

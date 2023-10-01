@@ -2649,7 +2649,7 @@ public:
         text = "\xe6\x9d\xb1\xe4\xba\xac\xe3\x82\x8f\xe7\xb6\xba\xe9\xba\x97";  // ("[Tou][kyou] wa [ki][rei]": Tokyo is pretty)
         auto tokyoMetrics = mBitmap->createTextLayout("\xe6\x9d\xb1\xe4\xba\xac\xe3\x82\x8f", font, white)->metrics();
         wrap = mBitmap->createTextLayout(text, font, white, Size(1.05f * tokyoMetrics.width, PicaPt::kZero))->metrics();
-        if (!isTwoLines(wrap, fontSizePt)) {
+        if (!isTwoLines(wrap, tokyoMetrics.height)) {
             std::stringstream err;
             err << "Text wrapping failed for '" << text << "': expected "
                 << "height of about " << 2.0f * fontSize << " px but got "
@@ -2668,7 +2668,7 @@ public:
         // (using line width of PicaPt(0.0001f) again).
         auto kanjiMetrics = mBitmap->createTextLayout("\xe6\x9d\xb1", font, white)->metrics();
         wrap = mBitmap->createTextLayout("\xe6\x9d\xb1\xe4\xba\xac", font, white, Size(PicaPt(0.0001f), PicaPt::kZero))->metrics();
-        if (!isTwoLines(wrap, fontSizePt)) {
+        if (!isTwoLines(wrap, tokyoMetrics.height)) {
             std::stringstream err;
             err << "Text wrapping failed for width of PicaPt(0.0001f): expected "
                 << "height of about " << 2.0f * fontSize << " px but got "

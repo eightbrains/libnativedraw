@@ -418,14 +418,9 @@ public:
 
             auto tm = context.call<EmVal>("measureText", EmVal("Ag"));
             Font::Metrics fm;
-            auto ascentVal = tm["fontBoundingBoxAscent"];
-            auto descentVal = tm["fontBoundingBoxDescent"];
-            bool usingMetricsFromFont = true;
-            if (!ascentVal) {
-                ascentVal = tm["actualBoundingBoxAscent"];
-                descentVal = tm["actualBoundingBoxDescent"];
-                usingMetricsFromFont = false;
-            }
+            bool usingMetricsFromFont = false; // not "fontBoundingBoxAscent"
+            auto ascentVal = tm["actualBoundingBoxAscent"];
+            auto descentVal = tm["actualBoundingBoxDescent"];
             fm.ascent = PicaPt::fromPixels(ascentVal.as<float>(), kCSSPixelDPI) * multiplier;
             fm.descent = PicaPt::fromPixels(descentVal.as<float>(), kCSSPixelDPI) * multiplier;
             if (usingMetricsFromFont) {
@@ -593,6 +588,7 @@ public:
         PicaPt x, y;
         CanvasFont *currentCanvasFont = nullptr;
         PicaPt currentCharSpacing = PicaPt::kZero;
+        PicaPt leadingForLine;
         if (!subruns.empty()) {
             mLines.emplace_back();
             mLines.back().lineRect.y = y;
@@ -657,9 +653,9 @@ public:
             r.length = srun.length;
             r.font = cf;
             r.size.width = w;
-            r.size.height = fm.lineHeight;
+            r.size.height = fm.ascent + fm.descent;
+            leadingForLine = std::max(leadingForLine, fm.leading); 
             if (fm.lineHeight > mLines.back().lineRect.height) {
-                r.size.height = fm.lineHeight;
                 mLines.back().largestAscent = fm.ascent;
             }
             r.characterSpacing = charSpacing;
@@ -698,9 +694,10 @@ public:
 
             if (isNewline || brokeLine) {
                 x = PicaPt::kZero;
-                y += lineHeightMultiple * mLines.back().lineRect.height;
+                y += lineHeightMultiple * (mLines.back().lineRect.height + leadingForLine);
                 mLines.emplace_back();
                 mLines.back().lineRect.y = y;
+                leadingForLine = PicaPt::kZero;
             }
         }
 

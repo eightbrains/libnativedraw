@@ -1416,7 +1416,12 @@ public:
             setStrokeEndCap(kEndCapButt);
             setStrokeJoinStyle(kJoinMiter);
         }
-        assert(mStateStack.size() == 1);
+        // Do not assert state stack because caller may to need to set clipping
+        // path for a window before handing the DrawContext to the window for
+        // drawing. Naturally the window will want to do a beginDraw(), but
+        // our caller needs to call beginDraw() to set the clipping.
+        // (Basically, beginDraw() after the first is a no-op.)
+        // assert(mStateStack.size() == 1);
     }
 
     void endDraw() override

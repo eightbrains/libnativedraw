@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright 2021 - 2022 Eight Brains Studios, LLC
+// Copyright 2021 - 2023 Eight Brains Studios, LLC
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -190,6 +190,11 @@ std::vector<int> utf16IndicesForUTF8Indices(const char *utf8);
 // over characters if you do not need to know the actual value.)
 int nBytesForUtf8Char(const char* utf8);
 
+// Returns the new pointer (utf8 + n, where n is the number of bytes consumed).
+// Assigns the UTF-32 codePoint by reference.
+const char* nextCodePoint(const char *utf8, uint32_t *utf32);
+const char* prevCodePoint(const char *utf8, uint32_t *utf32);
+
 // ----- image functions -----
 // NOTE: functions named "create" will new[] memory which the caller needs to
 //       delete[]
@@ -202,9 +207,9 @@ uint8_t* createBGRAFromBGR(const uint8_t *src, int width, int height);
 uint8_t* createBGRAFromGreyAlpha(const uint8_t *src, int width, int height);
 uint8_t* createBGRAFromGrey(const uint8_t *src, int width, int height);
 void premultiplyBGRA(uint8_t *bgra, int width, int height);
-void premultiplyARGB(uint8_t *bgra, int width, int height);
+void premultiplyARGB(uint8_t *argb, int width, int height);
+void unpremultiplyRGBA(uint8_t *rgba, int width, int height);
 
-// ----- image functions -----
 #define kDefaultImageDPI 96.0f
 
 std::vector<uint8_t> readFile(const char *path);

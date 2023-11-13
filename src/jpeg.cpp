@@ -62,8 +62,17 @@ Image readJPEG(const uint8_t *jpegdata, int size)
     jpeg_read_header(&decompress, TRUE);  // TRUE flag tables-only data as an error
 
     // Set output parameters here, after jpeg_read_header() initializes them.
-    // BGRX is native on every platform.
+    // BGRX is native on every platform (except WebAssembly).
+#if !defined(JCS_EXTENSIONS) || defined(__EMSCRIPTEN__) \
+    // Emscripten uses libjpeg, not libjpeg_turbo. Also, HTML Canvas uses RGBA.
+    decompress.out_color_space = JCS_RGB;
+    auto format = kImageRGB24;
+    int bytesPerPixel = 3;
+#else
     decompress.out_color_space = JCS_EXT_BGRA;
+    auto format = kImageBGRA32;
+    int bytesPerPixel = 4;
+#endif // !JCS_EXTENSIONS
 
     if (!jpeg_start_decompress(&decompress)) {
         return Image();
@@ -71,10 +80,8 @@ Image readJPEG(const uint8_t *jpegdata, int size)
 
     int width = decompress.output_width;
     int height = decompress.output_height;
-    // JPEG does not support alpha channels, so use BGRX32, which is native
-    // to all platforms.
-    Image imgData(width, height, kImageBGRX32);
-    int rowStride = 4 * width;
+    int rowStride = bytesPerPixel * width;
+    Image imgData(width, height, format);
 
     while (decompress.output_scanline < height) {
         // Read one scanline (the function requires an array of pointers,

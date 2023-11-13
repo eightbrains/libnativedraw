@@ -5,6 +5,8 @@ if (APPLE)
 elseif (WIN32)
     add_executable(timing WIN32
                    ${TIMING_HEADERS} ${TIMING_SOURCES} direct2d.cpp)
+elseif (EMSCRIPTEN)
+    add_executable(timing ${TIMING_HEADERS} ${TIMING_SOURCES} wasm.cpp)
 else()
     add_executable(timing ${TIMING_HEADERS} ${TIMING_SOURCES} cairo-x11.cpp)
 endif()

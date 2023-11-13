@@ -47,11 +47,15 @@
 #include <unistd.h>
 #endif // windows
 
-#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64)
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(_WIN64) && !defined(__EMSCRIPTEN__)
 #define USING_X11 1
 #include "x11.h"
 #else
 #define USING_X11 0
+#endif
+
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
 #endif
 
 using namespace ND_NAMESPACE;
@@ -76,6 +80,8 @@ std::shared_ptr<DrawContext> createBitmap(BitmapType type, int width, int height
                                              height, dpi);
 #elif defined(_WIN32) || defined(_WIN64)
     return DrawContext::createDirect2DBitmap(type, width, height, dpi);
+#elif defined(__EMSCRIPTEN__)
+    return DrawContext::createOffscreenCanvasBitmap(width, height, dpi);
 #else
     std::cerr << "[ERROR] this platform does not have a bitmap creator"
     assert(false);
@@ -244,11 +250,11 @@ public:
                 auto pixel = mBitmap->pixelAt(x, y);
                 if (x >= xpx && x < xpx + widthpx && y >= ypx && y < ypx + heightpx) {
                     if (pixel.toRGBA() != fg.toRGBA()) {
-                        return createPixelError("wrong fill pixel", x, y, pixel, fg);
+                        return createPixelError("wrong fill pixel", x, y, fg, pixel);
                     }
                 } else {
                     if (pixel.toRGBA() != bg.toRGBA()) {
-                        return createPixelError("wrong background pixel", x, y, pixel, bg);
+                        return createPixelError("wrong background pixel", x, y, fg, pixel);
                     }
                 }
             }
@@ -328,6 +334,63 @@ public:
         if (rgb.toRGBA() != expectedRgba) {
             std::stringstream e;
             e << "hsv(" << hsv.hueDeg() << ", " << hsv.saturation() << ", " << hsv.value() << ") -> color: expected rgb 0x" << std::hex << expectedRgba << ", got 0x" << rgb.toRGBA();
+            *err = e.str();
+            return false;
+        }
+        return true;
+    }
+};
+
+class CSSColorTest : public BitmapTest
+{
+public:
+    CSSColorTest() : BitmapTest("Color(cssString) test", 1, 1) {}
+
+    std::string run() override
+    {
+        mBitmap->beginDraw();
+        mBitmap->setFillColor(Color::kBlack);
+        mBitmap->drawRect(Rect(PicaPt::kZero, PicaPt::kZero,
+                               PicaPt::fromPixels(mWidth, mBitmap->dpi()),
+                               PicaPt::fromPixels(mHeight, mBitmap->dpi())), kPaintFill);
+        mBitmap->endDraw();
+
+        std::string err;
+        if (!testCSS("rgb(255, 128, 64)", 0xff8040ff, &err)) { return err; }
+        if (!testCSS("rgb(100%, 50%, 25%)", 0xff8040ff, &err)) { return err; }
+        if (!testCSS("rgb(255, 128, 64 / 50%)", 0xff804080, &err)) { return err; }
+        if (!testCSS("rgba(255, 128, 64, 0.5)", 0xff804080, &err)) { return err; }
+        if (!testCSS("rgba(255, 128, 64, 50%)", 0xff804080, &err)) { return err; }
+        if (!testCSS("rgb(255, none, 64)", 0xff0040ff, &err)) { return err; }
+        if (!testCSS("rgb(300, -128, 1e6)", 0xff00ffff, &err)) { return err; }
+        if (!testCSS("hsl(45, 75%, 50%)", 0xdfaf20ff, &err)) { return err; }
+        if (!testCSS("hsl(135, 75%, 50%)", 0x20df50ff, &err)) { return err; }
+        if (!testCSS("hsl(225, 75%, 50%)", 0x2050dfff, &err)) { return err; }
+        if (!testCSS("hsl(315, 75%, 50%)", 0xdf20afff, &err)) { return err; }
+        if (!testCSS("hsl(45deg, 75%, 50%)", 0xdfaf20ff, &err)) { return err; }
+        if (!testCSS("hsl(0.125turn, 75%, 50%)", 0xdfaf20ff, &err)) { return err; }
+        if (!testCSS("hsl(0.785398rad, 75%, 50%)", 0xdfaf20ff, &err)) { return err; }
+        if (!testCSS("hsl(45, 75%, 100%)", 0xffffffff, &err)) { return err; }
+        if (!testCSS("hsl(45, 75%, 0%)", 0x000000ff, &err)) { return err; }
+        if (!testCSS("hsla(45, 75%, 50%, 0.5)", 0xdfaf2080, &err)) { return err; }
+        if (!testCSS("hsla(45, 75%, 50%, 50%)", 0xdfaf2080, &err)) { return err; }
+        if (!testCSS("#48f", 0x4488ffff, &err)) { return err; }
+        if (!testCSS("#4387fe", 0x4387feff, &err)) { return err; }
+        if (!testCSS("#12345678", 0x12345678, &err)) { return err; }
+        if (!testCSS("#9abcdeff", 0x9abcdeff, &err)) { return err; }
+        if (!testCSS("#9ABCDEFF", 0x9abcdeff, &err)) { return err; }
+        if (!testCSS("red", 0xff0000ff, &err)) { return err; }
+        if (!testCSS("transparent", 0x00000000, &err)) { return err; }
+
+        return "";
+    }
+
+    bool testCSS(const std::string& css, uint32_t expectedRgba, std::string *err)
+    {
+        auto rgba = Color::fromCSS(css.c_str()).toRGBA();
+        if (rgba != expectedRgba) {
+            std::stringstream e;
+            e << "Color(\"" << css << "\"): expected 0x" << std::hex << expectedRgba << ", got 0x" << rgba << ".";
             *err = e.str();
             return false;
         }
@@ -485,6 +548,14 @@ public:
         mBitmap->drawRect(Rect::fromPixels(0.0f, 0.0f, 3.0f, 1.0f, dpi), kPaintFill);
         mBitmap->endDraw();
 
+        // Should be:
+        // fffffffffffff
+        // f00ffffffffff
+        //   ... +7 times
+        // f00ffffffffff
+        // fffffffffffff
+        // fffffffffffff
+        // fffffffffffff
         return verifyFillRect(1, 1, 2, 9, mBGColor, fg);
     }
 };
@@ -696,6 +767,8 @@ public:
                 capArea = 3.141592f * r * r;
 #if defined(_WIN32) || defined(_WIN64)
                 acceptableErr = 1.0f;
+#elif defined(__EMSCRIPTEN__)
+                acceptableErr = 2.0f;
 #else
                 acceptableErr = 0.5f;
 #endif
@@ -779,6 +852,8 @@ public:
                 joinArea = 0.75f * 3.141592f * halfWidth * halfWidth;
 #if defined(_WIN32) || defined(_WIN64)
                 acceptableErr = 1.0f;
+#elif defined(__EMSCRIPTEN__)
+                acceptableErr = 0.75f;
 #else
                 acceptableErr = 0.5f;
 #endif
@@ -790,6 +865,8 @@ public:
                 joinArea = 3.0f * (0.5f * halfWidth * halfWidth);
 #if defined(_WIN32) || defined(_WIN64)
                 acceptableErr = 2.0f;
+#elif defined(__EMSCRIPTEN__)
+                acceptableErr = 0.75f;
 #else
                 acceptableErr = 0.25f;
 #endif
@@ -1084,7 +1161,7 @@ public:
             }
         }
 
-#if defined(_WIN32) || defined(_WIN64)
+#if defined(_WIN32) || defined(_WIN64) || defined(__EMSCRIPTEN__)
         // Using D2D1_FILL_MODE_WINDING is much less less precise.
         // D2D1_FILL_MODE_ALTERNATE is the same error level as macOS
         float acceptableError = 0.7f * float(mRadius);
@@ -1404,6 +1481,8 @@ protected:
 #elif USING_X11
         // Cairo: linear gradient works at 1/256
         return 8.0f / 256.0f;
+#elif defined(__EMSCRIPTEN__)
+        return 8.0f / 256.0f;  // Firefox canvas has 7/256 error
 #else
         return 1.0f / 256.0f;
 #endif
@@ -1957,6 +2036,8 @@ public:
         return "";  // gradients are global to all contexts on macOS/iOS
 #elif USING_X11
         return "";  // gradients are global to all contexts with Cairo
+#elif defined(__EMSCRIPTEN__)
+        // don't return, do tests
 #else
         return "does this platform have global or context-dependent gradients?";
 #endif
@@ -2414,6 +2495,15 @@ public:
             tm.width > PicaPt::fromPixels(14.7f, dpi) ||
             tm.height < PicaPt::fromPixels(13.7f, dpi) ||
             tm.height > PicaPt::fromPixels(13.8f, dpi)) {
+#elif defined(__EMSCRIPTEN__)
+        if (tm.width < PicaPt::fromPixels(14.6f, dpi) ||
+            tm.width > PicaPt::fromPixels(14.7f, dpi) ||
+            !((tm.height >= PicaPt::fromPixels(13.7f, dpi) &&
+               tm.height <= PicaPt::fromPixels(13.8f, dpi)) ||
+              // browsers without "fontBoundingBoxAscent", which is new, will
+              // not have Arial's extra height
+              (tm.height >= PicaPt::fromPixels(11.1f, dpi) &&
+               tm.height <= PicaPt::fromPixels(11.2f, dpi)))) {
 #else
         // Cairo toy font
         //if (tm.width != PicaPt::fromPixels(14.0f, dpi) ||
@@ -2450,6 +2540,163 @@ public:
         }
 
         return "";
+    }
+};
+
+// This is to test our implementation of word-wrapping when the system does
+// not provide one (e.g. using HTML Canvas 2d). Presumably it will work with
+// no problem when the OS provides the word-wrapping.
+class WordWrappingTest : public BitmapTest
+{
+public:
+    WordWrappingTest() : BitmapTest("word-wrapping", 1, 1) {}
+
+    std::string run() override
+    {
+#if USING_X11
+        // Cairo does not wrap the way to we would like, but we cannot do
+        // anything about it. We know Cairo can word-wrap, and this test is
+        // mostly for the WebAssembly wrapping that we have to do ourselves,
+        // so just pass the test.
+        return "";
+#endif // USING_X11
+
+        // Fill the background so that if we have an error at least we get
+        // consistent values for the fill, even though they are essentially
+        // meaningless.
+        mBitmap->beginDraw();
+        mBitmap->fill(mBGColor);
+        mBitmap->endDraw();
+
+        float fontSize = 12.0f;
+        float dpi = mBitmap->dpi();
+        auto fontSizePt = PicaPt::fromPixels(fontSize, dpi);
+        Font font("Arial", fontSizePt);
+        auto white = Color::kWhite;
+
+        // Sanity check: short widths do not create an infinite loop
+        auto nMetrics = mBitmap->createTextLayout("n", font, white)->metrics();
+        auto wrap = mBitmap->createTextLayout("nn", font, white, Size(PicaPt(0.0001f), PicaPt::kZero))->metrics();
+        if (!isTwoLines(wrap, nMetrics.height)) {
+            std::stringstream err;
+            err << "Text wrapping failed for width of PicaPt(0.0001f): expected "
+                << "height of about " << 2.0f * fontSize << " px but got "
+                << wrap.height.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+        // Since this is an impossible situation, both PicaPt(0.0001) and
+        // width("n") are both valid. But it should not be width("nn"), since
+        // that would be two lines with { "nn", "" } (or the reverse)
+        if (wrap.width > 1.05f * nMetrics.width) {
+            std::stringstream err;
+            err << "Text wrapping failed for width of PicaPt(0.0001f); widths include spaces in width: expected "
+                << "width of less than " << nMetrics.width.toPixels(dpi) << " px but got "
+                << wrap.width.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+
+        // Spaces should be at end of first line, and should not count towards width.
+        auto nnnMetrics = mBitmap->createTextLayout("nnn", font, white)->metrics();
+        wrap = mBitmap->createTextLayout("nnn   nnn", font, white, Size(1.1f * nnnMetrics.width, PicaPt::kZero))->metrics();
+        if (!isTwoLines(wrap, nMetrics.height)) {
+            std::stringstream err;
+            err << "Text wrapping failed for 'nnn   nnn': expected "
+                << "height of about " << 2.0f * fontSize << " px but got "
+                << wrap.height.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+        if (wrap.width < 0.95f * nnnMetrics.width || wrap.width > 1.05f * nnnMetrics.width) {
+            std::stringstream err;
+            err << "Text wrapping failed for 'nnn   nnn'; should not include spaces in width: expected "
+                << "width of " << nnnMetrics.width.toPixels(dpi) << " px but got "
+                << wrap.width.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+
+        // Test character wrapping works
+        wrap = mBitmap->createTextLayout("nnnnnn", font, white, Size(1.1f * nnnMetrics.width, PicaPt::kZero))->metrics();
+        if (!isTwoLines(wrap, nMetrics.height)) {
+            std::stringstream err;
+            err << "Text wrapping failed for 'nnnnnn': expected "
+                << "height of about " << 2.0f * fontSize << " px but got "
+                << wrap.height.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+        if (wrap.width < 0.95f * nnnMetrics.width || wrap.width > 1.05f * nnnMetrics.width) {
+            std::stringstream err;
+            err << "Text wrapping failed for 'nnnnnn', should wrap at 'nnn': "
+                << "expected width of " << nnnMetrics.width.toPixels(dpi) << " px but got "
+                << wrap.width.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+
+        // Should not break words at punctuation (e.g. "$-1,234.56",
+        // "user@company.com", and "@#$!" should be treated as a word)
+        const char *text = "word $-8,888.88";
+        auto moneyMetrics = mBitmap->createTextLayout("$-8,888.88", font, white)->metrics();
+        wrap = mBitmap->createTextLayout(text, font, white, Size(1.05f * moneyMetrics.width, PicaPt::kZero))->metrics();
+        if (!isTwoLines(wrap, nMetrics.height)) {
+            std::stringstream err;
+            err << "Text wrapping failed for '" << text << "': expected "
+                << "height of about " << 2.0f * fontSize << " px but got "
+                << wrap.height.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+        if (wrap.width < 0.95f * moneyMetrics.width || wrap.width > 1.05f * moneyMetrics.width) {
+            std::stringstream err;
+            err << "Text wrapping failed for '" << text << "', should wrap at 'word' and not attempt to break at punctuation: "
+                << "expected width of " << moneyMetrics.width.toPixels(dpi) << " px but got "
+                << wrap.width.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+
+        // Hanzi (and hangul?) can line-break most anywhere. Japanese should
+        // break at a writing system change (which functions as a word break,
+        // since all the grammatical particles are hiragana and usually
+        // everything else is kanji or katakana. (Hangul uses normal spaces.)
+        text = "\xe6\x9d\xb1\xe4\xba\xac\xe3\x82\x8f\xe7\xb6\xba\xe9\xba\x97";  // ("[Tou][kyou] wa [ki][rei]": Tokyo is pretty)
+        auto tokyoMetrics = mBitmap->createTextLayout("\xe6\x9d\xb1\xe4\xba\xac\xe3\x82\x8f", font, white)->metrics();
+        wrap = mBitmap->createTextLayout(text, font, white, Size(1.05f * tokyoMetrics.width, PicaPt::kZero))->metrics();
+        if (!isTwoLines(wrap, tokyoMetrics.height)) {
+            std::stringstream err;
+            err << "Text wrapping failed for '" << text << "': expected "
+                << "height of about " << 2.0f * fontSize << " px but got "
+                << wrap.height.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+        if (wrap.width < 0.95f * tokyoMetrics.width || wrap.width > 1.05f * tokyoMetrics.width) {
+            std::stringstream err;
+            err << "Text wrapping failed for '" << text << "', should wrap at '\xe6\x9d\xb1\xe4\xba\xac\xe3\x82\x8f': "
+                << "expected width of " << tokyoMetrics.width.toPixels(dpi) << " px but got "
+                << wrap.width.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+
+        // Make sure forced one-glyph character breaking works with unicode
+        // (using line width of PicaPt(0.0001f) again).
+        auto kanjiMetrics = mBitmap->createTextLayout("\xe6\x9d\xb1", font, white)->metrics();
+        wrap = mBitmap->createTextLayout("\xe6\x9d\xb1\xe4\xba\xac", font, white, Size(PicaPt(0.0001f), PicaPt::kZero))->metrics();
+        if (!isTwoLines(wrap, tokyoMetrics.height)) {
+            std::stringstream err;
+            err << "Text wrapping failed for width of PicaPt(0.0001f): expected "
+                << "height of about " << 2.0f * fontSize << " px but got "
+                << wrap.height.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+       if (wrap.width > 1.05f * kanjiMetrics.width) {
+            std::stringstream err;
+            err << "Text wrapping failed for width of PicaPt(0.0001f); width s include spaces in width: expected "
+                << "width of less than " << kanjiMetrics.width.toPixels(dpi) << " px but got "
+                << wrap.width.toPixels(dpi) << " px" << std::endl;
+            return err.str();
+        }
+
+        return "";
+    }
+
+    bool isTwoLines(const TextMetrics& tm, const PicaPt& fontSizePt)
+    {
+        return (tm.height > 1.5f * fontSizePt && tm.height < 2.55f * fontSizePt);
     }
 };
 
@@ -2833,21 +3080,24 @@ public:
 
         // Verify background color
         if (mBitmap->pixelAt(0, 0).toRGBA() != bg.toRGBA()) {
-            return createColorError("incorrect background color", bg, mBitmap->pixelAt(0, 0));
+            return createColorError("incorrect background color at (0, 0)", bg, mBitmap->pixelAt(0, 0));
         }
-        if (mBitmap->pixelAt(1, 1).toRGBA() != bg.toRGBA()) {
-            return createColorError("incorrect background color", bg, mBitmap->pixelAt(1, 1));
-        }
+/*        if (mBitmap->pixelAt(1, 1).toRGBA() != bg.toRGBA()) {
+            return createColorError("incorrect background color at (1, 1)", bg, mBitmap->pixelAt(1, 1));
+        } */
 
         // Verify foreground color
         // We probably aren't going to get a 100% on pixel for the O, so there will be some
         // alpha blending from the red background.
         Color bluest;
         int y = int(0.4f * float(kPointSize));
+        std::vector<int> ys = { y - 2, y - 1, y };  // in case y is on strikethrough (e.g. Firefox WASM)
         for (int x = 0;  x < mBitmap->width();  ++x) {
-            auto c = mBitmap->pixelAt(x, y);
-            if (c.blue() > bluest.blue()) {
-                bluest = c;
+            for (int y : ys) {
+                auto c = mBitmap->pixelAt(x, y);
+                if (c.blue() > bluest.blue()) {
+                    bluest = c;
+                }
             }
         }
         if (!(bluest.red() < 0.1f && bluest.green() == 0.0f && bluest.blue() > 0.9f)) {
@@ -2912,7 +3162,7 @@ public:
             }
         }
         if (n != 2) {
-            return std::string("expected 2 lines, found ") + std::to_string(n);
+            return std::string("expected 2 lines for double underline, found ") + std::to_string(n);
         }
 
         // ----
@@ -3077,11 +3327,11 @@ public:
         auto baselineYPt = metrics.ascent + glyphs[1].frame.y;
         auto expectedYPt = baselineYPt - smallMetrics.ascent;
         if (std::abs((glyphs[0].frame.y - expectedYPt).asFloat()) > 0.01f) {
-            return createFloatError("'tT' small font glyph.frame.y is incorrect",
+            return createFloatError("'tT' small font glyph[0].frame.y is incorrect",
                                     expectedYPt.asFloat(), glyphs[0].frame.y.asFloat());
         }
         if (glyphs[1].frame.y.asFloat() <= -0.01f && glyphs[1].frame.y.toPixels(dpi) >= 1.0f) {
-            return createFloatError("'tT' large font glyph.frame.y is incorrect",
+            return createFloatError("'tT' large font glyph[1].frame.y is incorrect",
                                     PicaPt::kZero.asFloat(), glyphs[1].frame.y.asFloat());
         }
         t = Text("TT", smallFont, fg);
@@ -3318,7 +3568,11 @@ public:
         auto ext = findRedExtents(0, 0, mBitmap->width(), mBitmap->height());
         float h = ext.yMax - ext.yMin;
         auto expectedCap = smallMetrics.capHeight.toPixels(dpi);
+#if defined(__EMSCRIPTEN__)
+        if (std::abs(h - expectedCap) > 1.1f) {
+#else
         if (std::abs(h - expectedCap) > 0.666f) {
+#endif // __EMSCRIPTEN
             return "Expected default font overridden with cap-height " + std::to_string(expectedCap) + ", got " + std::to_string(h);
         }
 
@@ -3911,6 +4165,7 @@ public:
         mBitmap->fill(mBGColor);  // so failure doesn't print unitialized colors
         mBitmap->endDraw();
 
+        mBitmap->beginDraw();
         mBitmap->scale(2, 3);
         mBitmap->save();
         mBitmap->translate(PicaPt::fromPixels(1, dpi),
@@ -3948,6 +4203,7 @@ public:
         }
 
         mBitmap->restore();
+        mBitmap->endDraw();
 
         return "";
     }
@@ -3988,6 +4244,9 @@ static std::string kNormal = "\033[0m";
 static std::string kRed = "\033[31m";
 static std::string kGreen = "\033[32m";
 
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE
+#endif
 int main(int argc, char *argv[])
 {
 #if USING_X11
@@ -3996,6 +4255,7 @@ int main(int argc, char *argv[])
 
     std::vector<std::shared_ptr<Test>> test = {
         std::make_shared<HSVTest>(),
+        std::make_shared<CSSColorTest>(),
         std::make_shared<CoordinateTest>(),
         std::make_shared<ColorTest>("color readback (RGBA)", kBitmapRGBA),
         std::make_shared<ColorTest>("color readback (RGB)", kBitmapRGB),
@@ -4041,6 +4301,7 @@ int main(int argc, char *argv[])
         std::make_shared<FontStyleTest>(),
         std::make_shared<StrokedTextTest>(),
         std::make_shared<TextMetricsTest>(),
+        std::make_shared<WordWrappingTest>(),
         std::make_shared<TextAlignmentTest>(),
         std::make_shared<BasicTextLayoutTest>(),
         std::make_shared<RichTextRunsTest>(),

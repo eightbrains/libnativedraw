@@ -1,5 +1,5 @@
 //-----------------------------------------------------------------------------
-// Copyright 2021 - 2022 Eight Brains Studios, LLC
+// Copyright 2021 - 2023 Eight Brains Studios, LLC
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to
@@ -20,7 +20,7 @@
 // IN THE SOFTWARE.
 //-----------------------------------------------------------------------------
 
-#if defined(__unix__) && !defined(__APPLE__)
+#if defined(__unix__) && !defined(__APPLE__) && !(__EMSCRIPTEN__)
 #include "nativedraw.h"
 #include "nativedraw_private.h"
 
@@ -742,6 +742,7 @@ public:
 
         if (size.width > PicaPt::kZero && wrap != kWrapNone) {
             pango_layout_set_width(mLayout, int(std::ceil(size.width.toPixels(mDPI) * PANGO_SCALE)));
+            pango_layout_set_wrap(mLayout, PANGO_WRAP_WORD_CHAR);
         }
         switch (alignment & Alignment::kHorizMask) {
             default:

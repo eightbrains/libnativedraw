@@ -99,6 +99,33 @@ struct PicaPt
 PicaPt operator+(float lhs, const PicaPt& rhs);
 PicaPt operator*(float lhs, const PicaPt& rhs);
 
+struct Size
+{
+    static const Size kZero;
+
+    Size() : width(PicaPt(0.0f)), height(PicaPt(0.0f)) {}
+    Size(const PicaPt& w, const PicaPt& h)
+        : width(w), height(h)
+    {}
+
+    Size operator+(const Size& rhs) const
+        { return Size(width + rhs.width, height + rhs.height); }
+    Size& operator+=(const Size& rhs)
+        { width += rhs.width; height += rhs.height; return *this; }
+
+    Size operator-(const Size& rhs) const
+        { return Size(width - rhs.width, height - rhs.height); }
+    Size& operator-=(const Size& rhs)
+        { width -= rhs.width; height -= rhs.height; return *this; }
+
+    Size operator*(float v) const { return Size(width * v, height * v); }
+
+    PicaPt width;
+    PicaPt height;
+};
+
+Size operator*(float lhs, const Size& rhs);
+
 struct Point
 {
     static const Point kZero;
@@ -115,11 +142,19 @@ struct Point
         { return Point(x + rhs.x, y + rhs.y); }
     Point& operator+=(const Point& rhs)
         { x += rhs.x; y += rhs.y; return *this; }
+    Point operator+(const Size& rhs) const
+        { return Point(x + rhs.width, y + rhs.height); }
+    Point& operator+=(const Size& rhs)
+        { x += rhs.width; y += rhs.height; return *this; }
 
     Point operator-(const Point& rhs) const
         { return Point(x - rhs.x, y - rhs.y); }
     Point& operator-=(const Point& rhs)
         { x -= rhs.x; y -= rhs.y; return *this; }
+    Point operator-(const Size& rhs) const
+        { return Point(x - rhs.width, y - rhs.height); }
+    Point& operator-=(const Size& rhs)
+        { x -= rhs.width; y += rhs.height; return *this; }
 
     bool operator==(const Point& rhs) const
         { return (x == rhs.x && y == rhs.y); }
@@ -131,19 +166,6 @@ struct Point
 };
 
 Point operator*(float lhs, const Point& rhs);
-
-struct Size
-{
-    static const Size kZero;
-
-    Size() : width(PicaPt(0.0f)), height(PicaPt(0.0f)) {}
-    Size(const PicaPt& w, const PicaPt& h)
-        : width(w), height(h)
-    {}
-
-    PicaPt width;
-    PicaPt height;
-};
 
 struct Rect
 {
@@ -694,8 +716,13 @@ public:
     virtual ~TextLayout() {}
     virtual const Glyph* glyphAtPoint(const Point& p) const;
     virtual Point pointAtIndex(long index) const;
+    virtual const Glyph* glyphAtIndex(long index) const;
+    virtual long glyphIndexAtIndex(long index) const;
 
     virtual const TextMetrics& metrics() const = 0;
+    /// Returns the array of glyphs. Note that you CANNOT index the glyphs
+    /// by string index, since a glyph may correspond to multiple bytes of
+    /// UTF-8. Use glyphAtIndex() if you need to index by string index.
     virtual const std::vector<Glyph>& glyphs() const = 0;
 
 protected:

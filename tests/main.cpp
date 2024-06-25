@@ -2912,7 +2912,7 @@ public:
         if (glyphs[1].line != 0) {
             return "glyph[1].line is incorrect: expected 0, got " + std::to_string(glyphs[1].line);
         }
-        if (glyphs[2].line != 0) {
+        if (glyphs[2].line != 0) {  // \n should be in the line it ends
             return "glyph[2].line is incorrect: expected 0, got " + std::to_string(glyphs[2].line);
         }
         if (glyphs[3].line != 1) {
@@ -2923,6 +2923,14 @@ public:
         glyphs = mBitmap->createTextLayout("A\n\nA", font, fg)->glyphs();
         if (glyphs.size() != 4) {
             return "Incorrect number of glyphs for 'A \\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
+        }
+
+        // Multiple lines, last one empty. Height should NOT include the last line
+        // TODO: is this the correct behavior? (If not, need to fix multiline StringEdit)
+        auto h1 = mBitmap->textMetrics("Ag\n", font, kPaintFill).height;
+        auto h2 = mBitmap->textMetrics("Ag", font, kPaintFill).height;
+        if (std::abs((h1 - h2).asFloat()) > 0.001f) {
+            return "Incorrect metrics for 'Ag\n': expected " + std::to_string(h2.toPixels(dpi)) + " px, got " + std::to_string(h1.toPixels(dpi)) + "px (trailing newline should not be counted in height)";
         }
 
         // Word-wrap

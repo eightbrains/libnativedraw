@@ -227,6 +227,9 @@ PicaPt operator+(float lhs, const PicaPt& rhs)
 PicaPt operator*(float lhs, const PicaPt& rhs)
     { return PicaPt(lhs * rhs.pt); }
 
+Size operator*(float lhs, const Size& rhs)
+    { return Size(lhs * rhs.width, lhs * rhs.height); }
+
 Point operator*(float lhs, const Point& rhs)
     { return Point(lhs * rhs.x, lhs * rhs.y); }
 
@@ -1150,34 +1153,40 @@ Point TextLayout::pointAtIndex(long index) const
         index = 0;
     }
 
-    // Note that there are not necessarily as many glyphs as there are
-    // bytes in the string! Do a fuzzy binary search (instead of a linear
-    // search), since this will be used often in drawing for the cursor
-    // and selection.
-    bool isFirstIteration = true;
-    int lowerIdx = 0, idx = int(glyphs.size() / 2), upperIdx = int(glyphs.size() - 1);
-    while ((lowerIdx != idx && upperIdx != idx) || isFirstIteration) {
-        if (index < glyphs[idx].index) {
-            upperIdx = idx;
-            auto dist = idx - lowerIdx;
-            if (lowerIdx < idx) {
-                idx -= std::max(1, dist / 2);
-            }
-        } else if (index > glyphs[idx].index) {
-            lowerIdx = idx;
-            auto dist = upperIdx - idx;
-            if (upperIdx > idx) {
-                idx += std::max(1, dist / 2);
-            }
-        } else {
-            lowerIdx = idx;
-            upperIdx = idx;
-        }
-        isFirstIteration = false;
-        assert(lowerIdx <= idx);
-        assert(upperIdx >= idx);
+    return glyphAtIndex(index)->frame.upperLeft();
+}
+
+const TextLayout::Glyph* TextLayout::glyphAtIndex(long index) const
+{
+    auto glyphIndex = glyphIndexAtIndex(index);
+    if (glyphIndex >= 0) {
+        return &this->glyphs()[glyphIndex];
+    } else {
+        return nullptr;
     }
-    return glyphs[idx].frame.upperLeft();
+}
+
+long TextLayout::glyphIndexAtIndex(long index) const
+{
+    if (index == 0) {
+        return 0;
+    }
+
+    auto &glyphs = this->glyphs();
+    // Binary search (easier this way than to shoehorn into a custom compare for std::binary_search())
+    size_t left = 0;
+    size_t right = glyphs.size() - 1;
+    while (left <= right) {
+        auto m = (left + right) / 2;
+        if (glyphs[m].indexOfNext <= index) {
+            left = m + 1;
+        } else if (glyphs[m].index > index) {
+            right = m - 1;
+        } else {
+            return m;
+        }
+    }
+    return -1;
 }
 
 Font::Metrics TextLayout::calcFirstLineMetrics(

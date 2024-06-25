@@ -621,7 +621,7 @@ public:
         *ascent = 0.0;
         *descent = 0.0;
         *leading = 0.0;
-        NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:0]);
+        NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:idx]);
         int nRuns = runs.count;
         for (int r = 0;  r < nRuns;  ++r) {
             CTRunRef run = (__bridge CTRunRef)[runs objectAtIndex:r];
@@ -701,8 +701,8 @@ public:
             CGFloat x = 0.0;
             for (int i = 0;  i < lines.count;  ++i) {
                 CGFloat lineAscent, lineDescent, lineLeading;
-                CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
-                                           &lineAscent, &lineDescent, &lineLeading);
+                CGFloat lineWidth = CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
+                                                               &lineAscent, &lineDescent, &lineLeading);
                 PicaPt baselinePt = PicaPt::fromPixels(kTextFrameHeight - lineOrigins[i].y, mDPI) + mFirstLineOffsetForGlyphs;
                 x = lineOrigins[i].x;
                 NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:i]);
@@ -722,11 +722,22 @@ public:
                         if (!mGlyphs.empty()) {
                             mGlyphs.back().indexOfNext = mUTF16To8[indices[g]];
                         }
+                        CGFloat w;
+                        if (advances) {
+                            w = advances[g].width;
+                        } else {  // the Devangari system font returns null advances array (!)
+                                  // But causes test failures in English, so only use as fallback
+                            if (g < n - 1) {
+                                w = positions[g + 1].x - positions[g].x;
+                            } else {
+                                w = lineWidth - positions[g].x;
+                            }
+                        }
                         mGlyphs.push_back({
                             mUTF16To8[indices[g]], i,
                             Rect(alignmentOffset.x + PicaPt::fromPixels(x + positions[g].x, mDPI),
                                  alignmentOffset.y + yPt,
-                                 PicaPt::fromPixels(advances[g].width, mDPI),
+                                 PicaPt::fromPixels(w, mDPI),
                                  hPt),
                             });
                     }

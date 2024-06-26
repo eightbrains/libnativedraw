@@ -2926,7 +2926,8 @@ public:
         }
 
         // Multiple lines, last one empty. Height should NOT include the last line
-        // TODO: is this the correct behavior? (If not, need to fix multiline StringEdit)
+        // TODO: is this the correct behavior? (If not, need to fix multiline StringEdit
+        //       which relies on it to not scroll too high when user starts a new line)
         auto h1 = mBitmap->textMetrics("Ag\n", font, kPaintFill).height;
         auto h2 = mBitmap->textMetrics("Ag", font, kPaintFill).height;
         if (std::abs((h1 - h2).asFloat()) > 0.001f) {

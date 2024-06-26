@@ -735,6 +735,7 @@ public:
 
         mDPI = dc.dpi();
         mIsEmptyText = text.text().empty();
+        mHasEmptyLastLine = (mIsEmptyText || text.text().back() == '\n');
         // Note that pango_cairo_create_layout() creates a new PangoContext
         // for every layout, which is why we are not using it.
         mLayout = pango_layout_new(gPangoContext.context());
@@ -1095,6 +1096,16 @@ public:
                 mMetrics.width = PicaPt::fromPixels(w, mDPI);
                 mMetrics.height = PicaPt::fromPixels(h, mDPI);
                 mMetrics.advanceX = mMetrics.width;
+
+                if (mHasEmptyLastLine) {
+                    auto &chars = glyphs();
+                    if (chars.empty()) {
+                        mMetrics.height = PicaPt::kZero;
+                    } else {
+                        mMetrics.height = chars.back().frame.maxY();
+                    }
+                }
+
                 if (pango_layout_get_line_count(mLayout) > 1) {
                     mMetrics.advanceY = mMetrics.height;
                 } else {
@@ -1133,7 +1144,7 @@ public:
                                 // lines (e.g. "...\n\n...").
                                 while (idx < line->start_index) {
                                     Rect r;
-                                    if (mGlyphs.empty()) {
+                                    if (!mGlyphs.empty()) {
                                         mGlyphs.back().indexOfNext = idx;
                                     }
                                     if (!mGlyphs.empty() && idx == lastLineEndIdx) {
@@ -1191,8 +1202,9 @@ private:
     PangoLayout *mLayout;
     DrawPangoText mDraw;
     float mDPI;
-    bool mIsEmptyText;
     Point mAlignmentOffset;
+    bool mIsEmptyText;
+    bool mHasEmptyLastLine;
 
     mutable TextMetrics mMetrics;
     mutable bool mMetricsValid = false;

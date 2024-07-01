@@ -1279,30 +1279,6 @@ public:
                             DWRITE_GLYPH_RUN_DESCRIPTION const *glyphRunDesc,
                             IUnknown* clientDrawingEffect)
     {
-        if (baselineOriginY > mLastBaselineY) {
-            if (mLineNo >= 0) {
-                if (mLineMetrics[mLineNo].newlineLength > 0) {
-                    assert(!mGlyphs->empty());
-                    int utf8idx = mGlyphs->back().index + 1; // newline is one byte
-                    mGlyphs->back().indexOfNext = utf8idx;
-                    auto &r = mGlyphs->back().frame;
-                    mGlyphs->emplace_back(utf8idx, mLineNo,
-                                          Rect(r.maxX(), r.x, PicaPt::kZero, r.height));
-                    for (UINT32 i = 1;  i < mLineMetrics[mLineNo].newlineLength;  ++i) {
-                        mLineNo += 1;
-                        utf8idx += 1;
-                        mGlyphs->back().indexOfNext = utf8idx;
-                        auto& r = mGlyphs->back().frame;
-                        mGlyphs->emplace_back(utf8idx, mLineNo,
-                            Rect(r.maxX(), r.x, PicaPt::kZero, r.height));
-                    }
-                    assert(mLineMetrics[mLineNo].newlineLength < 2);
-                }
-            }
-            mLineNo += 1;
-            mLastBaselineY = baselineOriginY;
-        }
-
         FLOAT d2dFmAscent = 0.0f;
         FLOAT d2dHeight = glyphRun->fontEmSize;
         if (glyphRun->fontFace) {  // this is marked _Notnull_, but just in case
@@ -1313,42 +1289,59 @@ public:
             d2dHeight = (d2dMetrics.ascent + d2dMetrics.descent) * scaling;
         }
 
-        mGlyphs->reserve(mGlyphs->size() + glyphRun->glyphCount);
-        FLOAT advance = FLOAT(0.0);
-        for (unsigned int i = 0;  i < glyphRun->glyphCount;  ++i) {
+        auto addGlyph = [this, baselineOriginX, baselineOriginY, glyphRun, d2dFmAscent, d2dHeight]
+                        (int utf16idx, DWRITE_GLYPH_OFFSET const *glyphOffset, FLOAT glyphAdvance, FLOAT *advance) {
             FLOAT x, y;
             FLOAT dir = ((glyphRun->bidiLevel & 0x1) == 0) ? 1.0f : -1.0f;
             FLOAT w, h;
             if (!glyphRun->isSideways) {
-                x = baselineOriginX + advance;
+                x = baselineOriginX + (*advance);
                 y = baselineOriginY - d2dFmAscent + mD2DOffsetY;
-                if (glyphRun->glyphOffsets) {
-                    x += dir * glyphRun->glyphOffsets[i].advanceOffset;
-                    y -= glyphRun->glyphOffsets[i].ascenderOffset;
+                if (glyphOffset) {
+                    x += dir * glyphOffset->advanceOffset;
+                    y -= glyphOffset->ascenderOffset;
                 }
-                w = glyphRun->glyphAdvances[i];
+                w = glyphAdvance;
                 h = d2dHeight;
             } else {
                 x = baselineOriginX - d2dFmAscent + mD2DOffsetY;
-                y = baselineOriginY + advance;
-                if (glyphRun->glyphOffsets) {
-                    y += dir * glyphRun->glyphOffsets[i].advanceOffset;
-                    x -= glyphRun->glyphOffsets[i].ascenderOffset;
+                y = baselineOriginY + (*advance);
+                if (glyphOffset) {
+                    y += dir * glyphOffset->advanceOffset;
+                    x -= glyphOffset->ascenderOffset;
                 }
                 w = d2dHeight;
-                h = glyphRun->glyphAdvances[i];
+                h = glyphAdvance;
             }
-            advance += dir * glyphRun->glyphAdvances[i];
+            (*advance) += dir * glyphAdvance;
             Rect r(fromD2D(x), fromD2D(y), fromD2D(w), fromD2D(h));
-            int utf8idx = mUTF16To8[glyphRunDesc->textPosition + glyphRunDesc->clusterMap[i]];
+            int utf8idx = mUTF16To8[utf16idx];
             if (!mGlyphs->empty()) {
                 mGlyphs->back().indexOfNext = utf8idx;
             }
             mGlyphs->emplace_back(utf8idx, mLineNo, r);
+        };
+
+        if (baselineOriginY > mLastBaselineY) {
+            mLineNo += 1;
+            mLastBaselineY = baselineOriginY;
         }
 
-        // Note: this does NOT update .indexOfNext of the last glyph, because we do not know it.
-        //       The caller of IDWriteTextLayout::Draw() will need to update that.
+        mGlyphs->reserve(mGlyphs->size() + glyphRun->glyphCount);
+        FLOAT advance = FLOAT(0.0);
+        for (unsigned int i = 0;  i < glyphRun->glyphCount;  ++i) {
+            int utf16idx = glyphRunDesc->textPosition + glyphRunDesc->clusterMap[i];
+            auto *glyphOffset = (glyphRun->glyphOffsets ? &glyphRun->glyphOffsets[i] : nullptr);
+            addGlyph(utf16idx, glyphOffset, glyphRun->glyphAdvances[i], &advance);
+        }
+        if (glyphRun->glyphCount == 0) {  // this is a \n
+            auto *glyphOffset = (glyphRun->glyphOffsets ? &glyphRun->glyphOffsets[0] : nullptr);
+            addGlyph(glyphRunDesc->textPosition, glyphOffset, glyphRun->glyphAdvances[0], &advance);
+        }
+
+        if (!mGlyphs->empty()) {
+            mGlyphs->back().indexOfNext = glyphRunDesc->textPosition + glyphRunDesc->stringLength;
+        }
 
         return NOERROR;
     }
@@ -1374,6 +1367,8 @@ public:
         : mDraw(dc.dpi())
     {
         mDPI = dc.dpi();
+        mEmptyLastLine = (text.text().empty() || text.text().back() == '\n');
+
         // In case anyone passes Font() to defaultReplacement font, replace with kDefaultFont
         if (defaultReplacementFont.family().empty()) {
             auto pointSize = defaultReplacementFont.pointSize();
@@ -1705,6 +1700,16 @@ public:
                 mMetrics.height = PicaPt::kZero;
             }
             mMetrics.advanceX = mMetrics.width;
+
+            if (mEmptyLastLine) {
+                auto& chars = glyphs();
+                if (chars.size() <= 1) {
+                    mMetrics.height = PicaPt::kZero;
+                } else {
+                    mMetrics.height -= chars[chars.size() - 1].frame.height + (mBaseline - mFirstLineAscent);
+                }
+            }
+
             if (winMetrics.lineCount <= 1) {
                 mMetrics.advanceY = PicaPt::kZero;
             } else {
@@ -1731,11 +1736,6 @@ public:
             glyphGetter->Release();
 
             delete[] lineMetrics;
-        }
-        // GlyphGetter cannot know when the end of the string has been
-        // reached, so we need to fixup .nextIndex for the last glyph.
-        if (!mGlyphs.empty()) {
-            mGlyphs.back().indexOfNext = mUTF16To8.back();
         }
         return mGlyphs;
     }
@@ -1778,6 +1778,7 @@ public:
 
 private:
     float mDPI;
+    bool mEmptyLastLine;
     Point mAlignmentOffset;
     PicaPt mBaseline;
     PicaPt mFirstLineAscent;

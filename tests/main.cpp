@@ -2491,6 +2491,10 @@ public:
             tm.height < PicaPt::fromPixels(13.4f, dpi) ||
             tm.height > PicaPt::fromPixels(13.5f, dpi)) {
 #elif defined(_WIN32) || defined(_WIN64)
+        // TODO: If -(mBaseline - mFirstLineAscent) is added to the height in 
+        // textMetrics(), the height is the same as for __APPLE__.
+        // However, this causes the alignment tests to fail. Presumably it
+        // is indicative of something being incorrect, though.
         if (tm.width < PicaPt::fromPixels(14.6f, dpi) ||
             tm.width > PicaPt::fromPixels(14.7f, dpi) ||
             tm.height < PicaPt::fromPixels(13.7f, dpi) ||
@@ -2881,11 +2885,26 @@ public:
         if (glyphs.size() != 2) {
             return std::string("Incorrect number of glyphs for 'im': got ") + std::to_string(glyphs.size()) + ", expected 2";
         }
+        if (glyphs[0].index != 0) {
+            return "glyphs[0].index should be 0, got " + std::to_string(glyphs[0].index);
+        }
+        if (glyphs[0].indexOfNext != 1) {
+            return "glyphs[0].indexOfNext should be 1, got " + std::to_string(glyphs[0].indexOfNext);
+        }
+        if (glyphs[1].index != 1) {
+            return "glyphs[0].index should be 1, got " + std::to_string(glyphs[0].index);
+        }
+        if (glyphs[1].indexOfNext != 2) {
+            return "glyphs[0].indexOfNext should be 2, got " + std::to_string(glyphs[0].indexOfNext);
+        }
         if (glyphs[0].frame.y.toPixels(dpi) < -0.001f || glyphs[0].frame.y.toPixels(dpi) >= 1.0f) {
             return "Glyph frames should start at the top of the line (baseline - ascent); for idx=0, got y=" + std::to_string(glyphs[0].frame.y.toPixels(dpi)) + ", expected in [0.0, 1.0)";
         }
         if (glyphs[1].frame.y.toPixels(dpi) < -0.001f || glyphs[1].frame.y.toPixels(dpi) >= 1.0f) {
             return "Glyph frames should start at the top of the line (baseline - ascent); for idx=1, got y=" + std::to_string(glyphs[1].frame.y.toPixels(dpi)) + ", expected in [0.0, 1.0)";
+        }
+        if (std::abs(glyphs[1].frame.x.toPixels(dpi) - glyphs[0].frame.maxX().toPixels(dpi)) > 0.001f) {
+            return "Glyph frames x coord are incorrect";
         }
 
         // Spaces should have glyphs
@@ -2894,7 +2913,7 @@ public:
             return "Incorrect number of glyphs for 'a  z': got " + std::to_string(glyphs.size()) + ", expected 4";
         }
 
-        // Multiple lines
+        // Multiple lines, with training space
         glyphs = mBitmap->createTextLayout("A \nA", font, fg)->glyphs();
         if (glyphs.size() != 4) {
             return "Incorrect number of glyphs for 'A \\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
@@ -2919,19 +2938,88 @@ public:
             return "glyph[3].line is incorrect: expected 1, got " + std::to_string(glyphs[3].line);
         }
 
+        // Multiple lines, with multiple trailing spaces (this is sometimes treated differently)
+        glyphs = mBitmap->createTextLayout("A   \nA", font, fg)->glyphs();
+        if (glyphs.size() != 6) {
+            return "Incorrect number of glyphs for 'A   \\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
+        }
+
         // Multiple lines, one empty
         glyphs = mBitmap->createTextLayout("A\n\nA", font, fg)->glyphs();
         if (glyphs.size() != 4) {
-            return "Incorrect number of glyphs for 'A \\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
+            return "Incorrect number of glyphs for 'A\\n\\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
+        }
+        if (glyphs[1].line != 0) {
+            return "glyphs[1].line should be 0 for 'A\\n\\nA', got " + std::to_string(glyphs[1].line);
+        }
+        if (std::abs((glyphs[1].frame.y - glyphs[0].frame.y).asFloat()) > 0.001f) {
+            return "glyphs[1] should be on the same line as glyphs[0] for 'A\\n\\nA'";
+        }
+        if (glyphs[2].frame.y < glyphs[0].frame.maxY() - epsilon) {
+            return "glyphs[2] should be on the second line for 'A\\n\\nA', got y=" + std::to_string(glyphs[2].frame.y.asFloat()) + ", expected " + std::to_string(glyphs[0].frame.maxY().asFloat());
+        }
+        if (glyphs[2].frame.y > glyphs[0].frame.maxY() + 0.5f * glyphs[0].frame.height) {
+            return "glyphs[2] should be on the second line for 'A\\n\\nA', got y=" + std::to_string(glyphs[2].frame.y.asFloat()) + ", expected about " + std::to_string(glyphs[0].frame.maxY().asFloat());
         }
 
         // Multiple lines, last one empty. Height should NOT include the last line
         // TODO: is this the correct behavior? (If not, need to fix multiline StringEdit
         //       which relies on it to not scroll too high when user starts a new line)
+        glyphs = mBitmap->createTextLayout("Ag\n", font, fg)->glyphs();
+        if (glyphs.size() != 3) {
+            return "Incorrect number of glyphs for 'Ag\\n': got " + std::to_string(glyphs.size()) + " expected 3";
+        }
         auto h1 = mBitmap->textMetrics("Ag\n", font, kPaintFill).height;
         auto h2 = mBitmap->textMetrics("Ag", font, kPaintFill).height;
         if (std::abs((h1 - h2).asFloat()) > 0.001f) {
-            return "Incorrect metrics for 'Ag\n': expected " + std::to_string(h2.toPixels(dpi)) + " px, got " + std::to_string(h1.toPixels(dpi)) + "px (trailing newline should not be counted in height)";
+            return "Incorrect metrics for 'Ag\\n': expected " + std::to_string(h2.toPixels(dpi)) + " px, got " + std::to_string(h1.toPixels(dpi)) + "px (trailing newline should not be counted in height)";
+        }
+
+        h1 = mBitmap->textMetrics("Ag\nAg\n", font, kPaintFill).height;
+        h2 = mBitmap->textMetrics("Ag\nAg", font, kPaintFill).height;
+        if (std::abs((h1 - h2).asFloat()) > 0.001f) {
+            return "Incorrect metrics for 'Ag\\nAg\\n': expected " + std::to_string(h2.toPixels(dpi)) + " px, got " + std::to_string(h1.toPixels(dpi)) + "px (trailing newline should not be counted in height)";
+        }
+
+        glyphs = mBitmap->createTextLayout("Ag\n\n", font, fg)->glyphs();
+        if (glyphs.size() != 4) {
+            return "Incorrect number of glyphs for 'Ag\\n\\n': got " + std::to_string(glyphs.size()) + ", expected 4";
+        }
+        h1 = mBitmap->textMetrics("Ag\n\n", font, kPaintFill).height;
+        h2 = mBitmap->textMetrics("Ag\nAg", font, kPaintFill).height;
+        if (std::abs((h1 - h2).asFloat()) > 0.001f) {
+            return "Incorrect metrics for 'Ag\\n\\n': expected " + std::to_string(h2.toPixels(dpi)) + " px, got " + std::to_string(h1.toPixels(dpi)) + "px (trailing newline should not be counted in height)";
+        }
+
+        glyphs = mBitmap->createTextLayout("\n", font, fg)->glyphs();
+        if (glyphs.size() != 1) {
+            return "Incorrect number of glyphs for '\\n': got " + std::to_string(glyphs.size()) + ", expected 1";
+        }
+        h1 = mBitmap->textMetrics("\n", font, kPaintFill).height;
+        h2 = mBitmap->textMetrics("", font, kPaintFill).height;
+        if (std::abs((h1 - h2).asFloat()) > 0.001f) {
+            return "Incorrect metrics for '\\n': expected " + std::to_string(h2.toPixels(dpi)) + " px, got " + std::to_string(h1.toPixels(dpi)) + "px (trailing newline should not be counted in height)";
+        }
+
+        // Multiple lines in CJK
+        glyphs = mBitmap->createTextLayout("\xe5\xad\x97\xe3\x80\x80\n\xe5\xad\x97", font, fg)->glyphs();
+        if (glyphs.size() != 4) {
+            return "Incorrect number of glyphs for '[zi3][cjk-space]\\n[zi3]': got " + std::to_string(glyphs.size()) + ", expected 4";
+        }
+        if (glyphs[0].indexOfNext != 3) {
+            return "Incorrect glyphs[0].indexOfNext for '[zi3][cjk-space]\\n[zi3]': got " + std::to_string(glyphs[0].indexOfNext) + ", expected 3";
+        }
+        if (glyphs[1].index != 3) {
+            return "Incorrect glyphs[1].index for '[zi3][cjk-space]\\n[zi3]': got " + std::to_string(glyphs[0].indexOfNext) + ", expected 3";
+        }
+        if (glyphs[1].indexOfNext != 6) {
+            return "Incorrect glyphs[1].indexOfNext for '[zi3][cjk-space]\\n[zi3]': got " + std::to_string(glyphs[0].indexOfNext) + ", expected 6";
+        }
+        if (glyphs[2].index != 6) {
+            return "Incorrect glyphs[2].index for '[zi3][cjk-space]\\n[zi3]': got " + std::to_string(glyphs[0].indexOfNext) + ", expected 6";
+        }
+        if (glyphs[2].indexOfNext != 7) {
+            return "Incorrect glyphs[2].indexOfNext for '[zi3][cjk-space]\\n[zi3]': got " + std::to_string(glyphs[0].indexOfNext) + ", expected 7";
         }
 
         // Word-wrap

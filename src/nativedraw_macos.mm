@@ -660,8 +660,10 @@ public:
         }
         mMetrics.advanceX = mMetrics.width;
         if (lines.count == 1) {
-            _ctLineGetTypographicBounds(lines, 0, &ascent, &descent, &leading);
-            mMetrics.height = PicaPt::fromPixels(ascent + descent, mDPI);
+            if (mMetrics.width > PicaPt(0.001f)) {
+                _ctLineGetTypographicBounds(lines, 0, &ascent, &descent, &leading);
+                mMetrics.height = PicaPt::fromPixels(ascent + descent, mDPI);
+            }  // else: mMetrics.height is already 0 (do not count last empty line)
         } else {
             std::vector<CGPoint> lineOrigins;
             lineOrigins.resize(lines.count);
@@ -1473,36 +1475,8 @@ public:
     TextMetrics textMetrics(const char *textUTF8, const Font& font,
                             PaintMode mode /*=kPaintFill*/) const override
     {
-        TextMetrics tm;
-        tm.width = PicaPt(0);
-        tm.height = PicaPt(0);
-        tm.advanceX = PicaPt(0);
-        tm.advanceY = PicaPt(0);
-
         auto textObj = textLayoutForCurrent(textUTF8, font, mode);
-        auto ctframe = textObj.ctframe();
-        NSArray* lines = (NSArray*)CTFrameGetLines(ctframe);
-        double width;
-        CGFloat ascent, descent, leading;
-        for (int i = 0;  i < lines.count;  ++i) {
-            width = CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
-                                               &ascent, &descent, &leading);
-            tm.width = std::max(tm.width, PicaPt::fromPixels(width, mDPI));
-            tm.height += PicaPt::fromPixels(ascent + descent, mDPI);
-            if (i < lines.count - 1) {
-                tm.height += PicaPt::fromPixels(leading, mDPI);
-            } else {
-                tm.advanceY += PicaPt::fromPixels(leading, mDPI);
-            }
-        }
-        tm.advanceX = tm.width;
-        if (lines.count > 1) {
-            tm.advanceY += tm.height;  // height, plus leading from above
-        } else {
-            tm.advanceY = PicaPt(0);
-        }
-
-        return tm;
+        return textObj.metrics();
     }
 
     TextObj textLayoutForCurrent(const char *textUTF8, const Font& font,

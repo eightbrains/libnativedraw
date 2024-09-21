@@ -3073,6 +3073,47 @@ public:
 
         // TODO: test empty line glyphs in various alignments
 
+        // First line indent
+        const PicaPt indent(9);
+        Text t("When in the course of human events it becomes necessary for one people...", font, fg);
+        t.setIndent(indent);
+        glyphs = mBitmap->createTextLayout(t, Size(PicaPt(144.0f), PicaPt(100000.0f)))->glyphs();
+        auto findLineStarts = [](const std::vector<TextLayout::Glyph>& glyphs) {
+            std::vector<TextLayout::Glyph> starts;
+            PicaPt lastX(1000000.0f);
+            for (auto &g : glyphs) {
+                if (g.frame.x < lastX) {
+                    starts.push_back(g);
+                }
+                lastX = g.frame.x;
+            }
+            return starts;
+        };
+        auto starts = findLineStarts(glyphs);
+        if (starts.size() < 2) {
+            return "first line indent did not produce at least two lines (word-wrapped)";
+        }
+        if (std::abs((starts[0].frame.x - indent).asFloat()) > 0.1f) {
+            return "first line indent: first line not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[0].frame.x.asFloat()) + ")";
+        }
+        if (std::abs(starts[1].frame.x.asFloat()) > 0.1f) {
+            return "first line indent: non-first line not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[1].frame.x.asFloat()) + ")";
+        }
+
+        // Hanging indent
+        t.setIndent(-indent);
+        glyphs = mBitmap->createTextLayout(t, Size(PicaPt(144.0f), PicaPt(100000.0f)))->glyphs();
+        starts = findLineStarts(glyphs);
+        if (starts.size() < 2) {
+            return "hanging indent did not produce at least two lines (word-wrapped)";
+        }
+        if (std::abs(starts[0].frame.x.asFloat()) > 0.1f) {
+            return "hanging indent: first line not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[0].frame.x.asFloat()) + ")";
+        }
+        if (std::abs((starts[1].frame.x - indent).asFloat()) > 0.1f) {
+            return "hanging indent: non-first line not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[1].frame.x.asFloat()) + ")";
+        }
+
         return "";
     }
 };

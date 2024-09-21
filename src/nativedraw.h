@@ -636,7 +636,7 @@ struct TextRun
 /// directly, as text layout may be different depending on the DPI of the
 /// DrawContext (glyphs and kerning may be different, especially at low point
 /// sizes, which sometimes use custom glyphs). To draw text, create a
-/// TextLayout from the DrawContext. Attributes like are unset by default.
+/// TextLayout from the DrawContext. Attributes like style are unset by default.
 /// Text is assumed to be UTF-8. The start index and length are indices into
 /// the text (NOT characters or code points), and are assumed to be on valid
 /// boundaries.
@@ -674,12 +674,18 @@ public:
     Text& setLineHeightMultiple(float factor);
     float lineHeightMultiple() const;
 
+    // Sets the indentation of the first line if positive; sets
+    // a hanging indent if negative.
+    Text& setIndent(const PicaPt& indent);
+    const PicaPt& indent() const;
+
     const TextRun& runAt(int index) const;
     const std::vector<TextRun>& runs() const;
 
 private:
     struct ParagraphStyle {
         float lineHeightMultiple;
+        PicaPt indent;
     };
 
     std::string mText;

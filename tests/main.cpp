@@ -3108,10 +3108,10 @@ public:
             return "hanging indent did not produce at least two lines (word-wrapped)";
         }
         if (std::abs(starts[0].frame.x.asFloat()) > 0.1f) {
-            return "hanging indent: first line not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[0].frame.x.asFloat()) + ")";
+            return "hanging indent: first line not correctly indented (expected 0, got " + std::to_string(starts[0].frame.x.asFloat()) + ")";
         }
         if (std::abs((starts[1].frame.x - indent).asFloat()) > 0.1f) {
-            return "hanging indent: non-first line not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[1].frame.x.asFloat()) + ")";
+            return "hanging indent: non-first line not correctly indented (expected 0, got " + std::to_string(starts[1].frame.x.asFloat()) + ")";
         }
 
         return "";

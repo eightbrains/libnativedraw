@@ -2913,7 +2913,7 @@ public:
             return "Incorrect number of glyphs for 'a  z': got " + std::to_string(glyphs.size()) + ", expected 4";
         }
 
-        // Multiple lines, with training space
+        // Multiple lines, with trailing space
         glyphs = mBitmap->createTextLayout("A \nA", font, fg)->glyphs();
         if (glyphs.size() != 4) {
             return "Incorrect number of glyphs for 'A \\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
@@ -3075,9 +3075,9 @@ public:
 
         // First line indent
         const PicaPt indent(9);
-        Text t("When in the course of human events it becomes necessary for one people...", font, fg);
+        Text t("a b c d e f g h i j k l m n o p q r s t u v w x y z A B C D E F G H I J K L\nM N O P Q R S T U V W X Y Z", Font("Arial", PicaPt(10.0f)), Color::kGrey);
         t.setIndent(indent);
-        glyphs = mBitmap->createTextLayout(t, Size(PicaPt(144.0f), PicaPt(100000.0f)))->glyphs();
+        glyphs = mBitmap->createTextLayout(t, Size(PicaPt(72.0f), PicaPt(100000.0f)))->glyphs();
         auto findLineStarts = [](const std::vector<TextLayout::Glyph>& glyphs) {
             std::vector<TextLayout::Glyph> starts;
             PicaPt lastX(1000000.0f);
@@ -3090,28 +3090,54 @@ public:
             return starts;
         };
         auto starts = findLineStarts(glyphs);
-        if (starts.size() < 2) {
+        if (starts.size() < 3) {
             return "first line indent did not produce at least two lines (word-wrapped)";
         }
         if (std::abs((starts[0].frame.x - indent).asFloat()) > 0.1f) {
             return "first line indent: first line not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[0].frame.x.asFloat()) + ")";
         }
         if (std::abs(starts[1].frame.x.asFloat()) > 0.1f) {
-            return "first line indent: non-first line not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[1].frame.x.asFloat()) + ")";
+            return "first line indent: non-first line [1] not correctly indented (expected 0, got " + std::to_string(starts[1].frame.x.asFloat()) + ")";
+        }
+        if (std::abs(starts[2].frame.x.asFloat()) > 0.1f) {
+            return "first line indent: non-first line [2] not correctly indented (expected 0, got " + std::to_string(starts[2].frame.x.asFloat()) + ")";
+        }
+        bool newlineOkay = false;
+        for (size_t i = 3;  i < starts.size();  ++i) {
+            if (std::abs((starts[i].frame.x - indent).asFloat()) < 0.1f) {
+                newlineOkay = true;
+                break;
+            }
+        }
+        if (!newlineOkay) {
+            return "first line indent: did not find another indent for the second paragraph";
         }
 
         // Hanging indent
         t.setIndent(-indent);
         glyphs = mBitmap->createTextLayout(t, Size(PicaPt(144.0f), PicaPt(100000.0f)))->glyphs();
         starts = findLineStarts(glyphs);
-        if (starts.size() < 2) {
+        if (starts.size() < 3) {
             return "hanging indent did not produce at least two lines (word-wrapped)";
         }
         if (std::abs(starts[0].frame.x.asFloat()) > 0.1f) {
             return "hanging indent: first line not correctly indented (expected 0, got " + std::to_string(starts[0].frame.x.asFloat()) + ")";
         }
         if (std::abs((starts[1].frame.x - indent).asFloat()) > 0.1f) {
-            return "hanging indent: non-first line not correctly indented (expected 0, got " + std::to_string(starts[1].frame.x.asFloat()) + ")";
+            return "hanging indent: non-first line [1] not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[1].frame.x.asFloat()) + ")";
+        }
+        if (std::abs((starts[2].frame.x - indent).asFloat()) > 0.1f) {
+            return "hanging indent: non-first line [2] not correctly indented (expected " + std::to_string(indent.asFloat()) + ", got " + std::to_string(starts[2].frame.x.asFloat()) + ")";
+        }
+        newlineOkay = false;
+        for (size_t i = 3;  i < starts.size();  ++i) {
+            if (std::abs(starts[i].frame.x.asFloat()) < 0.1f) {
+                newlineOkay = true;
+                break;
+            }
+        }
+        if (!newlineOkay) {
+            return "hanging indent: did not find another non-indent for the second paragraph";
         }
 
         return "";

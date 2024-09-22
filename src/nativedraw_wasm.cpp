@@ -499,6 +499,16 @@ public:
 
         auto oldFont = context["font"];
 
+        PicaPt firstLineIndent = PicaPt::kZero;
+        PicaPt nonFirstLineIndent = PicaPt::kZero;
+        if (text.indent() != PicaPt::kZero && (alignment & int(Alignment::kLeft))) {
+            if (text.indent() > PicaPt::kZero) {
+                firstLineIndent = text.indent();
+            } else {
+                nonFirstLineIndent = -text.indent();
+            }
+        }
+
         // Find all the \n's
         std::vector<int> newlineIndices;
         const char *str = text.text().c_str();
@@ -585,12 +595,13 @@ public:
 
         // Now calculate the lines
         bool wantWrap = (wrap != kWrapNone && size.width > PicaPt::kZero);
-        PicaPt x, y;
+        PicaPt x = firstLineIndent, y;
         CanvasFont *currentCanvasFont = nullptr;
         PicaPt currentCharSpacing = PicaPt::kZero;
         PicaPt leadingForLine;
         if (!subruns.empty()) {
             mLines.emplace_back();
+            mLines.back().lineRect.x = x;
             mLines.back().lineRect.y = y;
         }
         float lineHeightMultiple = text.lineHeightMultiple();
@@ -693,9 +704,14 @@ public:
             }
 
             if (isNewline || brokeLine) {
-                x = PicaPt::kZero;
+                if (isNewline) {
+                    x = firstLineIndent;
+                } else {
+                    x = nonFirstLineIndent;
+                }
                 y += lineHeightMultiple * (mLines.back().lineRect.height + leadingForLine);
                 mLines.emplace_back();
+                mLines.back().lineRect.x = x;
                 mLines.back().lineRect.y = y;
                 leadingForLine = PicaPt::kZero;
             }

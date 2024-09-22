@@ -854,6 +854,10 @@ public:
 #endif
         }
 
+        if (text.indent() != PicaPt::kZero) {
+            pango_layout_set_indent(mLayout, text.indent().toPixels(mDPI) * PANGO_SCALE);
+        }
+
         if (!attrs.empty()) {
             auto *attrList = pango_attr_list_new();
             for (auto *a : attrs) {

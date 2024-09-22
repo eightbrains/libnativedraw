@@ -1126,6 +1126,14 @@ Text& Text::setLineHeightMultiple(float factor)
 
 float Text::lineHeightMultiple() const { return mParagraph.lineHeightMultiple; }
 
+Text& Text::setIndent(const PicaPt& indent)
+{
+    mParagraph.indent = indent;
+    return *this;
+}
+
+const PicaPt& Text::indent() const { return mParagraph.indent; }
+
 //-----------------------------------------------------------------------------
 const TextLayout::Glyph* TextLayout::glyphAtPoint(const Point& p) const
 {

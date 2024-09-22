@@ -491,7 +491,7 @@ public:
                 [paragraphStyle setLineBreakMode:NSLineBreakByClipping];
             }
         }
-        if (text.lineHeightMultiple() > 0.0) {
+        if (text.lineHeightMultiple() > 0.0f) {
             if (paragraphStyle == nil) {
                 NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
                 paragraphStyle = [[NSMutableParagraphStyle alloc] init];
@@ -499,6 +499,19 @@ public:
                 [nsstring addAttributes:attr range:NSMakeRange(0, nsstring.length)];
             }
             [paragraphStyle setLineHeightMultiple:text.lineHeightMultiple()];
+        }
+        if (text.indent() != PicaPt::kZero) {
+            if (paragraphStyle == nil) {
+                NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];
+                paragraphStyle = [[NSMutableParagraphStyle alloc] init];
+                attr[NSParagraphStyleAttributeName] = paragraphStyle;
+                [nsstring addAttributes:attr range:NSMakeRange(0, nsstring.length)];
+            }
+            if (text.indent() > PicaPt::kZero) {
+                [paragraphStyle setFirstLineHeadIndent:text.indent().toPixels(mDPI)];
+            } else {
+                [paragraphStyle setHeadIndent:-text.indent().toPixels(mDPI)];
+            }
         }
         if (paragraphStyle != nil) {
             NSMutableDictionary *attr = [[NSMutableDictionary alloc] init];

@@ -822,6 +822,92 @@ private:
     ULONG mRef;
     int mIndex;
 };
+
+// Direct2D is so @#$! unfeatureful that we have to implement our own
+// indenting. This is an empty object that just takes up space that we
+// can use for the indent. This MUST be created with new, NOT on the
+// stack, or the delete on count = 0 will blow up!
+class EmptySpace : public IDWriteInlineObject
+{
+public:
+    explicit EmptySpace(FLOAT widthDips)
+        : mWidth(widthDips)
+    {}
+
+    HRESULT Draw(
+        void* clientDrawingContext,
+        IDWriteTextRenderer* renderer,
+        FLOAT               originX,
+        FLOAT               originY,
+        BOOL                isSideways,
+        BOOL                isRightToLeft,
+        IUnknown* clientDrawingEffect)
+    {
+        return S_OK;
+    }
+
+    HRESULT GetBreakConditions(
+        DWRITE_BREAK_CONDITION *breakConditionBefore,
+        DWRITE_BREAK_CONDITION *breakConditionAfter)
+    {
+        if (breakConditionBefore) { *breakConditionBefore = DWRITE_BREAK_CONDITION_MAY_NOT_BREAK; }
+        if (breakConditionAfter) { *breakConditionAfter = DWRITE_BREAK_CONDITION_MAY_NOT_BREAK; }
+        return S_OK;
+    }
+
+    HRESULT GetMetrics(DWRITE_INLINE_OBJECT_METRICS *metrics)
+    {
+        if (metrics) {
+            metrics->width = mWidth;
+            metrics->height = 1.0f;
+            metrics->baseline = metrics->height;  // bottom is on baseline
+            metrics->supportsSideways = true;  // maybe this works?
+        }
+        return S_OK;
+    }
+
+    HRESULT GetOverhangMetrics(DWRITE_OVERHANG_METRICS *overhangs)
+    {
+        if (overhangs) {
+            overhangs->left = 0.0f;
+            overhangs->top = 0.0f;
+            overhangs->right = 0.0f;
+            overhangs->bottom = 0.0f;
+        }
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void FAR* FAR* ppvObj)
+    {
+        if (iid == IID_IUnknown)
+        {
+            *ppvObj = this;
+            AddRef();
+            return NOERROR;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef()
+    {
+        return (ULONG)++mRefCount;
+    }
+
+    ULONG STDMETHODCALLTYPE Release()
+    {
+        mRefCount--;
+        auto refCount = mRefCount;
+        if (0 == mRefCount) {
+            delete this;
+        }
+        return (ULONG)refCount;
+    }
+
+private:
+    size_t mRefCount = 1;
+    FLOAT mWidth;
+};
+
 // Direct2D's IDWriteTextLayout expects us to allocate an object for every
 // text run to describe what needs to happen. We'll get much better cache
 // locality and get clearer ownership understanding if we do not new() objects
@@ -1260,10 +1346,10 @@ public:
     // Note:  to make sure that AddRef() and Release() work right, this should
     //        be created with new(), NOT on the stack!. The new object will have
     //        the refcount already at 1, so you will need to call Release().
-    GlyphGetter(float dpi, float d2dOffsetY, const std::vector<int>& utf16To8,
+    GlyphGetter(float dpi, float d2dOffsetX, float d2dOffsetY, const std::vector<int>& utf16To8,
                 DWRITE_LINE_METRICS lineMetrics[],
                 std::vector<TextLayout::Glyph> *glyphs)
-        : mDPI(dpi), mD2DOffsetY(d2dOffsetY), mUTF16To8(utf16To8), mLineMetrics(lineMetrics)
+        : mDPI(dpi), mD2DOffsetX(d2dOffsetX), mD2DOffsetY(d2dOffsetY), mUTF16To8(utf16To8), mLineMetrics(lineMetrics)
         , mGlyphs(glyphs)
     {}
 
@@ -1295,7 +1381,7 @@ public:
             FLOAT dir = ((glyphRun->bidiLevel & 0x1) == 0) ? 1.0f : -1.0f;
             FLOAT w, h;
             if (!glyphRun->isSideways) {
-                x = baselineOriginX + (*advance);
+                x = baselineOriginX + (*advance) + mD2DOffsetX;
                 y = baselineOriginY - d2dFmAscent + mD2DOffsetY;
                 if (glyphOffset) {
                     x += dir * glyphOffset->advanceOffset;
@@ -1305,7 +1391,7 @@ public:
                 h = d2dHeight;
             } else {
                 x = baselineOriginX - d2dFmAscent + mD2DOffsetY;
-                y = baselineOriginY + (*advance);
+                y = baselineOriginY + (*advance) + mD2DOffsetX;
                 if (glyphOffset) {
                     y += dir * glyphOffset->advanceOffset;
                     x -= glyphOffset->ascenderOffset;
@@ -1348,6 +1434,7 @@ public:
 
 protected:
     float mDPI;
+    float mD2DOffsetX;
     float mD2DOffsetY;
     FLOAT mLastBaselineY = -1e9f;
     int mLineNo = -1;
@@ -1359,15 +1446,15 @@ protected:
 class TextObj : public TextLayout
 {
 public:
-    TextObj(const DrawContext& dc, const Text& text,
-            const Size& size, int alignment,
+    TextObj(const DrawContext& dc, const Text& unindentedText,
+            const Size& unindentedSize, int alignment,
             TextWrapping wordWrap,
             Font defaultReplacementFont = kDefaultReplacementFont,
             const Color& defaultReplacementColor = kDefaultReplacementColor)
         : mDraw(dc.dpi())
     {
         mDPI = dc.dpi();
-        mEmptyLastLine = (text.text().empty() || text.text().back() == '\n');
+        mEmptyLastLine = (unindentedText.text().empty() || unindentedText.text().back() == '\n');
 
         // In case anyone passes Font() to defaultReplacement font, replace with kDefaultFont
         if (defaultReplacementFont.family().empty()) {
@@ -1379,15 +1466,70 @@ public:
             }
         }
 
+        // IDWriteTextLayout does not have any indenting features (because why design
+        // something convenient for people when everyone can just reimplement the same code
+        // everywhere?), so we have to implement it with inline objects.
+        // Of course, Microsoft has to make things as difficult as possible, so you cannot
+        // just insert an inline object, you have to replace text. And not 0-length text,
+        // either. So we are going to insert 0x01 (pretty much unused) as a sentinel value.
+        std::string _indentedStr;
+        std::vector<TextRun> _indentedRuns;
+        const std::string *textText = &unindentedText.text();
+        const std::vector<TextRun> *textRuns = &unindentedText.runs();
+        Size size = unindentedSize;
+        // I'm not sure if wshould support Alignment::kRight, since "indent" usually means
+        // indent in the direction of the text. Also, it's not entirely clear how do to
+        // that, since we have to indent by inserting spacers. It's definitely niche.
+        bool hasIndent = (unindentedText.indent() != PicaPt::kZero &&
+                          (alignment & int(Alignment::kLeft)));
+
+        if (hasIndent) {
+            const auto &t = unindentedText.text();
+            const auto len = t.size();
+            _indentedStr.reserve(len + 1);  // will have at least one line (paragraph start)
+            std::vector<int> old2new;
+            old2new.reserve(len + 1);
+            int delta = 0;
+            bool lastWasNewline = true;
+            for (std::string::size_type i = 0;  i < len;  ++i) {
+                if (lastWasNewline && t[i] != '\n') {
+                    _indentedStr.push_back('\x01');
+                    delta += 1;
+                }
+                old2new.push_back(int(_indentedStr.size()));
+                _indentedStr.push_back(t[i]);
+                lastWasNewline = (t[i] == '\n');
+            }
+            old2new.push_back(len + delta);
+            old2new[0] = 0;
+            assert(old2new.size() == len + 1);
+
+            _indentedRuns = unindentedText.runs();
+            for (auto &run : _indentedRuns) {
+                auto endIdx = run.startIndex + run.length;
+                run.startIndex = old2new[run.startIndex];
+                run.length = old2new[endIdx] - run.startIndex; // run may encompass an indent if contains \n
+            }
+
+            textText = &_indentedStr;
+            textRuns = &_indentedRuns;
+            if (unindentedText.indent() < PicaPt::kZero) {
+                auto absIndent = -unindentedText.indent();
+                if (size.width > absIndent) {  // might be zero if unset
+                    size.width -= absIndent;
+                }
+            }
+        }
+
         // Convert from UTF8 -> WCHAR
         int nCharsNeeded = 0;
-        WCHAR *wtext = newBrackets_Utf16FromUtf8(text.text(), &nCharsNeeded);  // calls new[]
+        WCHAR *wtext = newBrackets_Utf16FromUtf8(*textText, &nCharsNeeded);  // calls new[]
 
         // We might need to get the glyphs later. This will mean either
         // copying the char* now (ugh) so we can use it later, or generating
         // the utf16 -> utf8 mappings. Copying the char* will require two scans,
         // so we're just going to make the mapping.
-        mUTF16To8 = utf8IndicesForUTF16Indices(text.text().c_str());
+        mUTF16To8 = utf8IndicesForUTF16Indices(textText->c_str());
         assert(mUTF16To8.size() == nCharsNeeded);  // might fail on invalid UTF-8
 
         // Set alignment
@@ -1418,16 +1560,25 @@ public:
         HRESULT err = Direct2D::instance().writeFactory()
                               ->CreateTextLayout(wtext, nCharsNeeded - 1, // don't pass the \0
                                                  format, w, 10000.0f, &mLayout);
+        if (hasIndent) {  // substitute the '\x01' for indent objects
+            FLOAT indentDips = toD2D(unindentedText.indent());
+            for (int i = 0;  i < nCharsNeeded - 1;  ++i)  {
+                if (wtext[i] == L'\x01') {
+                    mLayout->SetInlineObject(new EmptySpace(indentDips), { UINT32(i), 1 });
+                }
+            }
+        }
+
         delete [] wtext;
 
-        if (text.lineHeightMultiple() > 0.0f) {
+        if (unindentedText.lineHeightMultiple() > 0.0f) {
             IDWriteTextLayout3* layout3 = nullptr;
             err = mLayout->QueryInterface(IID_PPV_ARGS(&layout3));
             if (err == S_OK) {
                 DWRITE_LINE_SPACING opts;
                 opts.method = DWRITE_LINE_SPACING_METHOD_PROPORTIONAL;
-                opts.height = text.lineHeightMultiple();
-                opts.baseline = text.lineHeightMultiple();
+                opts.height = unindentedText.lineHeightMultiple();
+                opts.baseline = unindentedText.lineHeightMultiple();
                 opts.leadingBefore = 0.0f;
                 opts.fontLineGapUsage = DWRITE_FONT_LINE_GAP_USAGE_ENABLED;  // use font's leading
                 layout3->SetLineSpacing(&opts);
@@ -1439,10 +1590,10 @@ public:
         int currentColor = 0;  // transparent: pretty much guaranteed to force fg to be set
         Font::Metrics currentMetrics;
         std::vector<Font::Metrics> runMetrics;
-        runMetrics.reserve(text.runs().size());
-        auto utf8to16 = utf16IndicesForUTF8Indices(text.text().c_str());
-        for (size_t i = 0; i < text.runs().size(); ++i) {
-            auto& run = text.runs()[i];
+        runMetrics.reserve(textRuns->size());
+        auto utf8to16 = utf16IndicesForUTF8Indices(textText->c_str());
+        for (size_t i = 0; i < textRuns->size(); ++i) {
+            auto& run = (*textRuns)[i];
             assert(run.font.isSet);
             assert(run.color.isSet);
             DWRITE_TEXT_RANGE range = {
@@ -1656,19 +1807,23 @@ public:
         // Handle vertical alignment
         Font::Metrics firstLineMetrics;
         if (!runMetrics.empty()) {
-            firstLineMetrics = calcFirstLineMetrics(runMetrics, text.runs());
+            firstLineMetrics = calcFirstLineMetrics(runMetrics, *textRuns);
         } else {
             firstLineMetrics = defaultReplacementFont.metrics(dc);
         }
         mFirstLineAscent = firstLineMetrics.ascent;
         mFirstLineLeading = firstLineMetrics.leading;
         mAlignmentOffset = calcOffsetForAlignment(alignment, size, firstLineMetrics);
-        if (text.lineHeightMultiple() > 0.0f) {
+        if (unindentedText.lineHeightMultiple() > 0.0f) {
             if (alignment & Alignment::kBottom) {
-                mAlignmentOffset.y += (text.lineHeightMultiple() - 1.0f) * (firstLineMetrics.lineHeight + firstLineMetrics.leading);
+                mAlignmentOffset.y += (unindentedText.lineHeightMultiple() - 1.0f) * (firstLineMetrics.lineHeight + firstLineMetrics.leading);
             } else if (alignment & Alignment::kVCenter) {
-                mAlignmentOffset.y += 0.5f * (text.lineHeightMultiple() - 1.0f) * (firstLineMetrics.lineHeight + firstLineMetrics.leading);
+                mAlignmentOffset.y += 0.5f * (unindentedText.lineHeightMultiple() - 1.0f) * (firstLineMetrics.lineHeight + firstLineMetrics.leading);
             }
+        }
+
+        if (hasIndent && unindentedText.indent() < PicaPt::kZero) {
+            mHangingIndent = -unindentedText.indent();
         }
 
         // So this is kind of hacky: calcFirstLineMetrics *might* have created
@@ -1730,8 +1885,9 @@ public:
             mLayout->GetLineMetrics(lineMetrics, nLines, &nLines);
 
             // Same calculation as draw() does, except for the pixel-snapping.
+            auto offsetX = toD2D(mHangingIndent);
             auto offsetY = toD2D(mAlignmentOffset.y - (mBaseline - mFirstLineAscent));
-            auto* glyphGetter = new GlyphGetter(mDPI, offsetY, mUTF16To8, lineMetrics, &mGlyphs);
+            auto* glyphGetter = new GlyphGetter(mDPI, offsetX, offsetY, mUTF16To8, lineMetrics, &mGlyphs);
             mLayout->Draw(nullptr, glyphGetter, 0.0f, 0.0f);
             glyphGetter->Release();
 
@@ -1770,7 +1926,7 @@ public:
         // converted from pixels to DIPs. The easiest way to do that is to convert
         // the offset to PicaPt.
         mLayout->Draw(gc, textRenderer,
-                      toD2D(topLeft.x),
+                      toD2D(topLeft.x + mHangingIndent),
                       toD2D(topLeft.y + mAlignmentOffset.y - PicaPt::fromPixels(offsetPx, mDPI)));
 
         textRenderer->Release();
@@ -1783,6 +1939,7 @@ private:
     PicaPt mBaseline;
     PicaPt mFirstLineAscent;
     PicaPt mFirstLineLeading;
+    PicaPt mHangingIndent;
 
     IDWriteTextLayout *mLayout = nullptr;
     DrawRunCommands mDraw;

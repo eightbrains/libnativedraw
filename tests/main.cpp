@@ -2949,6 +2949,14 @@ public:
         if (glyphs.size() != 4) {
             return "Incorrect number of glyphs for 'A\\n\\nA': got " + std::to_string(glyphs.size()) + ", expected 4";
         }
+        for (int i = 0;  i < 4;  ++i) {
+            if (glyphs[i].index != i) {
+                return "glyphs[" + std::to_string(i) + "].index should be " + std::to_string(i) + " for 'A\\n\\nA', got " + std::to_string(glyphs[i].index);
+            }
+            if (glyphs[i].indexOfNext != i + 1) {
+                return "glyphs[" + std::to_string(i) + "].indexOfNext should be " + std::to_string(i + 1) + " for 'A\\n\\nA', got " + std::to_string(glyphs[i].indexOfNext);
+            }
+        }
         if (glyphs[1].line != 0) {
             return "glyphs[1].line should be 0 for 'A\\n\\nA', got " + std::to_string(glyphs[1].line);
         }
@@ -4503,7 +4511,7 @@ int main(int argc, char *argv[])
         std::make_shared<ImageTest>("test.gif", kImageRGB24, TestImage::kGIF),
         std::make_shared<ImageTest>("bad.gif", kImageRGB24, TestImage::kGIF_bad),
         std::make_shared<ColorFuncTest>(),
-        std::make_shared<TransformTest>()
+        std::make_shared<TransformTest>(),
     };
 
     const char *TERM = std::getenv("TERM");

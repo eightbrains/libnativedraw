@@ -1103,10 +1103,15 @@ public:
 
                 if (mHasEmptyLastLine) {
                     auto &chars = glyphs();
-                    if (chars.empty()) {
+                    if (chars.size() <= 1) {
                         mMetrics.height = PicaPt::kZero;
                     } else {
-                        mMetrics.height = chars.back().frame.maxY();
+                        auto &backBack = chars[chars.size() - 2];
+                        if (chars.back().line == backBack.line) {
+                            mMetrics.height = backBack.frame.maxY();
+                        } else {
+                            mMetrics.height = chars.back().frame.maxY();
+                        }
                     }
                 }
 
@@ -1125,28 +1130,41 @@ public:
     {
         if (!mGlyphsValid) {
             assert(mGlyphs.empty());
+
+            // This is unnecessarily complicated because it is not clear how
+            // to get glyph extents out of the run. It might be possible with
+            // 1.50, but that is newer than we would like to support (as of
+            // this writing), and it is not clear that it supports it, anyway.
+            // However, iterating by cluster skips newlines, so we need a lot
+            // of logic to put them in.
             PangoLayoutIter *it = pango_layout_get_iter(mLayout);
             PangoLayoutLine *lastLine = nullptr;
             int currentLineNo = -1;
+            int nLines = pango_layout_get_line_count(mLayout);
             bool isEmpty = (pango_layout_iter_get_run(it) == NULL &&
                             pango_layout_iter_at_last_line(it));
             PangoRectangle logical;
-            float invPangoScale = 1.0f / float(PANGO_SCALE);
+            const PangoLayoutRun *lastRun = nullptr;
+            const float invPangoScale = 1.0f / float(PANGO_SCALE);
             if (!isEmpty) {
                 do {
                     int textIdx = pango_layout_iter_get_index(it);
                     bool lastGlyphWasSpace = false;
                     PangoLayoutLine *line = pango_layout_iter_get_line(it);
+                    lastRun = pango_layout_iter_get_run_readonly(it);
                     if (line != lastLine) {
                         if (lastLine) {
                             int lastLineEndIdx = lastLine->start_index + lastLine->length;
                             if (lastLineEndIdx < line->start_index) {
                                 int idx = lastLineEndIdx;
                                 PicaPt lastY = mAlignmentOffset.y;
-                                // PangoLayout doesn't seem to include glyphs for
+                                // The layout iterator doesn't include glyphs for
                                 // \n characters, including if there are blanks
-                                // lines (e.g. "...\n\n...").
-                                while (idx < line->start_index) {
+                                // lines (e.g. "...\n\n..."). The PangoLayoutLine
+                                // includes a run of NULL, though. (It _does_
+                                // include glyphs for spaces, and there is a
+                                // test for trailing CJK spaces.)
+                                if (idx < line->start_index) {
                                     Rect r;
                                     if (!mGlyphs.empty()) {
                                         mGlyphs.back().indexOfNext = idx;
@@ -1156,11 +1174,25 @@ public:
                                         r.x = r.maxX();
                                     } else {
                                         pango_layout_iter_get_cluster_extents(it, nullptr, &logical);
-                                        r = Rect(mAlignmentOffset.x, lastY, PicaPt::kZero, PicaPt::fromPixels(float(logical.height) * invPangoScale, mDPI));
-                                        lastY += r.height;
+                                        r = Rect(mAlignmentOffset.x, mAlignmentOffset.y, PicaPt::kZero, PicaPt::fromPixels(float(logical.height) * invPangoScale, mDPI));
                                     }
                                     r.width = PicaPt::kZero;
                                     mGlyphs.emplace_back(lastLineEndIdx, currentLineNo, r);
+
+                                    lastY = mGlyphs.back().frame.maxY();
+                                    idx++;
+                                }
+                                while (idx < line->start_index) {
+                                    ++currentLineNo;
+                                    Rect r;
+                                    r.x = PicaPt::kZero;
+                                    if (!mGlyphs.empty()) {
+                                        r.y = mGlyphs.back().frame.maxY();
+                                        r.height = mGlyphs.back().frame.height;
+                                        mGlyphs.back().indexOfNext = idx;
+                                    }
+                                    r.width = PicaPt::kZero;
+                                    mGlyphs.emplace_back(idx, currentLineNo, r);
                                     idx++;
                                 }
                             }
@@ -1185,8 +1217,53 @@ public:
                 } while(pango_layout_iter_next_cluster(it));
             }
             pango_layout_iter_free(it);
+
+            // Add glyph for trailing \n's (if any)
+            bool isEmptyFirstLine = (lastLine && lastLine->start_index == 0 && !lastLine->runs);
+            if (currentLineNo >= 0 && currentLineNo < nLines - 1 && !isEmptyFirstLine) {
+                if (!mGlyphs.empty()) {
+                    auto r = mGlyphs.back().frame;
+                    r.x = r.maxX();
+                    r.width = PicaPt::kZero;
+                    mGlyphs.back().indexOfNext = mGlyphs.back().index + 1;
+                    mGlyphs.emplace_back(mGlyphs.back().indexOfNext, currentLineNo, r);
+                    ++currentLineNo;
+                } else {
+                    // Must be a \n at begining; handle below
+                    // (Except this never actually happens, because the line
+                    // actually exists even though the cluster is skipped, so it
+                    // gets added on the main path)
+                }
+            }
+            while (currentLineNo >= 0 && currentLineNo < nLines - 1 && !isEmptyFirstLine) {
+                PangoLayoutLine *line = pango_layout_get_line(mLayout, currentLineNo);
+                pango_layout_line_get_extents(line, nullptr, &logical);
+                auto y = PicaPt::kZero;
+                if (!mGlyphs.empty()) {
+                    y = mGlyphs.back().frame.maxY();
+                }
+                Rect r(PicaPt::fromPixels(float(logical.x) * invPangoScale, mDPI) + mAlignmentOffset.x,
+                       y,
+                       PicaPt::kZero,
+                       PicaPt::fromPixels(float(logical.height) * invPangoScale, mDPI));
+                if (lastRun && lastRun->item && lastRun->item->analysis.font) {
+                    auto *fm = pango_font_get_metrics(lastRun->item->analysis.font,
+                                                      lastRun->item->analysis.language);
+                    auto ascent = PicaPt::fromPixels(float(pango_font_metrics_get_ascent(fm)) * invPangoScale, mDPI);
+                    auto descent = PicaPt::fromPixels(float(pango_font_metrics_get_descent(fm)) * invPangoScale, mDPI);
+                    auto leading = r.height - (ascent + descent);
+                    r.y += leading;
+                    r.height = ascent + descent;
+                    pango_font_metrics_unref(fm);
+                }
+                if (!mGlyphs.empty()) {
+                    mGlyphs.back().indexOfNext = line->start_index;
+                }
+                ++currentLineNo;
+                mGlyphs.emplace_back(line->start_index, currentLineNo, r);
+            }
+
             if (!mGlyphs.empty()) {
-                int nLines = pango_layout_get_line_count(mLayout);
                 if (nLines > 0) {
                     // Find last index. Maybe it would be quicker to use strlen?
                     PangoLayoutLine *line = pango_layout_get_line(mLayout,
@@ -1194,6 +1271,7 @@ public:
                     mGlyphs.back().indexOfNext = line->start_index + line->length;
                 }
             }
+
             mGlyphsValid = true;
         }
 

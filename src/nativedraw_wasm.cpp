@@ -723,7 +723,16 @@ public:
             for (auto &line : mLines) {
                 textSize.width = std::max(textSize.width, line.lineRect.width);
             }
-            textSize.height = mLines.back().lineRect.maxY();
+            if (text.text().size() == 1 && text.text()[0] == '\n') {
+                textSize.height = PicaPt::kZero;
+            } else {
+                auto lastNonEmptyLineIdx = mLines.size() - 1;
+                while (lastNonEmptyLineIdx > 0
+                       && mLines[lastNonEmptyLineIdx].lineRect.height <= PicaPt::kZero) {
+                    --lastNonEmptyLineIdx;
+                }
+                textSize.height = mLines[lastNonEmptyLineIdx].lineRect.maxY();
+            }
         }
         mMetrics.width = textSize.width;
         mMetrics.height = textSize.height;

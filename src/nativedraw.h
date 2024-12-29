@@ -1050,6 +1050,18 @@ public:
                 void* hwnd, int width, int height, float dpi);
     static std::shared_ptr<DrawContext> createDirect2DBitmap(
                 BitmapType type, int width, int height, float dpi = 72.0f);
+    // Microsoft has not isolated printing and Direct2D drawing well,
+    // so we need to require a lot of printing information.
+    /// `printerName` is the operating system print queue name. It should be
+    /// derived from the DEVNAMES structure that PrintDlg[Ex] returns.
+    /// `utf8JobName` is the job name.
+    /// `istreamOutput` is nullptr if sending to an actual printer.
+    /// `istreamPrintTicket` is the result of PTConvertDevModeToPrintTicket().
+    /// Draw as usual, and call addPage() when the page is complete.
+    static std::shared_ptr<DrawContext> createPrinterContext(
+                const wchar_t *printerName, const char *utf8JobName,
+                void *istreamOutput, void *istreamPrintTicket,
+                int width, int height, float dpi);
 #endif
 
     virtual ~DrawContext() {}
@@ -1244,6 +1256,10 @@ public:
     /// are native to the underlying operating system not portable. In fact, they
     /// may even be different between a bitmap and a window on the same system.
     virtual void calcContextPixel(const Point& point, float *x, float *y) = 0;
+
+    /// Marks the page complete. On macOS this is a no-op, because macOS
+    /// printing calls draw once for each page.
+    virtual void addPage();
 
 protected:
     DrawContext(void *nativeDC, int width, int height, float dpi, float nativeDPI);

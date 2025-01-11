@@ -1045,6 +1045,10 @@ public:
     static std::shared_ptr<DrawContext> createCairoX11Bitmap(
                 void* display, BitmapType type, int width, int height,
                 float dpi = 72.0f);
+    /// Creates a PDF. If `filename` is nullptr, the context is valid, but will
+    /// not be written to disk.
+    static std::shared_ptr<DrawContext> createCairoPDF(
+                const char *filename, int width, int height, float dpi = 72.0f);
 #elif defined(_WIN32) || defined(_WIN64)
     static std::shared_ptr<DrawContext> fromHwnd(
                 void* hwnd, int width, int height, float dpi);

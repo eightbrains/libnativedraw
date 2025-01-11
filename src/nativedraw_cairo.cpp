@@ -27,6 +27,7 @@
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrender.h>
 #include <cairo/cairo.h>
+#include <cairo/cairo-pdf.h>
 #include <cairo/cairo-xlib.h>
 #include <cairo/cairo-xlib-xrender.h>
 #include <pango/pangocairo.h>
@@ -2104,6 +2105,49 @@ public:
     }
 };
 
+//-----------------------------------------------------------------------------
+class CairoPDF : public CairoDrawContext
+{
+    using Super = CairoDrawContext;
+private:
+    cairo_surface_t *mSurface;
+    cairo_t *mDC;
+
+public:
+    CairoPDF(const char *filename, int width, int height, float dpi)
+        : CairoDrawContext(nullptr, width, height, dpi)
+    {
+        mSurface = cairo_pdf_surface_create(filename,
+                              double(PicaPt::fromPixels(width, dpi).asFloat()),
+                              double(PicaPt::fromPixels(height, dpi).asFloat()));
+        mDC = cairo_create(mSurface);
+        setNativeDC(mDC);
+    }
+
+    ~CairoPDF()
+    {
+        cairo_destroy(mDC);
+        cairo_surface_destroy(mSurface);
+    }
+
+    void endDraw() override
+    {
+        Super::endDraw();
+        cairo_show_page(mDC);
+    }
+
+    void addPage() override
+    {
+        cairo_show_page(mDC);
+    }
+
+    std::shared_ptr<DrawContext> createBitmap(BitmapType type,
+                                              int width, int height,
+                                              float dpi /*= 72.0f*/) override
+    {
+        return std::make_shared<CairoBitmap>(type, width, height, dpi);
+    }
+};
 
 //-----------------------------------------------------------------------------
 class ShareableX11Pixmap
@@ -2298,6 +2342,12 @@ std::shared_ptr<DrawContext> DrawContext::createCairoX11Bitmap(
 {
     return std::make_shared<CairoX11Bitmap>((Display*)display, type,
                                             width, height, dpi);
+}
+
+std::shared_ptr<DrawContext> DrawContext::createCairoPDF(
+            const char *filename, int width, int height, float dpi /*= 72.0f*/)
+{
+    return std::make_shared<CairoPDF>(filename, width, height, double(dpi));
 }
 
 } // namespace ND_NAMESPACE

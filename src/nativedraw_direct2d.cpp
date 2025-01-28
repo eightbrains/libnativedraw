@@ -47,6 +47,7 @@
 #include <dwrite_3.h>
 #include <stringapiset.h>
 #include <wincodec.h>
+#include <documenttarget.h>  // for print context
 
 namespace ND_NAMESPACE {
 namespace {
@@ -115,6 +116,21 @@ public:
     ID3D11DeviceContext* d3d11DeviceContext() { return mD3DDeviceContext; }
     IWICImagingFactory* wicFactory() { return mWicFactory; }
 
+    IPrintDocumentPackageTargetFactory* printDocFactory()
+    {
+        if (!mPrintDocFactory) {  // lazy load this one; probably we will not print anything
+            HRESULT err = CoCreateInstance(
+                __uuidof(PrintDocumentPackageTargetFactory),
+                nullptr,
+                CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&mPrintDocFactory)
+            );
+            if (err != S_OK) {
+                printError("Could not create PrintDocumentPackageTargetFactory", err);
+            }
+        }
+        return mPrintDocFactory;
+    }
     ID2D1DeviceContext* createDeviceContext()
     {
         ID2D1DeviceContext *dc = nullptr;
@@ -123,6 +139,33 @@ public:
             printError("Could not create device context", err);
         }
         return dc;
+    }
+
+    IPrintDocumentPackageTarget* createPrintDocumentTarget(const wchar_t *printerName,
+                                                           const char* utf8JobName,
+                                                           IStream *outputStream,
+                                                           IStream *jobTicket)
+    {
+        IPrintDocumentPackageTarget *target = nullptr;
+        auto *factory = printDocFactory();
+        if (factory) {
+            auto *jobName = newBrackets_Utf16FromUtf8(utf8JobName);
+            HRESULT err = factory->CreateDocumentPackageTargetForPrintJob(
+                printerName, jobName, outputStream, jobTicket, &target
+            );
+            delete[] jobName;
+        }
+        return target;
+    }
+
+    ID2D1PrintControl* createPrintControl(IPrintDocumentPackageTarget *docTarget)
+    {
+        ID2D1PrintControl* printCtrl = nullptr;
+        HRESULT err = mD2DDevice->CreatePrintControl(wicFactory(), docTarget, nullptr, &printCtrl);
+        if (err != S_OK) {
+            printError("Could not create print context", err);
+        }
+        return printCtrl;
     }
 
     Direct2D()
@@ -204,6 +247,7 @@ public:
         if (mD2DFactory) { mD2DFactory->Release(); }
         if (mWriteFactory) { mWriteFactory->Release(); }
         if (mWicFactory) { mWicFactory->Release(); }
+        if (mPrintDocFactory) { mPrintDocFactory->Release(); }
 
         // The docs say that you need to call CoUnitialize() for every
         // "successful call made to CoInitialze[Ex](), including any call that
@@ -221,6 +265,7 @@ private:
     ID3D11DeviceContext* mD3DDeviceContext = nullptr;
     IDXGIDevice *mDXGIDevice = nullptr;
     ID2D1Device *mD2DDevice = nullptr;
+    IPrintDocumentPackageTargetFactory *mPrintDocFactory = nullptr;
 };
 std::unique_ptr<Direct2D> Direct2D::gInstance = nullptr;
 
@@ -2392,6 +2437,9 @@ private:
 public:
     void setNativeDC(void* nativeDC)
     {
+        // Note: do not return early if nativeDC == mNativeDC!
+        //       Printing does this to reset the state for a new page.
+
         cleanup();
         mStateStack.push_back(ContextState());
         // Make sure we have sane defaults for anything that is unset
@@ -3306,6 +3354,60 @@ public:
         return c;
     }
 };
+
+//-------------------------- PrintContext -------------------------------------
+class Direct2DPrint : public Direct2DContext
+{
+    IPrintDocumentPackageTarget* mDocTarget = nullptr;
+    ID2D1PrintControl *mPrintControl = nullptr;
+    ID2D1CommandList *mCmdList = nullptr;
+
+public:
+    Direct2DPrint(const wchar_t* printerName, const char* utf8JobName,
+                  void* istreamOutput, void* istreamPrintTicket,
+                  int width, int height, float dpi)
+        : Direct2DContext(Direct2D::instance().createDeviceContext(), width, height, dpi)
+    {
+        mDocTarget = Direct2D::instance().createPrintDocumentTarget(printerName, utf8JobName, (IStream*)istreamOutput, (IStream*)istreamPrintTicket);
+        if (mDocTarget) {  // happens if printing to a file but cancel from the file dialog
+            mPrintControl = Direct2D::instance().createPrintControl(mDocTarget);
+        }
+        addPage();
+    }
+
+    ~Direct2DPrint()
+    {
+        if (mPrintControl) { mPrintControl->Release(); }
+        if (mDocTarget) { mDocTarget->Release(); }
+        if (mCmdList) {
+            endDraw();
+            mCmdList->Release();
+        }
+        if (mNativeDC) { ((ID2D1DeviceContext*)mNativeDC)->Release(); }
+    }
+
+    void addPage() override
+    {
+        if (mCmdList) {
+            endDraw();
+            mCmdList->Close();
+            if (mPrintControl) {
+                mPrintControl->AddPage(mCmdList, D2D1::SizeF(width(), height()), nullptr);
+            }
+            mCmdList->Release();
+        }
+        mCmdList = nullptr;  // in case creating one fails;
+        HRESULT err = ((ID2D1DeviceContext*)mNativeDC)->CreateCommandList(&mCmdList);
+        if (err == S_OK) {
+            ((ID2D1DeviceContext*)mNativeDC)->SetTarget(mCmdList);
+            setNativeDC(mNativeDC);  // reset state for this page
+            beginDraw();
+        } else {
+            printError("Could not create D2D command list", err);
+        }
+    }
+};
+
 //--------------------------- DrawContext -------------------------------------
 std::shared_ptr<DrawContext> DrawContext::fromHwnd(void* hwnd, int width, int height, float dpi)
 {
@@ -3316,6 +3418,15 @@ std::shared_ptr<DrawContext> DrawContext::createDirect2DBitmap(BitmapType type, 
                                                                float dpi /*= 72.0f*/)
 {
     return std::make_shared<Direct2DBitmap>(type, width, height, dpi);
+}
+
+std::shared_ptr<DrawContext> DrawContext::createPrinterContext(
+                                    const wchar_t* printerName, const char* utf8JobName,
+                                    void* istreamOutput, void* istreamPrintTicket,
+                                    int width, int height, float dpi)
+{
+    return std::make_shared<Direct2DPrint>(printerName, utf8JobName, istreamOutput, istreamPrintTicket,
+                                           width, height, dpi);
 }
 
 } // namespace $ND_NAMESPACE

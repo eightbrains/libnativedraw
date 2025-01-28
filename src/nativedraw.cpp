@@ -1893,4 +1893,8 @@ void DrawContext::drawText(const char *textUTF8, const Rect& r, int alignment,
     drawText(*layout, r.upperLeft());
 }
 
+void DrawContext::addPage()
+{
+}
+
 } // namespace $ND_NAMESPACE

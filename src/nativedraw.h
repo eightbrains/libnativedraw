@@ -120,6 +120,11 @@ struct Size
 
     Size operator*(float v) const { return Size(width * v, height * v); }
 
+    bool operator==(const Size& rhs) const
+        { return (width == rhs.width && height == rhs.height); }
+    bool operator!=(const Size& rhs) const
+        { return (width != rhs.width || height != rhs.height); }
+
     PicaPt width;
     PicaPt height;
 };

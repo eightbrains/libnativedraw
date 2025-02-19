@@ -3337,13 +3337,16 @@ public:
         mBitmap->fill(Color::kBlack);
         mBitmap->drawText(*mBitmap->createTextLayout(t), upperLeft);
         mBitmap->endDraw();
+        bool wasUnderline = false;
         int n = 0;
         for (int y = baseline - 1;  y < mBitmap->height();  ++y) {
             int xx = int((0.333f * metrics.ascent).toPixels(dpi));
             auto c = mBitmap->pixelAt(xx, y);
-            if (c.red() == 0.0f && c.green() > 0.66f && c.blue() == 0.0f) {
+            bool isUnderline = (c.red() == 0.0f && c.green() > 0.66f && c.blue() == 0.0f);
+            if (!wasUnderline && isUnderline) {
                 n += 1;
             }
+            wasUnderline = isUnderline;
         }
         if (n != 2) {
             return std::string("expected 2 lines for double underline, found ") + std::to_string(n);

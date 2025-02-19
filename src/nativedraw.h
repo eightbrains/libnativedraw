@@ -52,8 +52,8 @@ struct PicaPt
 {
     static const PicaPt kZero;
 
-    PicaPt() : pt(0.0f) {}
-    explicit PicaPt(float pt_) : pt(pt_) {}
+    constexpr PicaPt() : pt(0.0f) {}
+    explicit constexpr PicaPt(float pt_) : pt(pt_) {}
 
     static PicaPt fromPixels(float pixels, float dpi) {
         return PicaPt(pixels * 72.0f / dpi);
@@ -103,8 +103,8 @@ struct Size
 {
     static const Size kZero;
 
-    Size() : width(PicaPt(0.0f)), height(PicaPt(0.0f)) {}
-    Size(const PicaPt& w, const PicaPt& h)
+    constexpr Size() : width(PicaPt(0.0f)), height(PicaPt(0.0f)) {}
+    constexpr Size(const PicaPt& w, const PicaPt& h)
         : width(w), height(h)
     {}
 
@@ -135,8 +135,8 @@ struct Point
 {
     static const Point kZero;
 
-    Point() : x(PicaPt(0.0f)), y(PicaPt(0.0f)) {}
-    explicit Point(const PicaPt& x_, const PicaPt& y_)
+    constexpr Point() : x(PicaPt(0.0f)), y(PicaPt(0.0f)) {}
+    explicit constexpr Point(const PicaPt& x_, const PicaPt& y_)
         : x(x_), y(y_)
     {}
 
@@ -176,16 +176,16 @@ struct Rect
 {
     static const Rect kZero;
 
-    Rect()
+    constexpr Rect()
         : x(PicaPt(0.0f)), y(PicaPt(0.0f))
         , width(PicaPt(0.0f)), height(PicaPt(0.0f))
     {}
 
-    Rect(const Point& origin, const Size& size)
+    constexpr Rect(const Point& origin, const Size& size)
         : x(origin.x), y(origin.y), width(size.width), height(size.height)
     {}
 
-    Rect(const PicaPt& x_, const PicaPt& y_,
+    constexpr Rect(const PicaPt& x_, const PicaPt& y_,
          const PicaPt& width_, const PicaPt& height_)
         : x(x_), y(y_), width(width_), height(height_)
     {}

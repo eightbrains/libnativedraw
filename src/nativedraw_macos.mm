@@ -701,6 +701,9 @@ public:
     const std::vector<Glyph>& glyphs() const override
     {
         if (!mGlyphsInitialized) {
+            std::vector<CGPoint> localPos;
+            std::vector<CGSize> localAdv;
+            std::vector<CFIndex> localIdx;
             Point alignmentOffset(PicaPt::fromPixels(mAlignmentOffsetPx.x, mDPI),
                                   PicaPt::fromPixels(mAlignmentOffsetPx.y, mDPI));
             NSArray* lines = (NSArray*)CTFrameGetLines(mFrame);
@@ -725,9 +728,27 @@ public:
                 for (int r = 0;  r < nRuns;  ++r) {
                     CTRunRef run = (__bridge CTRunRef)[runs objectAtIndex:r];
                     int n = CTRunGetGlyphCount(run);
-                    const CGPoint *positions = CTRunGetPositionsPtr(run);
-                    const CGSize *advances = CTRunGetAdvancesPtr(run);
-                    const CFIndex *indices = CTRunGetStringIndicesPtr(run);
+                    // (Stupid const rules:  we want the contents of the ptr to be const, not the
+                    // variable to be immutable, but that's what the function signature is.)
+                    CGPoint *positions = (CGPoint*)CTRunGetPositionsPtr(run);
+                    CGSize *advances = (CGSize*)CTRunGetAdvancesPtr(run);
+                    CFIndex *indices = (CFIndex*)CTRunGetStringIndicesPtr(run);
+                    // CTRunGet...Ptr() can return null
+                    if (!positions) {
+                        localPos.clear();  localPos.resize(n);
+                        positions = localPos.data();
+                        CTRunGetPositions(run, CFRangeMake(0, 0), positions);
+                    }
+                    if (!advances) {
+                        localAdv.clear();  localAdv.resize(n);
+                        advances = localAdv.data();
+                        CTRunGetAdvances(run, CFRangeMake(0, 0), advances);
+                    }
+                    if (!indices) {
+                        localIdx.clear();  localIdx.resize(n);
+                        indices = localIdx.data();
+                        CTRunGetStringIndices(run, CFRangeMake(0, 0), indices);
+                    }
                     CGFloat ascent, descent, leading;
                     CTRunGetTypographicBounds(run, CFRangeMake(0, 0),
                                               &ascent, &descent, &leading);

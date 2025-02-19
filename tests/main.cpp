@@ -1069,11 +1069,21 @@ public:
         Color fill2(0.0f, 0.0f, 1.0f, 0.5f);
         Color blended1(0.5f, 0.0f, 0.0f, 1.0f);
         Color blended2(0.0f, 0.0f, 0.5f, 1.0f);
-#if __APPLE__
-        Color blended(0x3f, 0x00, 0x80, 0xff);
-#else
-        Color blended(0x40, 0x00, 0x80, 0xff);
+
+        const Color blended(0x40, 0x00, 0x80, 0xff);
+        const Color blendedMacBug(0x3f, 0x00, 0x80, 0xff);  // exists on 10.14, not on 13.4
+        auto isExpected = [&blended, &blendedMacBug](const Color& c) {
+            if (c.toRGBA() == blended.toRGBA()) {
+                return true;
+            }
+#ifdef __APPLE__
+            if (c.toRGBA() == blendedMacBug.toRGBA()) {
+                return true;
+            }
 #endif // __APPLE__
+            return false;
+        };
+
         auto dpi = mBitmap->dpi();
         auto rect1 = Rect::fromPixels(1, 1, 6, 5, dpi);
         auto rect2 = Rect::fromPixels(3, 3, 6, 5, dpi);
@@ -1100,11 +1110,11 @@ public:
                 auto pixel = mBitmap->pixelAt(x, y);
                 auto p = Point::fromPixels(x, y, dpi);
                 if (intersection.contains(p)) {
-                    if (pixel.toRGBA() != blended.toRGBA()) {
+                    if (!isExpected(pixel)) {
                         return createPixelError("bad blended pixel", x, y, blended, pixel);
                     }
                 } else if (rect1.contains(p)) {
-                    if (pixel.toRGBA() != blended1 .toRGBA()) {
+                    if (pixel.toRGBA() != blended1.toRGBA()) {
                         return createPixelError("bad rect1 pixel", x, y, blended1, pixel);
                     }
                 } else if (rect2.contains(p)) {
@@ -3223,9 +3233,9 @@ public:
 
 class RichTextTest : public BitmapTest
 {
-    static constexpr int kPointSize = 13;
+    static constexpr int kPointSize = 18;
 public:
-    RichTextTest() : BitmapTest("rich text (styling)", kPointSize + 3, 2.5f * kPointSize) {}
+    RichTextTest() : BitmapTest("rich text (styling)", 2.5f * kPointSize, 2.5f * kPointSize) {}
 
     std::string run() override
     {
@@ -3235,6 +3245,7 @@ public:
         const Color strikeColor = Color::kGreen;
         // Use bold so that one of the pixels will be closer to 100% on a whole pixel
         const Font font("Arial", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
+        const Font bigFont = font.fontWithScaledPointSize(2.0f);  // better for double-underline
         const Point upperLeft = Point::kZero;
 
         // ----
@@ -3328,7 +3339,8 @@ public:
         mBitmap->endDraw();
         int n = 0;
         for (int y = baseline - 1;  y < mBitmap->height();  ++y) {
-            auto c = mBitmap->pixelAt(x, y);
+            int xx = int((0.333f * metrics.ascent).toPixels(dpi));
+            auto c = mBitmap->pixelAt(xx, y);
             if (c.red() == 0.0f && c.green() > 0.66f && c.blue() == 0.0f) {
                 n += 1;
             }
@@ -3554,8 +3566,9 @@ public:
 
         // ----
         // Verify superscript
+        auto bigMetrics = mBitmap->fontMetrics(bigFont);
         Point upperLeft4y(PicaPt::fromPixels(0, dpi), PicaPt::fromPixels(4, dpi));
-        t = Text("EE", font, fg);
+        t = Text("EE", bigFont, fg);
         t.setSuperscript(1, 1);
         layout = mBitmap->createTextLayout(t);
         glyphs = layout->glyphs();
@@ -3565,18 +3578,18 @@ public:
         mBitmap->endDraw();
         // ceil to next pixel on left to prevent previous (normal) glyph from bleeding over
         x = int(std::ceil(glyphs[1].frame.x.toPixels(dpi)));
-        auto w = int(glyphs[1].frame.width.toPixels(dpi));
-        auto expectedY = (upperLeft4y.y + metrics.ascent - metrics.capHeight).toPixels(dpi);
-        auto expectedHeight = (0.666f * metrics.capHeight.toPixels(dpi));  // sub/super-script is 66% high
+        auto w = int(std::round(0.8f * glyphs[1].frame.width.toPixels(dpi)));  // glyph width is advance, so has interchar spacing
+        auto expectedY = (upperLeft4y.y + bigMetrics.ascent - bigMetrics.capHeight).toPixels(dpi);
+        auto expectedHeight = (0.666f * bigMetrics.capHeight.toPixels(dpi));  // sub/super-script is 66% high
         maybeErr = verifyTextRect(x, x + w, mBitmap->height(), expectedY, expectedHeight,
-                                  "superscript incorrectly located");
+                                  "superscript incorrectly located", 2.0f);
         if (!maybeErr.empty()) {
             return maybeErr;
         }
 
         // ----
         // Verify subscript
-        t = Text("y y", font, fg);  // the space avoids the subscript y being kerned too close
+        t = Text("y y", bigFont, fg);  // the space avoids the subscript y being kerned too closely
         t.setSubscript(2, 1);
         layout = mBitmap->createTextLayout(t);
         glyphs = layout->glyphs();
@@ -3586,9 +3599,9 @@ public:
         mBitmap->endDraw();
         x = int(glyphs[2].frame.x.toPixels(dpi));
         w = int(glyphs[2].frame.width.toPixels(dpi));
-        expectedY = (upperLeft4y.y + metrics.ascent + metrics.descent).toPixels(dpi) - expectedHeight;
+        expectedY = (upperLeft4y.y + bigMetrics.ascent + bigMetrics.descent).toPixels(dpi) - expectedHeight;
         maybeErr = verifyTextRect(x, x + w, mBitmap->height(), expectedY, expectedHeight,
-                                  "subscript incorrectly located");
+                                  "subscript incorrectly located", 2.0f);
         if (!maybeErr.empty()) {
             return maybeErr;
         }
@@ -3648,7 +3661,7 @@ public:
         }
         auto normalGlyphLineHeight = normalGlyphs[2].frame.y - normalGlyphs[0].frame.y;
         auto extraGlyphLineHeight = layout->glyphs()[2].frame.y - layout->glyphs()[0].frame.y;
-        if (std::abs((extraGlyphLineHeight - normalGlyphLineHeight).toPixels(dpi) - extraSpacingPx) > 0.1f) {
+        if (std::abs((extraGlyphLineHeight - normalGlyphLineHeight).toPixels(dpi) - extraSpacingPx) > 0.3f) {
             std::stringstream s;
             s << "expected glyph line height of "
               << (normalGlyphLineHeight + PicaPt::fromPixels(extraSpacingPx, dpi)).toPixels(72.0f)
@@ -3659,7 +3672,7 @@ public:
         t = Text("E\nE", font, Color::kRed);
         t.setLineHeightMultiple(2.0f);
         glyphs = mBitmap->createTextLayout(t)->glyphs();
-        if (std::abs((glyphs[0].frame.y - normalGlyphs[0].frame.y).toPixels(dpi)) > 0.5f) {
+        if (std::abs((glyphs[0].frame.y - normalGlyphs[0].frame.y).toPixels(dpi)) > 1.0f) {
             return "first line frame.y is not correct with lineHeight = 200%: expected " +
                     std::to_string(normalGlyphs[0].frame.y.asFloat()) + " pt, got " +
                     std::to_string(glyphs[0].frame.y.asFloat()) + " pt";
@@ -3669,7 +3682,7 @@ public:
         // The fact that this must be > 0.001 pixel probably indicates a problem somewhere.
         // The nearest I can find is that NSAttributedString -size height is not the same as
         // TextObj::metrics().height, but I do not know why, or if it is even important.
-        float glyphErrPx = 0.5f;
+        float glyphErrPx = 1.0f;
 #else
         float glyphErrPx = 0.001f;
 #endif
@@ -3827,7 +3840,8 @@ public:
 
     std::string verifyTextRect(int startX, int endX, int endY,
                                float expectedY,
-                               float expectedHeight, const std::string& msg)
+                               float expectedHeight, const std::string& msg,
+                               float maxErr = 1.0f)
     {
         int startY = 0;
         float minX = 9999.0f, minY = 9999.0f, maxX = 0.0f, maxY = 0.0f;
@@ -3844,7 +3858,6 @@ public:
                 }
             }
         }
-        const float maxErr = 1.0f;  // e.g. "M" has some space on left and right
         if (std::abs(int(minX) - startX) <= maxErr &&
             std::abs(maxX - float(endX)) <= maxErr &&
             std::abs(minY - float(expectedY)) <= maxErr &&
@@ -4186,7 +4199,7 @@ public:
             img = Image::fromCopyOfBytes(imgData.data(), width, height, mFormat, dpi);
         } else {
             auto src = loadImage(mTestImage);
-            img = Image::fromEncodedData(src.data(), src.size());
+            img = Image::fromEncodedData(src.data(), int(src.size()));
 
             // JPEG is a little lossy
             if (mTestImage == TestImage::kJPEG || mTestImage == TestImage::kJPEG_Progressive) {

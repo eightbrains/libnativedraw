@@ -635,7 +635,7 @@ public:
         *descent = 0.0;
         *leading = 0.0;
         NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:idx]);
-        int nRuns = runs.count;
+        int nRuns = int(runs.count);
         for (int r = 0;  r < nRuns;  ++r) {
             CTRunRef run = (__bridge CTRunRef)[runs objectAtIndex:r];
             CGFloat ascentRun, descentRun, leadingRun;
@@ -682,7 +682,7 @@ public:
             lineOrigins.resize(lines.count);
             CTFrameGetLineOrigins(mFrame, CFRangeMake(0, 0 /* 0=all */), &lineOrigins[0]);  // copies, grr
             CGFloat startY = lineOrigins[0].y + ascent;
-            _ctLineGetTypographicBounds(lines, lines.count - 1, &ascent, &descent, &leading);
+            _ctLineGetTypographicBounds(lines, int(lines.count) - 1, &ascent, &descent, &leading);
             CGFloat endY = lineOrigins.back().y - descent;
             // These are OS text coordinates which are flipped: the top of the text is at mFrame.size.height
             // and the bottom of the text is mFrame.size.height - height. So endY < startY.
@@ -724,10 +724,10 @@ public:
                 PicaPt baselinePt = PicaPt::fromPixels(kTextFrameHeight - lineOrigins[i].y, mDPI) + mFirstLineOffsetForGlyphs;
                 x = lineOrigins[i].x;
                 NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:i]);
-                int nRuns = runs.count;
+                int nRuns = int(runs.count);
                 for (int r = 0;  r < nRuns;  ++r) {
                     CTRunRef run = (__bridge CTRunRef)[runs objectAtIndex:r];
-                    int n = CTRunGetGlyphCount(run);
+                    int n = int(CTRunGetGlyphCount(run));
                     // (Stupid const rules:  we want the contents of the ptr to be const, not the
                     // variable to be immutable, but that's what the function signature is.)
                     CGPoint *positions = (CGPoint*)CTRunGetPositionsPtr(run);
@@ -912,9 +912,9 @@ void calcNSImageDetails(NSImage *nsimage, int *width, int *height, float *dpi)
     *dpi = kDefaultImageDPI;
     for (NSImageRep* rep in nsimage.representations) {
         if (rep.size.width > cgWidth) {
-            *width = rep.pixelsWide;
-            *height = rep.pixelsHigh;
-            cgWidth = rep.size.width;
+            *width = int(rep.pixelsWide);
+            *height = int(rep.pixelsHigh);
+            cgWidth = int(rep.size.width);
             *dpi = float(*width) / cgWidth * 96.0f;  // 96 dpi what a macOS virtual-pixel is
         }
     }
@@ -925,7 +925,7 @@ Image Image::fromFile(const char *path)
     // TODO: try -imageNamed:
 
     auto data = readFile(path);
-    return Image::fromEncodedData(data.data(), data.size());
+    return Image::fromEncodedData(data.data(), int(data.size()));
 }
 
 Image Image::fromEncodedData(const uint8_t *encodedImage, int size)
@@ -1668,11 +1668,11 @@ void DrawContext::getScreenDPI(void* nsscreen, float *uiDPI, float *cocoaDPI, fl
     CFBooleanRef values[1] = { kCFBooleanTrue };
     CFDictionaryRef options = CFDictionaryCreate(kCFAllocatorDefault, (const void**)keys, (const void**)values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks );
     CFArrayRef modes = CGDisplayCopyAllDisplayModes(displayID, options);
-    int n = CFArrayGetCount(modes);
+    int n = int(CFArrayGetCount(modes));
     for (int i = 0;  i < n;  i++) {
         CGDisplayModeRef mode = (CGDisplayModeRef) CFArrayGetValueAtIndex(modes, i);
         if (CGDisplayModeGetIOFlags(mode) & kFlagNativeMode) {
-            int w = CGDisplayModeGetWidth(mode);
+            int w = int(CGDisplayModeGetWidth(mode));
             if (w < nativeSize.width) {
                 nativeSize.width = w;
                 nativeSize.height = CGDisplayModeGetHeight(mode);

@@ -3552,7 +3552,7 @@ public:
                                   int(baselineYPt.toPixels(dpi)) + 1,
                                   (baselineYPt - smallMetrics.capHeight).toPixels(dpi),
                                   smallMetrics.capHeight.toPixels(dpi),
-                                  "small-font T is wrong height");
+                                  "small-font T is wrong height", 2.0f);
         if (!maybeErr.empty()) {
             return maybeErr;
         }

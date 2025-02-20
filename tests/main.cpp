@@ -3462,7 +3462,7 @@ public:
         mBitmap->endDraw();
         int topY = int(std::ceil((metrics.ascent - metrics.capHeight).toPixels(dpi)));
         int bottomY = int(std::floor(metrics.ascent.toPixels(dpi)) - 1.0f);
-        auto normalTopX = findLineStart(topY);
+        auto normalTopX = findLineStart(topY + 1);  // +1, in case top pixel is not full, leading to excessive x inset
         auto normalBottomX = findLineStart(bottomY);
         assert(normalTopX >= 0.0f && normalBottomX >= 0.0f);
         auto xDelta = std::abs(normalTopX - normalBottomX);

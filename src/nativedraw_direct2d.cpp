@@ -1450,7 +1450,7 @@ public:
             if (!mGlyphs->empty()) {
                 mGlyphs->back().indexOfNext = utf8idx;
             }
-            mGlyphs->emplace_back(utf8idx, mLineNo, fromD2D(baselineOriginY), r);
+            mGlyphs->emplace_back(utf8idx, mLineNo, fromD2D(baselineOriginY + mD2DOffsetY), r);
         };
 
         if (baselineOriginY > mLastBaselineY) {

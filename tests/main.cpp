@@ -2922,7 +2922,7 @@ public:
             return "Glyph frames x coord are incorrect";
         }
         if (std::abs((glyphs[0].frame.y + metrics.ascent - glyphs[0].baseline).toPixels(dpi)) > 0.001f) {
-            return "glyph.baseline should be glyph.frame.y + ascent";
+            return "glyph.baseline [" + std::to_string(glyphs[0].baseline.toPixels(dpi)) + "] should be glyph.frame.y [" + std::to_string(glyphs[0].frame.y.toPixels(dpi)) + "] + ascent [" + std::to_string(metrics.ascent.toPixels(dpi)) + "]";
         }
 
         // Spaces should have glyphs

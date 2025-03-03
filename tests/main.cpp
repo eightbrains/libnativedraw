@@ -2921,6 +2921,9 @@ public:
         if (std::abs(glyphs[1].frame.x.toPixels(dpi) - glyphs[0].frame.maxX().toPixels(dpi)) > 0.001f) {
             return "Glyph frames x coord are incorrect";
         }
+        if (std::abs(glyphs[0].frame.y + metrics.ascent - glyphs[0].baseline) > 0.001f) {
+            return "glyph.baseline should be glyph.frame.y + ascent";
+        }
 
         // Spaces should have glyphs
         glyphs = mBitmap->createTextLayout("a  z", font, fg)->glyphs();

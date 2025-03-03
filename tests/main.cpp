@@ -3299,7 +3299,7 @@ public:
         auto metrics = mBitmap->fontMetrics(font);
         int x = mBitmap->width() / 2;
         int baseline = int((upperLeft.y + metrics.ascent).toPixels(dpi));
-        int underlineY = int(std::round((upperLeft.y + metrics.ascent /*+ metrics.underlineOffset*/).toPixels(dpi)));
+        int underlineY = int(std::round((upperLeft.y + metrics.ascent + metrics.underlineOffset).toPixels(dpi)));
         auto maybeErr = verifyLine(font.pointSize().toPixels(dpi) / 2, underlineY, strikeColor,
                                    "incorrect underline color at " + std::to_string(underlineY));
         if (!maybeErr.empty()) {

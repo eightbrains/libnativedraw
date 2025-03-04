@@ -717,11 +717,12 @@ public:
         long indexOfNext = 0;  /// where the next glyph starts in string;
                                /// this will be str.size() for last glyph
         int line = 0;
+        PicaPt baseline = PicaPt::kZero;
         Rect frame = Rect(PicaPt::kZero, PicaPt::kZero,
                           PicaPt::kZero, PicaPt::kZero);
 
         Glyph() {}
-        Glyph(long i, int ln, const Rect& r) : index(i), line(ln), frame(r) {}
+        Glyph(long i, int ln, const PicaPt& bl, const Rect& r) : index(i), line(ln), baseline(bl), frame(r) {}
     };
 
     virtual ~TextLayout() {}

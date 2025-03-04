@@ -1153,6 +1153,12 @@ public:
                     bool lastGlyphWasSpace = false;
                     PangoLayoutLine *line = pango_layout_iter_get_line(it);
                     lastRun = pango_layout_iter_get_run_readonly(it);
+#if PANGO_VERSION_CHECK(1, 50, 0)
+                    int baseline = pango_layout_iter_get_run_baseline(it);
+#else
+                    int baseline = pango_layout_iter_get_baseline(it);  // baseline of LINE (incorrect for sub/super-script)
+#endif
+                    auto baselinePt = PicaPt::fromPixels(float(baseline) * invPangoScale, mDPI);
                     if (line != lastLine) {
                         if (lastLine) {
                             int lastLineEndIdx = lastLine->start_index + lastLine->length;
@@ -1178,7 +1184,7 @@ public:
                                         r = Rect(mAlignmentOffset.x, mAlignmentOffset.y, PicaPt::kZero, PicaPt::fromPixels(float(logical.height) * invPangoScale, mDPI));
                                     }
                                     r.width = PicaPt::kZero;
-                                    mGlyphs.emplace_back(lastLineEndIdx, currentLineNo, r);
+                                    mGlyphs.emplace_back(lastLineEndIdx, currentLineNo, baselinePt, r);
 
                                     lastY = mGlyphs.back().frame.maxY();
                                     idx++;
@@ -1193,7 +1199,7 @@ public:
                                         mGlyphs.back().indexOfNext = idx;
                                     }
                                     r.width = PicaPt::kZero;
-                                    mGlyphs.emplace_back(idx, currentLineNo, r);
+                                    mGlyphs.emplace_back(idx, currentLineNo, baselinePt, r);
                                     idx++;
                                 }
                             }
@@ -1214,7 +1220,7 @@ public:
                            PicaPt::fromPixels(float(logical.y) * invPangoScale, mDPI) + mAlignmentOffset.y,
                            PicaPt::fromPixels(float(logical.width) * invPangoScale, mDPI),
                            PicaPt::fromPixels(float(logical.height) * invPangoScale, mDPI));
-                    mGlyphs.emplace_back(textIdx, currentLineNo, r);
+                    mGlyphs.emplace_back(textIdx, currentLineNo, baselinePt, r);
                 } while(pango_layout_iter_next_cluster(it));
             }
             pango_layout_iter_free(it);
@@ -1226,8 +1232,9 @@ public:
                     auto r = mGlyphs.back().frame;
                     r.x = r.maxX();
                     r.width = PicaPt::kZero;
+                    auto baseline = r.y + 0.8f * r.height;  // approx; this is zero-width anyway
                     mGlyphs.back().indexOfNext = mGlyphs.back().index + 1;
-                    mGlyphs.emplace_back(mGlyphs.back().indexOfNext, currentLineNo, r);
+                    mGlyphs.emplace_back(mGlyphs.back().indexOfNext, currentLineNo, baseline, r);
                     ++currentLineNo;
                 } else {
                     // Must be a \n at begining; handle below
@@ -1240,6 +1247,7 @@ public:
                 PangoLayoutLine *line = pango_layout_get_line(mLayout, currentLineNo);
                 pango_layout_line_get_extents(line, nullptr, &logical);
                 auto y = PicaPt::kZero;
+                auto baseline = PicaPt::kZero;
                 if (!mGlyphs.empty()) {
                     y = mGlyphs.back().frame.maxY();
                 }
@@ -1255,13 +1263,14 @@ public:
                     auto leading = r.height - (ascent + descent);
                     r.y += leading;
                     r.height = ascent + descent;
+                    baseline = r.y + ascent;
                     pango_font_metrics_unref(fm);
                 }
                 if (!mGlyphs.empty()) {
                     mGlyphs.back().indexOfNext = line->start_index;
                 }
                 ++currentLineNo;
-                mGlyphs.emplace_back(line->start_index, currentLineNo, r);
+                mGlyphs.emplace_back(line->start_index, currentLineNo, baseline, r);
             }
 
             if (!mGlyphs.empty()) {

@@ -22,7 +22,7 @@
 
 #if __APPLE__
 
-#if ! __has_feature(objc_arc)
+#if !__has_feature(objc_arc)
 #error "ARC is off"
 #endif
 
@@ -37,6 +37,12 @@
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreText/CoreText.h>
 #import <AppKit/AppKit.h>
+
+// CoreText seems to draw underlines correctly on the screen, but they are
+// way too thick when printed. (This happens on at least 10.14 and 13.1)
+// CoreText does not do strikethrough or wavy underlines, so those are
+// always custom-drawn.
+#define kUseCoreTextUnderlines      0
 
 namespace ND_NAMESPACE {
 namespace {
@@ -274,13 +280,15 @@ public:
             const Font& defaultReplacementFont = kDefaultReplacementFont,
             const Color& defaultReplacementColor = kDefaultReplacementColor)
     {
+        enum class PixelAlignment { kNone, kCenter };
         struct RawLine {
             int utf8start;
             int utf8end;
             Line::Type type;
             Color color;
             CGFloat width;
-            CGFloat dy;
+            CGFloat dy;  // measured from the baseline
+            PixelAlignment pixelAlignment;
         };
         std::vector<RawLine> lines;
 
@@ -294,6 +302,9 @@ public:
         mLen = int(text.text().size());
         mDPI = dc.dpi();
         mFirstLineOffsetForGlyphs = PicaPt::kZero;
+        mAlignmentOffsetPx = CGPointMake(0.0, 0.0);  // calcFirstLineMetrics() calling glyphs() uses this
+
+        const CGFloat onePixel = (CGFloat)dc.onePixel().toPixels(mDPI);
 
         assert(!text.runs().empty());
         assert(text.runs()[0].startIndex == 0);
@@ -377,6 +388,7 @@ public:
             if (run.underlineStyle.isSet && run.underlineStyle.value != kUnderlineNone
                 && !(run.underlineColor.isSet && run.underlineColor.value.alpha() == 0.0f))
             {
+#if kUseCoreTextUnderlines
                 if (baselineOffset == 0.0) {
                     switch (run.underlineStyle.value) {
                         case kUnderlineNone:  break;
@@ -396,19 +408,26 @@ public:
                             }
                             lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kWavy,
                                               c, nsfont.underlineThickness,
-                                              nsfont.ascender - baselineOffset + std::abs(nsfont.underlinePosition) });
+                                              -baselineOffset + std::abs(nsfont.underlinePosition) });
                             break;
                         }
                     }
                     if (run.underlineColor.isSet) {
                         attr[NSUnderlineColorAttributeName] = makeNSColor(run.underlineColor.value);
                     }
-                } else {
+                } else
+#endif  // !kUseCoreTextUnderlines
+                {
+                    auto offset = baselineOffset;
+                    if (baselineOffset == 0.0) {
+                        offset = 0.5f * nsfont.underlineThickness;
+                    }
+
                     Color c = fg;
                     if (run.underlineColor.isSet) {
                         c = run.underlineColor.value;
                     }
-                    CGFloat thickness = std::max(CGFloat(1.0), nsfont.underlineThickness);
+                    CGFloat thickness = std::max(onePixel, nsfont.underlineThickness);
                     Line::Type lineType = Line::Type::kSingle;
                     switch (run.underlineStyle.value) {
                         case kUnderlineNone:  break;
@@ -422,9 +441,18 @@ public:
                             lineType = Line::Type::kWavy;  break;
                         }
                     }
+                    // Using ns.underlinePosition ensures good results when printing,
+                    // but means that underlines on adjacent runs of small and large
+                    // text are not the same lines. Simlply ignoring underlinePosition
+                    // looks good onscreen (basically, for smallish font size), however
+                    // it looks really bad for large fonts and printing. So, since
+                    // underlines are relatively rare, and even rarer for different
+                    // font(s and) sizes, use underlinePosition. We could fix this
+                    // by analyzing the runs in a line, but that is too much effort for now.
                     lines.push_back({ run.startIndex, run.startIndex + run.length,
                                       lineType, c, thickness,
-                                      nsfont.ascender - baselineOffset + std::abs(nsfont.underlinePosition) });
+                                      -offset + std::abs(nsfont.underlinePosition),
+                                      PixelAlignment::kNone });
                 }
             }
             if (run.strikethrough.isSet && run.strikethrough.value
@@ -439,8 +467,9 @@ public:
                 // is nice and continuous. What thickness should it be? Underline thickness seems to be
                 // as good as any, but truncate to increments of one unit.
                 lines.push_back({ run.startIndex, run.startIndex + run.length, Line::Type::kSingle,
-                                  c, std::max(1.0, nsfont.underlineThickness),
-                                  nsfont.ascender - baselineOffset - 0.5f * nsfont.xHeight });
+                                  c, std::max(onePixel, nsfont.underlineThickness),
+                                  -0.5f * nsfont.xHeight,
+                                  PixelAlignment::kCenter });
             }
             if (run.characterSpacing.isSet && run.characterSpacing.value != PicaPt::kZero) {
                 attr[NSKernAttributeName] = @(run.characterSpacing.value.toPixels(mDPI));
@@ -535,25 +564,19 @@ public:
         // If we have multiple-sized fonts, we need to create the glyphs to see where
         // the line-breaks are.
         auto firstLineMetrics = calcFirstLineMetrics(runMetrics, text.runs());
+        // So this is kind of hacky: calcFirstLineMetrics *might* have created
+        // the glyphs in order to find line boundaries. We need to deallocate
+        // them (see the comment for TextLayout in the header file). Also, they
+        // will have been created without any alignment offsets (since that was
+        // what we were computing), so they will be wrong anyway.
+        if (!mGlyphs.empty()) {
+            mGlyphs.clear();
+            mGlyphs.shrink_to_fit();  // clear() does not release memory
+            mGlyphsInitialized = false;
+        }
 
-/*            int lastLineEndIdx = int(text.text().size()) - 1;
-            int lastLineNo = mGlyphs.back().line;
-            PicaPt maxNewLineY = mGlyphs.back().frame.y;
-            while (lastLineEndIdx >= 0 && mGlyphs[lastLineEndIdx].line == lastLineNo) {
-                --lastLineEndIdx;
-            }
-            lastLineEndIdx += 1;
-            assert(lastLineEndIdx >= 0);
-
-            runIdx = int(runMetrics.size()) - 1;
-            lastLineMetrics = runMetrics[runIdx];
-            while (runIdx >= 0
-                   && lastLineEndIdx >= text.runs()[runIdx].startIndex + text.runs()[runIdx].length) {
-                if (runMetrics[runIdx].ascent > lastLineMetrics.ascent) {
-                    lastLineMetrics = runMetrics[runIdx];
-                }
-                --runIdx;
-            } */
+        // Note that some fonts will end up with their first line lower than this value.
+        // We still want to use this here, but see the note in glyphs().
         mFirstLineAscender = firstLineMetrics.ascent;
 
         // Cache here to speed drawing
@@ -561,38 +584,42 @@ public:
         mAlignmentOffsetPx = CGPointMake(alignOffset.x.toPixels(mDPI),
                                          alignOffset.y.toPixels(mDPI));
 
-        // As far as I can tell, if -setLineHeightMultiple: is set on the paragraph style,
-        // CTFrameGetLineOrigins() returns everything offset as if there were another line
-        // above the first line. However, CTFrameDraw() does not include the top offset.
-        // This looks like a bug in CoreText :( The documentation is ... minimal, so this
-        // is an attempt to reverse-engineer what the calculation is. Save this here, so that
-        // we can reduce the (already-excessive) number of space-eating member variables in
-        // this class.
-        if (text.lineHeightMultiple() > 0.0) {
-            mFirstLineOffsetForGlyphs = -firstLineMetrics.lineHeight * (text.lineHeightMultiple() - 1.0f);
-        }
-
+        // Convert any underlines/strikethroughs to draw primitives
         if (!lines.empty()) {
             glyphs();
-            assert(mGlyphsInitialized); // paranoia: assert in case glyphs() gets optimized out
+            assert(mGlyphsInitialized); // paranoia: assert in case the call to glyphs() gets optimized out
 
             mLines.reserve(lines.size());
 
+            int textLen = text.text().size();
+            std::vector<int> utf8ToGlyphIdx(textLen, 0);
+            {
+                int glyphIdx = 0;
+                for (int utf8idx = 0;  utf8idx < textLen;  ++utf8idx) {
+                    while (mGlyphs[glyphIdx].indexOfNext <= utf8idx && glyphIdx < int(mGlyphs.size())) {
+                        ++glyphIdx;
+                    }
+                    utf8ToGlyphIdx[utf8idx] = glyphIdx;
+                }
+            }
+
             int glyphIdx = 0;
             for (auto &line : lines) {
-                while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < line.utf8start) {
-                    ++glyphIdx;
+                if (line.utf8start >= int(utf8ToGlyphIdx.size())) {
+                    continue;
                 }
-                if (glyphIdx >= mGlyphs.size()) {
-                    break;
-                }
+                int glyphIdx = utf8ToGlyphIdx[line.utf8start];
+                assert(glyphIdx >= 0 && glyphIdx <= int(mGlyphs.size()));
 
-                auto yPt = mGlyphs[glyphIdx].frame.y;  // this is valid, otherwise we would have exited above
+                auto yPt = mGlyphs[glyphIdx].baseline;
                 auto xStartPt = mGlyphs[glyphIdx].frame.x;
                 auto xEndPt = xStartPt;
                 while (glyphIdx < mGlyphs.size() && mGlyphs[glyphIdx].index < line.utf8end) {
                     if (mGlyphs[glyphIdx].frame.y > yPt) {
-                        CGFloat y = std::trunc(yPt.toPixels(mDPI) + line.dy) - 0.5;  // floor(x) differs for +ve and -ve x!
+                        CGFloat y = yPt.toPixels(mDPI) + line.dy;
+                        if (line.pixelAlignment == PixelAlignment::kCenter) {
+                            y = std::trunc(y) - 0.5f;  // floor(x) differs for +ve and -ve x!
+                        }
                         auto p1 = CGPointMake(xStartPt.toPixels(mDPI), y);
                         auto p2 = CGPointMake(xEndPt.toPixels(mDPI), y);
                         mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
@@ -602,12 +629,17 @@ public:
                     xEndPt = mGlyphs[glyphIdx].frame.maxX();
                     ++glyphIdx;
                 }
-                CGFloat y = std::trunc(yPt.toPixels(mDPI) + line.dy) - 0.5;
+                CGFloat y = yPt.toPixels(mDPI) + line.dy;
+                if (line.pixelAlignment == PixelAlignment::kCenter) {
+                    y = std::trunc(y) - 0.5f;  // floor(x) differs for +ve and -ve x!
+                }
                 auto p1 = CGPointMake(xStartPt.toPixels(mDPI), y);
                 auto p2 = CGPointMake(xEndPt.toPixels(mDPI), y);
                 mLines.push_back({ line.type, line.color, line.width, { p1, p2 } });
             }
         }
+        // Clear glyphs again, since we probably will not need them (not needed for UI,
+        // although a word-processor, for example, will need them).
         if (mGlyphsInitialized) {
             mGlyphs.clear();
             mGlyphs.shrink_to_fit();  // clear() does not release memory
@@ -716,12 +748,27 @@ public:
             }
             mGlyphs.reserve(nGlyphs);
 
+            // Some fonts, such as "Palatino" have a disagreement between their reported ascent
+            // and the ascent that CoreText uses. The reported ascent appears to be correct, so
+            // we assign that one to mFirstLineAscender, as would be expected. But since that
+            // is the amount that drawing offsets by, but the CoreText baseline offsets differently,
+            // we need to find that offset. (I suspect this is due to the font not supporting
+            // Unicode characters in languages such as Devanagari that have ascenders higher than
+            // the cap height, but when macOS combines the font into a set with fonts that do contain
+            // it, CoreText uses that ascent.)
+            //     This also happens when the line height is set.
+            CGFloat extraFirstLineAscent;
+            if (!lineOrigins.empty()) {
+                extraFirstLineAscent = (kTextFrameHeight - lineOrigins[0].y) - mFirstLineAscender.toPixels(mDPI);
+            }
+
             CGFloat x = 0.0;
             for (int i = 0;  i < lines.count;  ++i) {
                 CGFloat lineAscent, lineDescent, lineLeading;
                 CGFloat lineWidth = CTLineGetTypographicBounds((CTLineRef)[lines objectAtIndex:i],
                                                                &lineAscent, &lineDescent, &lineLeading);
-                PicaPt baselinePt = PicaPt::fromPixels(kTextFrameHeight - lineOrigins[i].y, mDPI) + mFirstLineOffsetForGlyphs;
+                CGFloat y = kTextFrameHeight - lineOrigins[i].y - extraFirstLineAscent;
+                PicaPt baselinePt = PicaPt::fromPixels(y, mDPI) + mFirstLineOffsetForGlyphs;
                 x = lineOrigins[i].x;
                 NSArray *runs = (NSArray*)CTLineGetGlyphRuns((CTLineRef)[lines objectAtIndex:i]);
                 int nRuns = int(runs.count);
@@ -733,7 +780,7 @@ public:
                     CGPoint *positions = (CGPoint*)CTRunGetPositionsPtr(run);
                     CGSize *advances = (CGSize*)CTRunGetAdvancesPtr(run);
                     CFIndex *indices = (CFIndex*)CTRunGetStringIndicesPtr(run);
-                    // CTRunGet...Ptr() can return null
+                    // CTRunGet...Ptr() can return null (as documented; and it does sometimes, too)
                     if (!positions) {
                         localPos.clear();  localPos.resize(n);
                         positions = localPos.data();
@@ -771,6 +818,7 @@ public:
                         }
                         mGlyphs.push_back({
                             mUTF16To8[indices[g]], i,
+                            alignmentOffset.y + baselinePt,
                             Rect(alignmentOffset.x + PicaPt::fromPixels(x + positions[g].x, mDPI),
                                  alignmentOffset.y + yPt,
                                  PicaPt::fromPixels(w, mDPI),
@@ -807,7 +855,7 @@ public:
         auto dpi = dc.dpi();
         CGContextTranslateCTM(gc,
                               mAlignmentOffsetPx.x + topLeft.x.toPixels(dpi),
-                              mAlignmentOffsetPx.y + topLeft.y.toPixels(dpi) + origin.y + mFirstLineAscender.toPixels(dpi) - /*PicaPt::fromPixels(1, dpi).asFloat()*/1.0);
+                              mAlignmentOffsetPx.y + topLeft.y.toPixels(dpi) + origin.y + mFirstLineAscender.toPixels(dpi) - 1.0);
         CGContextScaleCTM(gc, 1, -1);
         CTFrameDraw(mFrame, gc);
         CGContextRestoreGState(gc); // ok, graphics state is sane
@@ -820,7 +868,6 @@ public:
             CGContextTranslateCTM(gc, topLeft.x.toPixels(dpi), topLeft.y.toPixels(dpi));
             CGContextSetLineCap(gc, kCGLineCapButt);
             CGContextSetLineDash(gc, 0.0, nullptr, 0);
-            int glyphIdx = 0;
             for (auto &line : mLines) {
                 CGContextSetLineWidth(gc, line.width);
                 CGContextSetRGBStrokeColor(gc, line.color.red(), line.color.green(),
@@ -1146,7 +1193,7 @@ public:
     std::shared_ptr<TextLayout> createTextLayout(
                          const char *utf8, const Font& font, const Color& color,
                          const Size& size /*= Size::kZero*/,
-                         int alignment /*= Alignment::kAlign | Alignment::kTop*/,
+                         int alignment /*= Alignment::kLeft | Alignment::kTop*/,
                          TextWrapping wrap /*= kWrapWord*/) const override
     {
         return std::make_shared<TextObj>(*this, Text(utf8, font, color),
@@ -1155,9 +1202,9 @@ public:
 
     std::shared_ptr<TextLayout> createTextLayout(
                 const Text& t,
-                const Size& size = Size::kZero,
-                int alignment = Alignment::kLeft | Alignment::kTop,
-                TextWrapping wrap = kWrapWord) const override
+                const Size& size /*= Size::kZero*/,
+                int alignment /*= Alignment::kLeft | Alignment::kTop*/,
+                TextWrapping wrap /*= kWrapWord*/) const override
     {
         return std::make_shared<TextObj>(*this, t, size, alignment, wrap);
     }

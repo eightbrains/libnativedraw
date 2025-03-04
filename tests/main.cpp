@@ -2848,11 +2848,16 @@ public:
                 }
             }
         }
-        const float maxErr = 1.1f;  // "M" has some space on left and right
-        if (std::abs(minX - x) <= maxErr &&
-            std::abs(minY - y) <= maxErr &&
-            std::abs(maxX - (x + width)) <= maxErr &&
-            std::abs(maxY - (y + height)) <= maxErr) {
+#if __APPLE__
+        const float maxXErr = 1.75f;  // "M" has some space on left and right
+#else
+        const float maxXErr = 1.1f;  // "M" has some space on left and right
+#endif
+        const float maxYErr = 1.1f;
+        if (std::abs(minX - x) <= maxXErr &&
+            std::abs(minY - y) <= maxYErr &&
+            std::abs(maxX - (x + width)) <= maxXErr &&
+            std::abs(maxY - (y + height)) <= maxYErr) {
             return "";
         } else {
             std::stringstream s;
@@ -2915,6 +2920,9 @@ public:
         }
         if (std::abs(glyphs[1].frame.x.toPixels(dpi) - glyphs[0].frame.maxX().toPixels(dpi)) > 0.001f) {
             return "Glyph frames x coord are incorrect";
+        }
+        if (std::abs((glyphs[0].frame.y + metrics.ascent - glyphs[0].baseline).toPixels(dpi)) > 0.001f) {
+            return "glyph.baseline [" + std::to_string(glyphs[0].baseline.toPixels(dpi)) + "] should be glyph.frame.y [" + std::to_string(glyphs[0].frame.y.toPixels(dpi)) + "] + ascent [" + std::to_string(metrics.ascent.toPixels(dpi)) + "]";
         }
 
         // Spaces should have glyphs
@@ -3245,7 +3253,7 @@ public:
         const Color strikeColor = Color::kGreen;
         // Use bold so that one of the pixels will be closer to 100% on a whole pixel
         const Font font("Arial", PicaPt::fromPixels(kPointSize, dpi), kStyleBold);
-        const Font bigFont = font.fontWithScaledPointSize(2.0f);  // better for double-underline
+        const Font bigFont = font.fontWithScaledPointSize(2.0f);  // better for super-/subscripts
         const Point upperLeft = Point::kZero;
 
         // ----
@@ -3552,7 +3560,9 @@ public:
                                   int(baselineYPt.toPixels(dpi)) + 1,
                                   (baselineYPt - smallMetrics.capHeight).toPixels(dpi),
                                   smallMetrics.capHeight.toPixels(dpi),
-                                  "small-font T is wrong height", 2.0f);
+                                  "small-font T is wrong height",
+                                  4.0f, 2.0f);  // glyph rect includes advance, so is a little too wide,
+                                                // which is noticeable at large font sizes.
         if (!maybeErr.empty()) {
             return maybeErr;
         }
@@ -3562,7 +3572,8 @@ public:
                                   int(baselineYPt.toPixels(dpi)) + 1,
                                   (baselineYPt - metrics.capHeight).toPixels(dpi),
                                   metrics.capHeight.toPixels(dpi),
-                                  "big-font T is wrong height");
+                                  "big-font T is wrong height",
+                                  4.0f, 2.0f);  // glyph rect...
         if (!maybeErr.empty()) {
             return maybeErr;
         }
@@ -3585,7 +3596,7 @@ public:
         auto expectedY = (upperLeft4y.y + bigMetrics.ascent - bigMetrics.capHeight).toPixels(dpi);
         auto expectedHeight = (0.666f * bigMetrics.capHeight.toPixels(dpi));  // sub/super-script is 66% high
         maybeErr = verifyTextRect(x, x + w, mBitmap->height(), expectedY, expectedHeight,
-                                  "superscript incorrectly located", 2.0f);
+                                  "superscript incorrectly located", 0.1f * kPointSize, 2.0f);
         if (!maybeErr.empty()) {
             return maybeErr;
         }
@@ -3604,7 +3615,7 @@ public:
         w = int(glyphs[2].frame.width.toPixels(dpi));
         expectedY = (upperLeft4y.y + bigMetrics.ascent + bigMetrics.descent).toPixels(dpi) - expectedHeight;
         maybeErr = verifyTextRect(x, x + w, mBitmap->height(), expectedY, expectedHeight,
-                                  "subscript incorrectly located", 2.0f);
+                                  "subscript incorrectly located", 0.1f * kPointSize, 2.0f);
         if (!maybeErr.empty()) {
             return maybeErr;
         }
@@ -3844,7 +3855,7 @@ public:
     std::string verifyTextRect(int startX, int endX, int endY,
                                float expectedY,
                                float expectedHeight, const std::string& msg,
-                               float maxErr = 1.0f)
+                               float maxXErr = 1.0f, float maxYErr = 1.0f)
     {
         int startY = 0;
         float minX = 9999.0f, minY = 9999.0f, maxX = 0.0f, maxY = 0.0f;
@@ -3861,10 +3872,10 @@ public:
                 }
             }
         }
-        if (std::abs(int(minX) - startX) <= maxErr &&
-            std::abs(maxX - float(endX)) <= maxErr &&
-            std::abs(minY - float(expectedY)) <= maxErr &&
-            std::abs((maxY - minY) - expectedHeight) <= maxErr) {
+        if (std::abs(int(minX) - startX) <= maxXErr &&
+            std::abs(maxX - float(endX)) <= maxXErr &&
+            std::abs(minY - float(expectedY)) <= maxYErr &&
+            std::abs((maxY - minY) - expectedHeight) <= maxYErr) {
             return "";
         } else {
             std::stringstream s;

@@ -1034,6 +1034,27 @@ private:
         return PicaPt::fromPixels(tm["width"].as<float>(), kCSSPixelDPI) * font->fromCSSToDPIMultiplier();
     };
 
+    struct JSTextMetrics
+    {
+        PicaPt width;
+        PicaPt baseline;
+    };
+    JSTextMetrics calcTextMetrics(const EmVal& context, CanvasFont *font,
+                                  const std::string& text) const
+    {  // assumes that font is set in context
+        auto tm = context.call<EmVal>("measureText", EmVal(text));
+        PicaPt baseline;
+        if (tm.hasOwnProperty("alphabeticBaseline")) {
+            baseline = PicaPt::fromPixels(tm["alphabeticBaseline"].as<float>(), kCSSPixelDPI) * font->fromCSSToDPIMultiplier();
+        } else {
+            baseline = PicaPt::fromPixels(tm["actualBoundingBoxAscent"].as<float>(), kCSSPixelDPI) * font->fromCSSToDPIMultiplier();
+        }
+        return {
+            PicaPt::fromPixels(tm["width"].as<float>(), kCSSPixelDPI) * font->fromCSSToDPIMultiplier(),
+            baseline,
+        };
+    };
+
     bool isWhitespace(const uint32_t c) const {
         // Organized so that most common break first. Excludes non-breaking
         // spaces.
@@ -1277,10 +1298,10 @@ public:
                     auto *nextCP = nextCodePoint(thisCP, &cp);
                     PicaPt lastGlyphMaxX = x;
                     while (nextCP <= end) {
-                        auto w = calcTextWidth(mContextForGlyphs, run.font, std::string(start, nextCP - start));
-                        auto maxX = x + w;
+                        auto tm = calcTextMetrics(mContextForGlyphs, run.font, std::string(start, nextCP - start));
+                        auto maxX = x + tm.width;
                         auto y = line.lineRect.y + run.yOffset;
-                        mGlyphs.emplace_back(thisCP - ctext + run.startIndex, lineNo, Rect(lastGlyphMaxX, y, maxX - lastGlyphMaxX, line.lineRect.height));
+                        mGlyphs.emplace_back(thisCP - ctext + run.startIndex, lineNo, tm.baseline, Rect(lastGlyphMaxX, y, maxX - lastGlyphMaxX, line.lineRect.height));
                         mGlyphs.back().indexOfNext = nextCP - ctext + run.startIndex;
                         lastGlyphMaxX = maxX;
                         thisCP = nextCP;

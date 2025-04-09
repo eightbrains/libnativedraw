@@ -3071,6 +3071,16 @@ public:
             return "Expected only one line with word-wrapping off";
         }
 
+        // Word-wrap, test wrap beginning of run (tests our line-breaking algorithm for WASM)
+        auto text = Text("aaa bbb cc ddd", font, fg);
+        text.setUnderlineStyle(kUnderlineSingle, 8, 2);
+        glyphs = mBitmap->createTextLayout(text, Size::kZero)->glyphs();
+        w = glyphs[9].frame.midX();
+        glyphs = mBitmap->createTextLayout(text, Size(w, PicaPt::kZero))->glyphs();
+        if (glyphs[8].frame.y < glyphs[0].frame.midY() || glyphs[8].frame.x != glyphs[0].frame.x) {
+            return "Did not properly break at beginning of run";
+        }
+
         // All glyph frames are ascent + descent in height
         glyphs = mBitmap->createTextLayout("Ag", font, fg)->glyphs();
         auto expectedHeightPx = (metrics.ascent + metrics.descent).toPixels(dpi);

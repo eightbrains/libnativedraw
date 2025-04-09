@@ -639,6 +639,7 @@ public:
             }
 
             bool brokeLine = false;
+            bool breakAtBeginning = false;
             // if want line breaks and we went over the line width,
             // then break the line.
             if (wantWrap && x + w > size.width) {
@@ -654,29 +655,36 @@ public:
                     subruns.insert(subruns.begin() + srunIdx + 1, SubRun{ srun.run, wrap.endRunAtIndex, srun.length /*old srun*/ - newLength, false });
                     srun.length = newLength;  // update copy (after insertion calculations!)
                     brokeLine = true;
+                } else if (wrap.endRunAtIndex == srun.startIndex + srun.length) {
+                    brokeLine = true;
+                } else if (wrap.wrapAtIndex == srun.startIndex && srunIdx > 0 /* so we can --srunIdx later */) {
+                    brokeLine = true;
+                    breakAtBeginning = true;
                 }
             }
 
-            const auto fm = cf->fontMetrics(context);
-            mLines.back().runs.emplace_back();
-            auto &r = mLines.back().runs.back();
-            r.startIndex = srun.startIndex;
-            r.length = srun.length;
-            r.font = cf;
-            r.size.width = w;
-            r.size.height = fm.ascent + fm.descent;
-            leadingForLine = std::max(leadingForLine, fm.leading); 
-            if (fm.lineHeight > mLines.back().lineRect.height) {
-                mLines.back().largestAscent = fm.ascent;
-            }
-            r.characterSpacing = charSpacing;
-            r.hasSuperscript = hasSuperscript;
-            r.hasSubscript = hasSubscript;
-            r.text = EmVal(text.text().substr(srun.startIndex, srun.length));
-            x += w;
+            if (!breakAtBeginning) {
+                const auto fm = cf->fontMetrics(context);
+                mLines.back().runs.emplace_back();
+                auto &r = mLines.back().runs.back();
+                r.startIndex = srun.startIndex;
+                r.length = srun.length;
+                r.font = cf;
+                r.size.width = w;
+                r.size.height = fm.ascent + fm.descent;
+                leadingForLine = std::max(leadingForLine, fm.leading);
+                if (fm.lineHeight > mLines.back().lineRect.height) {
+                    mLines.back().largestAscent = fm.ascent;
+                }
+                r.characterSpacing = charSpacing;
+                r.hasSuperscript = hasSuperscript;
+                r.hasSubscript = hasSubscript;
+                r.text = EmVal(text.text().substr(srun.startIndex, srun.length));
+                x += w;
 
-            mLines.back().lineRect.width += r.size.width;
-            mLines.back().lineRect.height = std::max(mLines.back().lineRect.height, r.size.height);
+                mLines.back().lineRect.width += r.size.width;
+                mLines.back().lineRect.height = std::max(mLines.back().lineRect.height, r.size.height);
+            }
 
             if (isNewline) {
                 // This is a forced newline, so we need subtract off the width
@@ -714,6 +722,11 @@ public:
                 mLines.back().lineRect.x = x;
                 mLines.back().lineRect.y = y;
                 leadingForLine = PicaPt::kZero;
+            }
+
+            if (breakAtBeginning) {
+                --srunIdx;
+                continue;
             }
         }
 
